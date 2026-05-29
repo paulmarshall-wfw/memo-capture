@@ -1,0 +1,31 @@
+{
+  "name": "memo-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@10.9.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev:api": "npm run dev -w @memo-capture/api",
+    "dev:desktop": "npm run dev -w @memo-capture/desktop",
+    "dev:worker": "npm run dev -w @memo-capture/worker",
+    "doctor": "node scripts/doctor.mjs",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "verify": "npm run doctor && npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.21",
+    "tsx": "4.19.4",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=22.14.0 <23",
+    "npm": ">=10.9.0 <11"
+  }
+}

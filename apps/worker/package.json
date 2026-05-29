@@ -1,0 +1,19 @@
+{
+  "name": "@memo-capture/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "test": "node --test --import tsx tests/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@memo-capture/config": "0.1.0",
+    "@memo-capture/domain": "0.1.0"
+  },
+  "devDependencies": {}
+}
