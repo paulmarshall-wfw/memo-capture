@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "db:migrate": "npm run db:migrate -w @memo-capture/api",
     "dev:api": "npm run dev -w @memo-capture/api",
     "dev:desktop": "npm run dev -w @memo-capture/desktop",
     "dev:worker": "npm run dev -w @memo-capture/worker",

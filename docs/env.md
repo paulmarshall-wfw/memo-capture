@@ -17,9 +17,16 @@ See `.env.example` for the current non-secret template.
 ## Database
 
 - `DATABASE_URL`: Postgres connection string.
+- `MEMO_CAPTURE_MIGRATIONS_DIR`: optional override for the API SQL migrations directory.
 
 ## Authentication
 
+- `MEMO_CAPTURE_AUTH_MODE`: `oidc` or `local-dev`; default is `oidc`.
+- `MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED`: enables the development-only local auth route when set to `true`.
+- `MEMO_CAPTURE_LOCAL_DEV_AUTH_ISSUER`: fixed local-dev issuer stored in `app_users`.
+- `MEMO_CAPTURE_LOCAL_DEV_AUTH_SUBJECT`: fixed local-dev subject stored in `app_users`.
+- `MEMO_CAPTURE_LOCAL_DEV_AUTH_EMAIL`: fixed local-dev email.
+- `MEMO_CAPTURE_LOCAL_DEV_AUTH_DISPLAY_NAME`: fixed local-dev display name.
 - `OIDC_ISSUER_URL`: OIDC issuer URL.
 - `OIDC_AUDIENCE`: API audience.
 - `OIDC_CLIENT_ID`: desktop client ID.

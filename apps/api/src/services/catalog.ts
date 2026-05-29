@@ -1,0 +1,183 @@
+import type { Database } from "../db/types.js";
+import { AuditRepository } from "../repositories/audit.js";
+import {
+  ContributorRepository,
+  FeatureGroupRepository,
+  ProjectRepository
+} from "../repositories/catalog.js";
+import type {
+  ContributorRecord,
+  FeatureGroupRecord,
+  ProjectRecord,
+  AppUserRecord
+} from "../repositories/rows.js";
+import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
+
+export class CatalogService {
+  constructor(private readonly db: Database) {}
+
+  async listProjects(): Promise<ProjectRecord[]> {
+    return new ProjectRepository(this.db).list();
+  }
+
+  async createProject(body: unknown, actor: AppUserRecord, requestId: string): Promise<ProjectRecord> {
+    const input = parseProjectCreateBody(body);
+    return this.db.transaction(async (client) => {
+      const projects = new ProjectRepository(client);
+      const audit = new AuditRepository(client);
+      const project = await projects.create({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "project.created",
+        actor,
+        subjectType: "project",
+        subjectId: project.id,
+        requestId,
+        metadata: { slug: project.slug }
+      });
+      return project;
+    });
+  }
+
+  async updateProject(
+    projectId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<ProjectRecord | null> {
+    const input = parseProjectPatchBody(body);
+    return this.db.transaction(async (client) => {
+      const projects = new ProjectRepository(client);
+      const audit = new AuditRepository(client);
+      const project = await projects.update(projectId, { ...input, actorUserId: actor.id });
+      if (project !== null) {
+        await audit.record({
+          eventName: "project.updated",
+          actor,
+          subjectType: "project",
+          subjectId: project.id,
+          requestId,
+          metadata: { slug: project.slug }
+        });
+      }
+      return project;
+    });
+  }
+
+  async deactivateProject(
+    projectId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<ProjectRecord | null> {
+    return this.db.transaction(async (client) => {
+      const projects = new ProjectRepository(client);
+      const audit = new AuditRepository(client);
+      const project = await projects.deactivate(projectId, actor.id);
+      if (project !== null) {
+        await audit.record({
+          eventName: "project.deactivated",
+          actor,
+          subjectType: "project",
+          subjectId: project.id,
+          requestId
+        });
+      }
+      return project;
+    });
+  }
+
+  async listFeatureGroups(): Promise<FeatureGroupRecord[]> {
+    return new FeatureGroupRepository(this.db).list();
+  }
+
+  async createFeatureGroup(
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<FeatureGroupRecord> {
+    const input = parseFeatureGroupBody(body);
+    return this.db.transaction(async (client) => {
+      const featureGroups = new FeatureGroupRepository(client);
+      const audit = new AuditRepository(client);
+      const featureGroup = await featureGroups.create({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "feature_group.created",
+        actor,
+        subjectType: "feature_group",
+        subjectId: featureGroup.id,
+        requestId,
+        metadata: { slug: featureGroup.slug }
+      });
+      return featureGroup;
+    });
+  }
+
+  async listContributors(): Promise<ContributorRecord[]> {
+    return new ContributorRepository(this.db).list();
+  }
+
+  async createContributor(
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<ContributorRecord> {
+    const input = parseContributorBody(body);
+    return this.db.transaction(async (client) => {
+      const contributors = new ContributorRepository(client);
+      const audit = new AuditRepository(client);
+      const contributor = await contributors.create({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "contributor.created",
+        actor,
+        subjectType: "contributor",
+        subjectId: contributor.id,
+        requestId
+      });
+      return contributor;
+    });
+  }
+}
+
+function parseProjectCreateBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    name: assertNonEmptyString(record.name, "name"),
+    slug: optionalString(record.slug, "slug"),
+    description: optionalString(record.description, "description") ?? "",
+    context: optionalString(record.context, "context") ?? ""
+  };
+}
+
+function parseProjectPatchBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    name: record.name === undefined ? undefined : assertNonEmptyString(record.name, "name"),
+    slug: record.slug === undefined ? undefined : optionalString(record.slug, "slug"),
+    description:
+      record.description === undefined ? undefined : optionalString(record.description, "description") ?? "",
+    context: record.context === undefined ? undefined : optionalString(record.context, "context") ?? ""
+  };
+}
+
+function parseFeatureGroupBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    name: assertNonEmptyString(record.name, "name"),
+    slug: optionalString(record.slug, "slug"),
+    description: optionalString(record.description, "description") ?? ""
+  };
+}
+
+function parseContributorBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    displayName: assertNonEmptyString(record.displayName, "displayName")
+  };
+}
+
+function parseObject(body: unknown): Record<string, unknown> {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new HttpError(400, "invalid_request", "Request body must be an object.");
+  }
+
+  return body as Record<string, unknown>;
+}

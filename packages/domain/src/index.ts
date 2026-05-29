@@ -160,6 +160,9 @@ export const EXPORT_BATCH_STATUSES = [
 export type ExportBatchStatus = (typeof EXPORT_BATCH_STATUSES)[number];
 
 export const AUDIT_EVENT_NAMES = [
+  "source_memo.created",
+  "work_item.created",
+  "work_item.updated",
   "project.created",
   "project.updated",
   "project.deactivated",

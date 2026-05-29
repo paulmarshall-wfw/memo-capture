@@ -219,6 +219,9 @@ Indexes:
 
 Settings:
 
+- `source_memo.created`
+- `work_item.created`
+- `work_item.updated`
 - `project.created`
 - `project.updated`
 - `project.deactivated`
@@ -381,4 +384,3 @@ Operations section:
 - Contributor merge does not rewrite existing work items.
 - Feature group merge does not rewrite existing work items.
 - Audit metadata redacts configured sensitive fields.
-

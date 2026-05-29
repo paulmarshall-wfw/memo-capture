@@ -7,13 +7,17 @@
   "types": "dist/src/index.d.ts",
   "scripts": {
     "build": "tsc -b tsconfig.json",
+    "db:migrate": "tsx src/migrate.ts",
     "dev": "tsx src/index.ts",
     "test": "node --test --import tsx tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@memo-capture/config": "0.1.0",
-    "@memo-capture/domain": "0.1.0"
+    "@memo-capture/domain": "0.1.0",
+    "pg": "8.13.1"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@types/pg": "8.11.10"
+  }
 }

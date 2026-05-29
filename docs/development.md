@@ -1,5 +1,32 @@
 # Development
 
+## Database
+
+Run pending API migrations against the configured Postgres database:
+
+```bash
+npm run db:migrate
+```
+
+The command uses `DATABASE_URL` and reads migrations from `apps/api/db/migrations`
+unless `MEMO_CAPTURE_MIGRATIONS_DIR` is set.
+
+## Local-Dev Auth
+
+Local-dev auth is development-only and must be explicitly enabled:
+
+```bash
+MEMO_CAPTURE_AUTH_MODE=local-dev MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED=true npm run dev:api
+```
+
+Create or refresh the fixed local-dev session:
+
+```bash
+curl -X POST http://127.0.0.1:4788/api/dev-auth/session
+```
+
+Use the returned `accessToken` as a bearer token for protected `/api/*` routes.
+
 ## Install Dependencies
 
 ```bash
