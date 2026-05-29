@@ -1,7 +1,7 @@
 # Memo Capture Specification Index
 
 Status: Draft implementation specification
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 Source records:
 
 - `docs/design/memo-capture-design-learnings.md`
@@ -9,6 +9,7 @@ Source records:
 - `docs/schema-baseline.md`
 - `apps/api/db/migrations/0001_initial.sql`
 - `packages/domain/src/index.ts`
+- `docs/specs/schema-alignment.md`
 
 ## Purpose
 
@@ -19,14 +20,15 @@ Memo Capture V1 is a cross-platform Tauri desktop app backed by a TypeScript API
 ## Reading Order
 
 1. [Domain Model And Schema](domain-model-and-schema.md)
-2. [Workflow Runtime Integration](workflow-runtime-integration.md)
-3. [Ingestion And Artifacts](ingestion-and-artifacts.md)
-4. [Processing Jobs And Diagnostics](processing-jobs-and-diagnostics.md)
-5. [Settings And Audit](settings-and-audit.md)
-6. [Auth And Security](auth-and-security.md)
-7. [Exports](exports.md)
-8. [MVP Implementation Plan](mvp-implementation-plan.md)
-9. [Decision Log](decision-log.md)
+2. [Schema Alignment](schema-alignment.md)
+3. [Workflow Runtime Integration](workflow-runtime-integration.md)
+4. [Ingestion And Artifacts](ingestion-and-artifacts.md)
+5. [Processing Jobs And Diagnostics](processing-jobs-and-diagnostics.md)
+6. [Settings And Audit](settings-and-audit.md)
+7. [Auth And Security](auth-and-security.md)
+8. [Exports](exports.md)
+9. [MVP Implementation Plan](mvp-implementation-plan.md)
+10. [Decision Log](decision-log.md)
 
 ## V1 Product Shape
 
@@ -115,4 +117,3 @@ Additional checks will be required as implementation grows:
 - Export golden/structure tests with normalized timestamps and IDs.
 - Desktop watched-folder path/state tests plus manual scripted OS watcher verification.
 - Chrome verification for UI behavior/layout changes unless a different browser is explicitly requested.
-

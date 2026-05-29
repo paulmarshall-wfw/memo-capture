@@ -1,7 +1,7 @@
 # MVP Implementation Plan
 
 Status: Draft implementation plan
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 ## Purpose
 
@@ -33,7 +33,8 @@ Goals:
 Acceptance:
 
 - Specs exist under `docs/specs/`.
-- Target schema differences are explicit.
+- Target schema differences are explicit in `docs/specs/schema-alignment.md`.
+- Shared domain constants/types cover the first backend schema/API contract.
 - Root `npm run verify` passes or blockers are documented.
 
 ## Milestone 1: Backend Foundation

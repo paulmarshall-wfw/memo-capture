@@ -1,13 +1,16 @@
 # Domain Model And Schema
 
 Status: Draft implementation specification
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 ## Purpose
 
 Define the target V1 domain model, Postgres schema, and API contracts for canonical Memo Capture records.
 
 The current migration at `apps/api/db/migrations/0001_initial.sql` is a bootstrap baseline. This spec is the target implementation contract and includes refinements discovered after the migration was created.
+
+See [Schema Alignment](schema-alignment.md) for the concrete delta from
+`0001_initial.sql` to the target V1 schema and the selected migration path.
 
 ## Entity Model
 
@@ -561,4 +564,3 @@ Behavior:
 - Editing an accepted item creates the next accepted snapshot.
 - Project/title/body/source memo requirements block promotion out of ingestion review.
 - Stale edit version returns `409 conflict`.
-

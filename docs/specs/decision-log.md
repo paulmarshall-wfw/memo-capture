@@ -1,7 +1,7 @@
 # Decision Log
 
 Status: Draft decision record
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 ## Purpose
 
@@ -187,6 +187,68 @@ Target V1: import validates/stages before explicit activation.
 
 Action: Add `workflow_staged_imports`.
 
+### S007: Preserve Bootstrap Migration And Add Forward Alignment Migration
+
+Current baseline: `0001_initial.sql` is already the committed bootstrap schema.
+
+Target V1: keep that file as historical baseline and add a forward-only
+`0002_align_target_v1_schema.sql` migration for target schema alignment.
+
+Action: Do not rewrite `0001_initial.sql`; implement the target delta described
+in `docs/specs/schema-alignment.md`.
+
+### S008: Backfill Local-Dev OIDC Issuer
+
+Current baseline: `app_users.oidc_subject` is globally unique and has no issuer.
+
+Target V1: users are unique by `(oidc_issuer, oidc_subject)`.
+
+Action: Backfill any existing bootstrap rows with a local-dev issuer before
+adding the target unique constraint.
+
+### S009: Accepted Snapshot Conversion Requires Export Foreign Key Update
+
+Current baseline: `export_batch_items.work_item_snapshot_id` references
+`work_item_snapshots`.
+
+Target V1: `export_batch_items.accepted_snapshot_id` references
+`accepted_snapshots`.
+
+Action: Convert snapshot table naming and export membership references in the
+same migration so export history cannot point at the wrong domain term.
+
+### S010: Settings Tables Are Part Of Schema Alignment
+
+Current baseline: prompt tables exist, but file type, extraction,
+transcription, provider, and export-template settings tables are missing.
+
+Target V1: backend settings are canonical and must exist before protected
+settings APIs, provider selection, watched-file parsing, or export template work.
+
+Action: Include settings tables and default active V1 file-type seeds in the
+target alignment migration rather than postponing them to UI implementation.
+
+### S011: Audit Events Gate Protected Mutations
+
+Current baseline: no audit table exists.
+
+Target V1: settings, workflow, lifecycle actions, retry/cancel, and export
+mutations write audit events.
+
+Action: Add `audit_events` before implementing protected mutation endpoints.
+
+### S012: Shared Domain Constants Own Schema String Values
+
+Current baseline: some schema/API string values were only documented in specs.
+
+Target V1: backend, worker, and UI code should import shared constants for
+source types, artifact kinds, import statuses, duplicate statuses, job statuses,
+provider status, workflow staged import status, export batch status, and audit
+event names.
+
+Action: Keep `packages/domain/src/index.ts` aligned before adding route,
+repository, or worker literals.
+
 ## Open Decisions
 
 ### O001: Exact State Workflow Runtime Package/API
@@ -275,4 +337,3 @@ Update this log when:
 - workflow runtime package/API is selected
 - an accepted risk is retired or becomes a blocker
 - implementation discovers a new compatibility constraint
-

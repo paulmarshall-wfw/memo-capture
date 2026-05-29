@@ -4,18 +4,17 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-05-29T12:22:26Z
+- Created timestamp UTC: 2026-05-29T19:48:06Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: refreshed the design learnings after the second grill-me pass and updated this handoff for a clean next-session start before build work.
+- Session scope: refreshed the handoff after the focused implementation specs were added and committed.
 
 ### Checkpoint Status
 
-- Git HEAD: `391caa4`
+- Git HEAD: `cbafa95`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `docs/design/memo-capture-design-learnings.md`
   - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
@@ -29,119 +28,97 @@
   - `package.json`
   - `docs/design/memo-capture-design-learnings.md`
   - `docs/architecture.md`
-  - `docs/development.md`
   - `docs/schema-baseline.md`
+  - `docs/specs/index.md`
+  - `docs/specs/domain-model-and-schema.md`
+  - `docs/specs/workflow-runtime-integration.md`
+  - `docs/specs/ingestion-and-artifacts.md`
+  - `docs/specs/processing-jobs-and-diagnostics.md`
+  - `docs/specs/settings-and-audit.md`
+  - `docs/specs/auth-and-security.md`
+  - `docs/specs/exports.md`
+  - `docs/specs/mvp-implementation-plan.md`
+  - `docs/specs/decision-log.md`
   - `apps/api/db/migrations/0001_initial.sql`
+  - `packages/domain/src/index.ts`
 - Last verification:
   - command: `node scripts/doctor.mjs`
   - result: passed
-  - timestamp UTC: 2026-05-29T07:48:06Z
-- Documentation sanity check:
-  - command: `git diff --check`
-  - result: passed
-  - command: `node scripts/doctor.mjs`
-  - result: passed
+  - timestamp UTC: 2026-05-29T19:48:06Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current code scaffold remains committed at `391caa4`; this session changed documentation only.
-- Next checkpoint action: review the docs diff, then commit `docs/design/memo-capture-design-learnings.md` and `handoff.md` if this continuity state should become the next repo checkpoint.
+- Safe-to-continue basis: current implementation specs are committed at `cbafa95`; this update changes only `handoff.md` to describe that checkpoint.
+- Next checkpoint action: review and commit `handoff.md` if this updated continuity state should become the next repo checkpoint.
 
 ## 2. Executive Summary
 
-Memo Capture is a freshly bootstrapped TypeScript/Tauri workspace with the major V1 product and architecture decisions now consolidated in `docs/design/memo-capture-design-learnings.md`.
+Memo Capture is a scaffolded TypeScript/Tauri workspace with the V1 technical specification set now created and committed.
 
 Complete now:
 
-- Git repo initialized and committed at `391caa4 Bootstrap Memo Capture workspace scaffold`.
-- Root project policy and workflow notes are in `AGENTS.md`.
-- Runtime architecture is captured in `docs/architecture.md`.
-- npm workspace scaffold exists for desktop, API, worker, domain, and config packages.
-- Initial Postgres schema baseline exists at `apps/api/db/migrations/0001_initial.sql`.
-- Dependency-free bootstrap doctor passed earlier in this checkpoint.
-- The design learnings doc now resolves the major grill-me topics:
-  - deletion/retention
-  - security/privacy
-  - project, feature group, and contributor governance
-  - settings/audit
-  - workflow import/activation
-  - processing diagnostics
-  - ingestion edge cases
-  - desktop local cache
-  - provider configuration
-  - API/desktop boundaries
-  - UI structure
-  - auth/session behavior
-  - export semantics
-  - schema edge cases
-  - MVP boundary and implementation sequence
-  - versioning/compatibility
-  - testing/verification
-  - failure recovery/operator responsibilities
-  - first specification artifact shape
+- Git HEAD is `cbafa95 Add Memo Capture implementation specs`.
+- Runtime scaffold exists for desktop, API, worker, domain, and config packages.
+- The focused spec set exists under `docs/specs/`.
+- `docs/specs/index.md` is the entrypoint for the target V1 implementation contract.
+- `docs/specs/decision-log.md` tracks target schema adjustments from the bootstrap migration and the remaining open implementation decisions.
+- `node scripts/doctor.mjs` passes.
 
 Incomplete now:
 
-- Dependencies have not been installed in this workspace.
-- Typecheck, tests, builds, and dev servers have not been run after bootstrap.
-- API, worker, desktop UI, database migrations, auth, workflow runtime integration, object storage, and processing jobs are skeletal.
-- The focused technical product specs have not been created yet.
-- No build implementation has started.
+- Dependencies are not installed in this workspace.
+- Typecheck, tests, builds, and dev servers have not been run after the spec checkpoint.
+- The app remains scaffold-only: API, worker, desktop UI, database migrations, auth, workflow runtime integration, object storage, processing jobs, exports, and providers are not implemented beyond placeholders.
+- Milestone 0 schema/spec alignment work has not started.
 
-Safe to continue from this state, with the verification caveat above. The next workstream should turn the refreshed design record into focused technical product specs before feature implementation begins.
+Safe to continue from this state. The next session should start from the committed spec set and avoid reopening accepted V1 constraints unless implementation evidence requires it.
 
 ## 3. Current Objective
 
-Immediate goal: create the technical product specification set from the refreshed design learnings, then commit the documentation checkpoint when explicitly requested.
+Immediate goal: start Milestone 0 from `docs/specs/mvp-implementation-plan.md`.
 
 Intended finished state for the next workstream:
 
-- focused spec set created under `docs/specs/`
-- implementation-relevant decisions copied from `docs/design/memo-capture-design-learnings.md`
-- database table and API route contracts drafted immediately
-- low-fidelity screen inventory and interaction rules included
-- vertical-slice acceptance tests defined
-- unresolved implementation decisions tracked in `docs/specs/decision-log.md`
-- documentation sanity check performed
-- docs checkpoint committed only if explicitly requested
+- compare `apps/api/db/migrations/0001_initial.sql` against the target schema in `docs/specs/domain-model-and-schema.md`
+- decide the concrete migration path from the bootstrap schema to the target V1 schema
+- add or adjust shared domain constants/types needed for implementation
+- document any new open decisions in `docs/specs/decision-log.md`
+- run available verification and report blockers exactly
 
-Definition of done for the spec work:
+Definition of done:
 
-- `docs/specs/index.md` links the focused specs
-- all initial spec files exist and are internally consistent
-- accepted V1 decisions are not left only in chat
-- no build work starts until the user approves moving from specification into implementation
+- target schema gaps are converted into implementable migration tasks
+- any changed spec decisions remain reflected in `docs/specs/`
+- no implementation work jumps ahead of the schema/API contract baseline
 
 ## 4. Current State
 
 ### Working
 
-- `node scripts/doctor.mjs` passed earlier in the checkpoint.
-- Git repo exists on branch `main`.
+- Git repo is on `main` at `cbafa95`.
 - Root scripts are defined in `package.json`.
-- Shared domain constants define V1 workflow states, bucket roles, processing job kinds, active file types, and export schema.
-- API has placeholder health, readiness, and version endpoints.
-- Worker has a placeholder startup path and references V1 processing job kinds.
-- Desktop has a placeholder React operational workspace UI and Tauri shell config.
-- `docs/design/memo-capture-design-learnings.md` is now the current design decision source for V1.
+- `node scripts/doctor.mjs` passes and confirms required bootstrap files.
+- API exposes placeholder health, readiness, and version endpoints.
+- Worker has a placeholder startup path.
+- Desktop has a placeholder React/Tauri operational workspace UI.
+- Shared domain constants define V1 workflow states, bucket roles, file types, job kinds, job statuses, and export schema.
 
 ### Partially Working
 
-- Postgres schema baseline exists at `apps/api/db/migrations/0001_initial.sql`, but no migration runner is wired.
-- Desktop UI is static seeded UI; it is not connected to the API.
-- API and worker do not yet connect to Postgres, object storage, OIDC, State Workflow Runtime, LLM, or transcription services.
+- Postgres bootstrap migration exists, but it is not the final target schema and no migration runner is wired.
+- `docs/specs/` defines target V1 behavior, but implementation has not caught up.
+- Desktop UI is static and not API-backed.
 - `npm run verify` is defined but requires dependencies first.
 
 ### Not Working Yet
 
-- Watched-folder ingestion.
-- Artifact upload/playback/download.
-- Workflow definition import/activation.
-- State Workflow Runtime integration.
 - Auth/OIDC sign-in and token validation.
-- Processing job claiming/execution.
-- AI expansion and structured output validation.
-- Export batch generation.
-- Real settings screens and persistence.
-- Technical product specs under `docs/specs/`.
+- Database client, repositories, services, and migration runner.
+- Workflow definition import, staging, activation, and runtime actions.
+- Watched-folder ingestion and archive handling.
+- Artifact upload, playback, download, and object storage integration.
+- Processing job claiming, retries, cancellation, and diagnostics.
+- AI expansion and transcription providers.
+- Accepted snapshots and export batch generation.
+- Real settings, operations, export, and diagnostics screens.
 
 ### Not Yet Verified
 
@@ -154,24 +131,24 @@ Definition of done for the spec work:
 - `npm run dev:worker`
 - `npm run dev:desktop`
 - Tauri Rust build
-- Browser/Chrome validation of the desktop web UI
+- Chrome validation of the desktop UI
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
-- Do not use `latest`; use numbered dependency versions.
-- Do not install dependencies, commit, tag, release, publish, deploy, delete files, or create additional artifacts unless explicitly asked.
-- Warn before starting build work, editing files, creating docs/artifacts, installing dependencies, or committing.
-- Apply `engineering-project-standard` for setup/maintenance/stack work.
+- Do not use unnumbered floating versions.
+- Do not install dependencies, commit, tag, release, publish, deploy, delete files, or weaken project instructions unless explicitly asked.
+- Apply `engineering-project-standard` for setup, maintenance, versioning, and stack work.
 - Apply `web-app-design-standard` for frontend UI work.
+- Use Chrome for browser automation unless the user explicitly asks for another browser or Chrome is unavailable.
 - Desktop clients must not connect directly to Postgres or object storage.
-- Workflow actions, buckets, and reopen behavior must be definition-driven where possible.
-- Store only the active workflow definition bundle in-app; rollback is by re-importing a known-good external bundle.
-- V1 requires real OIDC auth, but all signed-in users are admins.
+- Backend settings are canonical; watched-folder and archive paths are desktop-local settings.
+- Workflow actions, buckets, and reopen behavior must be driven by the active workflow definition wherever possible.
+- V1 stores only the active workflow definition bundle; rollback requires re-importing a known-good external bundle.
+- V1 requires authentication, but all signed-in users are admins.
 - AI output consumed by code must be structured JSON and validated before storage.
 - CSV export is out of scope for V1.
-- V1 has no user delete or privacy purge behavior.
-- No manual file import outside watched folders in MVP.
+- V1 has no delete or privacy purge behavior.
 
 ## 6. Commands and Verification
 
@@ -195,64 +172,54 @@ Most recent verified command:
 node scripts/doctor.mjs
 ```
 
-Result: passed earlier in the checkpoint.
+Result: passed at 2026-05-29T19:48:06Z.
+
+Current blocker:
+
+- `node_modules` is absent. Install dependencies before typecheck, tests, builds, or dev servers.
 
 Prerequisites:
 
 - Node.js `>=22.14.0 <23`
 - npm `>=10.9.0 <11`
 - Rust stable toolchain for Tauri builds
-- Postgres for full backend work
-- S3-compatible object storage for artifact work
-- OIDC provider details for auth work
-
-Unverified areas: dependency install, TypeScript, tests, builds, Tauri, dev servers, browser validation, database runtime, and external services.
+- Postgres for backend persistence work
+- S3-compatible object storage for artifact/export work
+- OIDC provider details or local-dev auth mode for auth work
 
 ## 7. Files to Open First
 
 - `AGENTS.md`: repo-local instructions and constraints.
 - `handoff.md`: hot-context continuity source.
-- `docs/design/memo-capture-design-learnings.md`: current V1 design decision record.
-- `README.md`: current workspace overview and documented commands.
-- `package.json`: root workspace scripts and dependency policy.
-- `docs/architecture.md`: runtime boundaries and service ownership.
-- `docs/schema-baseline.md`: schema entity map.
-- `apps/api/db/migrations/0001_initial.sql`: initial database baseline.
-- `packages/domain/src/index.ts`: shared constants that encode key V1 decisions.
+- `docs/specs/index.md`: entrypoint and reading order for the V1 spec set.
+- `docs/specs/mvp-implementation-plan.md`: next milestone sequence.
+- `docs/specs/domain-model-and-schema.md`: target schema and API contracts.
+- `docs/specs/decision-log.md`: schema adjustments and open implementation decisions.
+- `apps/api/db/migrations/0001_initial.sql`: bootstrap schema to compare against target schema.
+- `packages/domain/src/index.ts`: current shared constants and types.
+- `package.json`: root scripts, workspace shape, and numbered dependency versions.
 
 ## 8. Next Actions
 
 Next:
 
-- Review the docs diff.
-- If the user asks for the docs checkpoint, commit `docs/design/memo-capture-design-learnings.md` and `handoff.md`.
-- When explicitly instructed, create the technical product spec set:
-  - `docs/specs/index.md`
-  - `docs/specs/domain-model-and-schema.md`
-  - `docs/specs/workflow-runtime-integration.md`
-  - `docs/specs/ingestion-and-artifacts.md`
-  - `docs/specs/processing-jobs-and-diagnostics.md`
-  - `docs/specs/settings-and-audit.md`
-  - `docs/specs/auth-and-security.md`
-  - `docs/specs/exports.md`
-  - `docs/specs/mvp-implementation-plan.md`
-  - `docs/specs/decision-log.md`
+- Review this handoff diff.
+- Commit `handoff.md` if the updated continuity state should be preserved.
+- Begin Milestone 0: compare the bootstrap migration with `docs/specs/domain-model-and-schema.md`.
+- Update `docs/specs/decision-log.md` if schema alignment reveals new open decisions.
 
 Blocked:
 
 - Full verification is blocked until dependencies are installed.
-- Implementation should wait until the technical product specs are created and reviewed.
+- Feature implementation should wait until schema/API contract alignment is complete.
 
 Later:
 
-- Run `npm install` if explicitly approved.
-- Run `npm run verify` after install.
-- Fix any TypeScript, Vite, Tauri, or test failures from first verification.
-- Wire a migration runner or ORM choice.
-- Add real API routing and persistence boundaries.
-- Add workflow runtime integration after the spec and workflow bundle contract are established.
-- Add desktop/API connection and local watched-folder settings.
+- Run `npm install` only when explicitly approved.
+- Run `npm run verify` after dependencies are installed.
+- Implement backend foundation after Milestone 0 is resolved.
+- Use Chrome verification for future UI behavior/layout changes.
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source of current state. Then review `AGENTS.md`, `docs/design/memo-capture-design-learnings.md`, `README.md`, `package.json`, `docs/architecture.md`, `docs/schema-baseline.md`, `apps/api/db/migrations/0001_initial.sql`, and `packages/domain/src/index.ts`. Treat the committed scaffold at `391caa4` plus the current documentation changes as the starting point. Do not reopen accepted product constraints unless implementation evidence requires it. The next planned work is to generate the focused technical product specs under `docs/specs/`; do not start build implementation until the specs exist and the user approves moving forward. Do not install dependencies, commit, tag, release, publish, or delete files unless explicitly requested.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source of current state. Then review `AGENTS.md`, `docs/specs/index.md`, `docs/specs/mvp-implementation-plan.md`, `docs/specs/domain-model-and-schema.md`, `docs/specs/decision-log.md`, `apps/api/db/migrations/0001_initial.sql`, `packages/domain/src/index.ts`, and `package.json`. Treat `cbafa95 Add Memo Capture implementation specs` as the current committed checkpoint, with only `handoff.md` intentionally dirty if it has not been committed yet. Start with Milestone 0 schema/spec alignment. Do not install dependencies, commit, tag, release, publish, deploy, delete files, or start feature implementation unless explicitly requested.
