@@ -1,0 +1,311 @@
+# Ingestion And Artifacts
+
+Status: Draft implementation specification
+Last updated: 2026-05-29
+
+## Purpose
+
+Define V1 ingestion channels, watched-folder behavior, artifact storage, duplicate handling, local staging/cache, upload/finalization contracts, and recovery behavior.
+
+## Supported V1 Channels
+
+- App data-entry form.
+- Watched folder for text files.
+- Watched folder for audio files.
+
+Manual file import outside watched folders is out of scope for MVP.
+
+## Active File Types
+
+Active text formats:
+
+- `.txt`
+- `.md`
+- `.markdown`
+
+Active audio formats:
+
+- `.m4a`
+- `.mp3`
+- `.wav`
+
+Unsupported configured types can be stored as inactive or `not_supported_yet`, but watched-folder ingestion must not attempt unsupported file types.
+
+## Source Creation Rules
+
+Every successful capture creates provenance first:
+
+1. Create or verify managed artifact where applicable.
+2. Create or reuse `source_memo`.
+3. Create `work_item` unless exact duplicate rules suppress it.
+4. Schedule processing jobs where needed.
+
+Initial state:
+
+- `new_idea` for form submissions and high-confidence imports.
+- `needs_ingestion_review` for incomplete or low-confidence imports.
+
+Promotion from `needs_ingestion_review` to `new_idea` requires:
+
+- selected `project_id`
+- title
+- memo body or transcript
+- linked source memo
+
+Feature group, tags, and contributor are optional.
+
+## Desktop Watched-Folder Responsibilities
+
+The desktop app owns:
+
+- configured watched folder paths
+- configured archive folder paths
+- local file stability checks
+- local staging/cache
+- upload queue
+- local warning persistence
+- archive moves
+- machine identity
+
+Rules:
+
+- Wait for file size and mtime stability before upload.
+- Recursion is off by default and configurable per watched folder.
+- Multiple desktop clients watching the same folder are unsupported in V1.
+- Failed local import/upload state survives desktop restart.
+- Unsupported file types are counted and shown in low-priority local diagnostics without creating backend records.
+
+## Archive Behavior
+
+Watched-folder files are input channels, not long-term source truth.
+
+Rules:
+
+- Archive after managed artifact upload succeeds.
+- Do not wait for extraction or transcription success before archiving.
+- Never delete originals automatically.
+- Archive location is desktop-local.
+- Archive files are grouped by import date.
+- Archived filename preserves original filename with import ID or hash prefix.
+- Archive move must never overwrite existing files.
+- Import events record original path and archive path.
+- Archive move failure does not undo successful import.
+- Archive move failure creates a local warning and appears in diagnostics.
+
+Archive layout:
+
+```text
+<archive-root>/
+  2026/
+    05/
+      29/
+        <import-id-prefix>-<original-filename>
+```
+
+## Artifact Storage Contract
+
+Object storage is S3-compatible.
+
+Rules:
+
+- Backend owns object storage credentials.
+- Desktop clients never receive permanent object storage credentials.
+- Desktop uploads through backend-mediated signed URLs or backend upload streams.
+- Playback/download uses backend-authorized routes or signed access.
+- Raw file blobs are not stored in Postgres.
+- Original imported files are permanent managed artifacts unless a future explicit deletion feature is introduced.
+
+Object key layout includes a numbered layout version:
+
+```text
+artifacts/v1/source-memos/<source-memo-id>/original/<artifact-id>-<sanitized-name>
+artifacts/v1/source-memos/<source-memo-id>/derived/transcript/<artifact-id>.txt
+exports/v1/<export-batch-id>/manifest.json
+exports/v1/<export-batch-id>/items.jsonl
+exports/v1/<export-batch-id>/markdown/<project-slug>/<snapshot-id>-<slug>.md
+exports/v1/<export-batch-id>/combined.md
+```
+
+Object keys may include sanitized project/source filename fragments for operator debugging.
+
+## Upload Session Flow
+
+The backend creates an upload/import session first.
+
+1. Desktop detects stable supported file.
+2. Desktop computes content hash.
+3. Desktop calls create upload session.
+4. Backend checks exact duplicate by content hash.
+5. Backend returns duplicate result or upload authorization.
+6. Desktop uploads artifact.
+7. Desktop calls finalize.
+8. Backend verifies object metadata/hash.
+9. Backend creates artifact, source memo, import event, work item, and processing jobs.
+10. Desktop archives original after backend confirms managed artifact storage.
+
+If upload succeeds but source/work-item creation fails:
+
+- create a recoverable import error tied to uploaded artifact
+- retry finalization without reuploading
+
+## API Contracts
+
+### Create upload session
+
+`POST /api/imports/upload-sessions`
+
+Request:
+
+```json
+{
+  "machineId": "string",
+  "watchFolderId": "string",
+  "sourceType": "watched_audio_file",
+  "originalFilename": "memo.m4a",
+  "originalPath": "/local/path/memo.m4a",
+  "mimeType": "audio/mp4",
+  "byteSize": 12345,
+  "contentHash": "sha256:..."
+}
+```
+
+Response for upload:
+
+```json
+{
+  "sessionId": "uuid",
+  "status": "upload_required",
+  "upload": {
+    "method": "PUT",
+    "url": "https://signed-upload-url",
+    "headers": {}
+  }
+}
+```
+
+Response for exact duplicate:
+
+```json
+{
+  "sessionId": "uuid",
+  "status": "duplicate_exact",
+  "duplicateOfSourceMemoId": "uuid"
+}
+```
+
+### Finalize upload session
+
+`POST /api/imports/upload-sessions/{sessionId}/finalize`
+
+Request:
+
+```json
+{
+  "machineId": "string",
+  "archivePlanned": true
+}
+```
+
+Response:
+
+```json
+{
+  "sourceMemoId": "uuid",
+  "workItemId": "uuid",
+  "artifactId": "uuid",
+  "initialWorkflowState": "needs_ingestion_review",
+  "processingJobs": ["uuid"]
+}
+```
+
+### Report archive result
+
+`POST /api/imports/{importEventId}/archive-result`
+
+Request:
+
+```json
+{
+  "machineId": "string",
+  "archivePath": "/archive/2026/05/29/abc-memo.m4a",
+  "status": "archived",
+  "warning": null
+}
+```
+
+### Create form memo
+
+`POST /api/source-memos/form`
+
+Request:
+
+```json
+{
+  "projectId": "uuid",
+  "featureGroupId": "uuid | null",
+  "title": "string",
+  "body": "string",
+  "contributorText": "string | null",
+  "tags": ["string"]
+}
+```
+
+## Duplicate Handling
+
+Exact duplicate:
+
+- based on content hash
+- creates import event
+- links to existing source memo
+- does not create a new source memo
+- does not create a new work item
+
+Possible duplicate:
+
+- same or similar text with different file hash
+- creates separate source memo and work item
+- creates possible duplicate signal
+- remains user-reviewable
+
+## Transcripts
+
+Audio source memos support:
+
+- original managed audio artifact
+- current transcript text in Postgres for query/review
+- derived transcript artifact for provenance/versioning
+- audio playback in detail panel
+- manual transcript/body entry after transcription failure
+
+Transcription failure does not delete or invalidate the original source artifact.
+
+## Desktop Local Cache
+
+Rules:
+
+- App-managed default staging/cache path.
+- Advanced setting can move cache path.
+- Local artifact cache has configurable size cap with least-recently-used cleanup.
+- Clearing local cache does not affect backend managed artifacts.
+- Staged-but-not-uploaded files are never auto-cleaned.
+- Machine identity is stable per app data directory/install and regenerated if local app data is removed.
+
+## Security And Privacy
+
+- Local file paths may appear in local diagnostics and backend import metadata where needed for troubleshooting.
+- Local paths must not be sent to external AI/transcription providers.
+- Desktop local cache uses OS-user protection only in V1.
+- Watched-folder archive copies are outside Memo Capture's privacy boundary after the app moves them.
+
+## Acceptance Tests
+
+- Supported text file creates upload session, artifact, source memo, work item, and extraction job.
+- Supported audio file creates upload session, artifact, source memo, work item, and transcription job.
+- Unsupported file type creates only local diagnostics.
+- File is archived only after upload/finalize confirms managed artifact storage.
+- Archive collision generates a non-overwriting destination.
+- Archive move failure records local warning and does not undo import.
+- Exact duplicate content hash creates duplicate import event only.
+- Upload-finalize failure can retry without reuploading.
+- Desktop restart preserves staged upload state.
+
