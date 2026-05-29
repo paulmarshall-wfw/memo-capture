@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "0.2.0",
+  "appName": "memo-capture",
+  "definitionVersion": "0.1.0",
+  "id": "memo_capture_state",
+  "states": [
+    "accepted",
+    "failed",
+    "ignored",
+    "needs_ingestion_review",
+    "new_idea",
+    "parked",
+    "rejected"
+  ],
+  "terminalStates": [
+    "failed",
+    "ignored",
+    "rejected"
+  ],
+  "transitions": [
+    {
+      "from": "accepted",
+      "to": "new_idea"
+    },
+    {
+      "from": "needs_ingestion_review",
+      "to": "failed"
+    },
+    {
+      "from": "needs_ingestion_review",
+      "to": "ignored"
+    },
+    {
+      "from": "needs_ingestion_review",
+      "to": "new_idea"
+    },
+    {
+      "from": "new_idea",
+      "to": "accepted"
+    },
+    {
+      "from": "new_idea",
+      "to": "failed"
+    },
+    {
+      "from": "new_idea",
+      "to": "ignored"
+    },
+    {
+      "from": "new_idea",
+      "to": "parked"
+    },
+    {
+      "from": "new_idea",
+      "to": "rejected"
+    },
+    {
+      "from": "parked",
+      "to": "accepted"
+    },
+    {
+      "from": "parked",
+      "to": "failed"
+    },
+    {
+      "from": "parked",
+      "to": "ignored"
+    },
+    {
+      "from": "parked",
+      "to": "new_idea"
+    },
+    {
+      "from": "parked",
+      "to": "rejected"
+    }
+  ]
+}
