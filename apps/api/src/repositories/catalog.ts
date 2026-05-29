@@ -112,6 +112,13 @@ export interface FeatureGroupInput {
   actorUserId: string;
 }
 
+export interface FeatureGroupPatchInput {
+  name?: string | undefined;
+  slug?: string | null | undefined;
+  description?: string | undefined;
+  actorUserId: string;
+}
+
 export class FeatureGroupRepository {
   constructor(private readonly db: Queryable) {}
 
@@ -151,23 +158,24 @@ export class FeatureGroupRepository {
 
   async update(
     featureGroupId: string,
-    input: FeatureGroupInput
+    input: FeatureGroupPatchInput
   ): Promise<FeatureGroupRecord | null> {
+    const nextSlug = input.slug === undefined || input.slug === null ? null : normalizeSlug(input.slug);
     const result = await this.db.query<FeatureGroupRow>(
       `update feature_groups
        set
-         name = $2,
-         slug = $3,
-         description = $4,
+         name = coalesce($2, name),
+         slug = coalesce($3, slug),
+         description = coalesce($4, description),
          updated_by = $5,
          updated_at = now()
        where id = $1
        returning *`,
       [
         featureGroupId,
-        input.name.trim(),
-        normalizeSlug(input.slug ?? input.name),
-        input.description ?? "",
+        input.name?.trim() ?? null,
+        nextSlug,
+        input.description ?? null,
         input.actorUserId
       ]
     );

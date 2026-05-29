@@ -83,6 +83,81 @@ test("protected routes require authorization and include a request id", async ()
   }
 });
 
+test("basic protected capture routes expose session, catalog, work items, and form memo creation", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    MEMO_CAPTURE_APP_VERSION: "0.1.0",
+    MEMO_CAPTURE_COMMIT_SHA: "test-sha"
+  });
+  const services = captureRouteServices();
+  const server = createApiServer(config, createLogger("error"), services);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  try {
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const session = await authedJson(baseUrl, "/api/current-session");
+    assert.equal(session.response.status, 200);
+    assert.equal(session.body.user.email, "dev@example.test");
+
+    const featureGroupPatch = await authedJson(baseUrl, "/api/feature-groups/feature-1", {
+      method: "PATCH",
+      body: JSON.stringify({ name: "Capture API", slug: "capture-api" })
+    });
+    assert.equal(featureGroupPatch.response.status, 200);
+    assert.equal(featureGroupPatch.body.featureGroup.slug, "capture-api");
+
+    const featureGroupDeactivate = await authedJson(
+      baseUrl,
+      "/api/feature-groups/feature-1/deactivate",
+      { method: "POST" }
+    );
+    assert.equal(featureGroupDeactivate.response.status, 200);
+    assert.equal(featureGroupDeactivate.body.featureGroup.isActive, false);
+
+    const contributorPatch = await authedJson(baseUrl, "/api/contributors/contributor-1", {
+      method: "PATCH",
+      body: JSON.stringify({ displayName: "Paul Marshall" })
+    });
+    assert.equal(contributorPatch.response.status, 200);
+    assert.equal(contributorPatch.body.contributor.displayName, "Paul Marshall");
+
+    const contributorDeactivate = await authedJson(
+      baseUrl,
+      "/api/contributors/contributor-1/deactivate",
+      { method: "POST" }
+    );
+    assert.equal(contributorDeactivate.response.status, 200);
+    assert.equal(contributorDeactivate.body.contributor.isActive, false);
+
+    const workItemDetail = await authedJson(baseUrl, "/api/work-items/work-item-1");
+    assert.equal(workItemDetail.response.status, 200);
+    assert.equal(workItemDetail.body.workItem.title, "Captured memo");
+
+    const missingWorkItem = await authedJson(baseUrl, "/api/work-items/missing");
+    assert.equal(missingWorkItem.response.status, 404);
+    assert.equal(missingWorkItem.body.error.code, "not_found");
+
+    const formMemo = await authedJson(baseUrl, "/api/source-memos/form", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId: "project-1",
+        title: "Capture this",
+        body: "Useful memo body"
+      })
+    });
+    assert.equal(formMemo.response.status, 200);
+    assert.equal(formMemo.body.result.sourceMemoId, "source-memo-1");
+    assert.equal(formMemo.body.result.workItem.workflowState, "new_idea");
+  } finally {
+    server.close();
+    await services.close();
+  }
+});
+
 function stubServices(): AppServices {
   return {
     auth: {
@@ -102,6 +177,132 @@ function stubServices(): AppServices {
       findById: async () => null
     } as AppServices["workItems"],
     close: async () => undefined
+  };
+}
+
+function captureRouteServices(): AppServices {
+  const user = {
+    id: "user-1",
+    oidcIssuer: "memo-capture-local-dev",
+    oidcSubject: "local-dev-user",
+    email: "dev@example.test",
+    displayName: "Dev User",
+    firstSeenAt: "2026-05-29T00:00:00.000Z",
+    lastSeenAt: "2026-05-29T00:00:00.000Z",
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  };
+  const project = {
+    id: "project-1",
+    slug: "memo-capture",
+    name: "Memo Capture",
+    description: "",
+    context: "",
+    isActive: true,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  };
+  const featureGroup = {
+    id: "feature-1",
+    slug: "capture-api",
+    name: "Capture API",
+    description: "",
+    isActive: true,
+    mergedIntoFeatureGroupId: null,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  };
+  const contributor = {
+    id: "contributor-1",
+    displayName: "Paul Marshall",
+    isActive: true,
+    mergedIntoContributorId: null,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  };
+  const workItem = {
+    id: "work-item-1",
+    sourceMemoId: "source-memo-1",
+    projectId: "project-1",
+    featureGroupId: "feature-1",
+    contributorText: "Paul",
+    contributorId: "contributor-1",
+    title: "Captured memo",
+    body: "Useful memo body",
+    bodyFormat: "markdown",
+    workflowState: "new_idea",
+    workflowItemVersion: 1,
+    acceptedSnapshotId: null,
+    acceptedUnexportedChanges: false,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  };
+
+  return {
+    auth: {
+      authenticateAuthorizationHeader: async (header: string | undefined) => {
+        if (header !== "Bearer test-token") {
+          throw new HttpError(401, "unauthorized", "Missing bearer token.");
+        }
+
+        return {
+          user,
+          authMode: "local-dev",
+          isAdmin: true
+        };
+      },
+      createLocalDevSession: async () => ({
+        user,
+        authMode: "local-dev",
+        isAdmin: true,
+        accessToken: "test-token"
+      })
+    } as AppServices["auth"],
+    catalog: {
+      listProjects: async () => [project],
+      createProject: async () => project,
+      updateProject: async () => project,
+      deactivateProject: async () => ({ ...project, isActive: false }),
+      listFeatureGroups: async () => [featureGroup],
+      createFeatureGroup: async () => featureGroup,
+      updateFeatureGroup: async () => featureGroup,
+      deactivateFeatureGroup: async () => ({ ...featureGroup, isActive: false }),
+      listContributors: async () => [contributor],
+      createContributor: async () => contributor,
+      updateContributor: async () => contributor,
+      deactivateContributor: async () => ({ ...contributor, isActive: false })
+    } as AppServices["catalog"],
+    formMemos: {
+      createFromRequest: async () => ({
+        sourceMemoId: "source-memo-1",
+        workItem
+      })
+    } as AppServices["formMemos"],
+    workItems: {
+      list: async () => [workItem],
+      findById: async (workItemId: string) => (workItemId === workItem.id ? workItem : null)
+    } as AppServices["workItems"],
+    close: async () => undefined
+  };
+}
+
+async function authedJson(
+  baseUrl: string,
+  path: string,
+  init: RequestInit = {}
+): Promise<{ response: Response; body: Record<string, any> }> {
+  const headers = new Headers(init.headers);
+  headers.set("authorization", "Bearer test-token");
+  headers.set("content-type", "application/json");
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers
+  });
+
+  return {
+    response,
+    body: (await response.json()) as Record<string, any>
   };
 }
 

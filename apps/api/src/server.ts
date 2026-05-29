@@ -127,7 +127,7 @@ function matchProtectedRoute(
   pathname: string,
   services: AppServices
 ): RouteHandler | null {
-  if (method === "GET" && pathname === "/api/auth/session") {
+  if (method === "GET" && (pathname === "/api/auth/session" || pathname === "/api/current-session")) {
     return async (_context, session) => serializeSession(session);
   }
 
@@ -148,10 +148,13 @@ function matchProtectedRoute(
   const projectDeactivateMatch = /^\/api\/projects\/([^/]+)\/deactivate$/.exec(pathname);
   if (method === "POST" && projectDeactivateMatch !== null) {
     return async (context, session) => ({
-      project: await services.catalog.deactivateProject(
-        projectDeactivateMatch[1] ?? "",
-        session.user,
-        context.requestId
+      project: requireFound(
+        await services.catalog.deactivateProject(
+          projectDeactivateMatch[1] ?? "",
+          session.user,
+          context.requestId
+        ),
+        "project"
       )
     });
   }
@@ -159,11 +162,14 @@ function matchProtectedRoute(
   const projectPatchMatch = /^\/api\/projects\/([^/]+)$/.exec(pathname);
   if (method === "PATCH" && projectPatchMatch !== null) {
     return async (context, session) => ({
-      project: await services.catalog.updateProject(
-        projectPatchMatch[1] ?? "",
-        await readJsonBody(context.request),
-        session.user,
-        context.requestId
+      project: requireFound(
+        await services.catalog.updateProject(
+          projectPatchMatch[1] ?? "",
+          await readJsonBody(context.request),
+          session.user,
+          context.requestId
+        ),
+        "project"
       )
     });
   }
@@ -182,6 +188,35 @@ function matchProtectedRoute(
     });
   }
 
+  const featureGroupDeactivateMatch = /^\/api\/feature-groups\/([^/]+)\/deactivate$/.exec(pathname);
+  if (method === "POST" && featureGroupDeactivateMatch !== null) {
+    return async (context, session) => ({
+      featureGroup: requireFound(
+        await services.catalog.deactivateFeatureGroup(
+          featureGroupDeactivateMatch[1] ?? "",
+          session.user,
+          context.requestId
+        ),
+        "feature_group"
+      )
+    });
+  }
+
+  const featureGroupPatchMatch = /^\/api\/feature-groups\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && featureGroupPatchMatch !== null) {
+    return async (context, session) => ({
+      featureGroup: requireFound(
+        await services.catalog.updateFeatureGroup(
+          featureGroupPatchMatch[1] ?? "",
+          await readJsonBody(context.request),
+          session.user,
+          context.requestId
+        ),
+        "feature_group"
+      )
+    });
+  }
+
   if (method === "GET" && pathname === "/api/contributors") {
     return async () => ({ contributors: await services.catalog.listContributors() });
   }
@@ -196,13 +231,47 @@ function matchProtectedRoute(
     });
   }
 
+  const contributorDeactivateMatch = /^\/api\/contributors\/([^/]+)\/deactivate$/.exec(pathname);
+  if (method === "POST" && contributorDeactivateMatch !== null) {
+    return async (context, session) => ({
+      contributor: requireFound(
+        await services.catalog.deactivateContributor(
+          contributorDeactivateMatch[1] ?? "",
+          session.user,
+          context.requestId
+        ),
+        "contributor"
+      )
+    });
+  }
+
+  const contributorPatchMatch = /^\/api\/contributors\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && contributorPatchMatch !== null) {
+    return async (context, session) => ({
+      contributor: requireFound(
+        await services.catalog.updateContributor(
+          contributorPatchMatch[1] ?? "",
+          await readJsonBody(context.request),
+          session.user,
+          context.requestId
+        ),
+        "contributor"
+      )
+    });
+  }
+
   if (method === "GET" && pathname === "/api/work-items") {
     return async () => ({ workItems: await services.workItems.list() });
   }
 
   const workItemDetailMatch = /^\/api\/work-items\/([^/]+)$/.exec(pathname);
   if (method === "GET" && workItemDetailMatch !== null) {
-    return async () => ({ workItem: await services.workItems.findById(workItemDetailMatch[1] ?? "") });
+    return async () => ({
+      workItem: requireFound(
+        await services.workItems.findById(workItemDetailMatch[1] ?? ""),
+        "work_item"
+      )
+    });
   }
 
   if (method === "POST" && pathname === "/api/source-memos/form") {
@@ -222,6 +291,14 @@ function matchProtectedRoute(
   }
 
   return null;
+}
+
+function requireFound<Record>(record: Record | null, subjectType: string): Record {
+  if (record === null) {
+    throw new HttpError(404, "not_found", `${subjectType} was not found.`);
+  }
+
+  return record;
 }
 
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {

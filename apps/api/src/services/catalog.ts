@@ -111,6 +111,56 @@ export class CatalogService {
     });
   }
 
+  async updateFeatureGroup(
+    featureGroupId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<FeatureGroupRecord | null> {
+    const input = parseFeatureGroupPatchBody(body);
+    return this.db.transaction(async (client) => {
+      const featureGroups = new FeatureGroupRepository(client);
+      const audit = new AuditRepository(client);
+      const featureGroup = await featureGroups.update(featureGroupId, {
+        ...input,
+        actorUserId: actor.id
+      });
+      if (featureGroup !== null) {
+        await audit.record({
+          eventName: "feature_group.updated",
+          actor,
+          subjectType: "feature_group",
+          subjectId: featureGroup.id,
+          requestId,
+          metadata: { slug: featureGroup.slug }
+        });
+      }
+      return featureGroup;
+    });
+  }
+
+  async deactivateFeatureGroup(
+    featureGroupId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<FeatureGroupRecord | null> {
+    return this.db.transaction(async (client) => {
+      const featureGroups = new FeatureGroupRepository(client);
+      const audit = new AuditRepository(client);
+      const featureGroup = await featureGroups.deactivate(featureGroupId, actor.id);
+      if (featureGroup !== null) {
+        await audit.record({
+          eventName: "feature_group.deactivated",
+          actor,
+          subjectType: "feature_group",
+          subjectId: featureGroup.id,
+          requestId
+        });
+      }
+      return featureGroup;
+    });
+  }
+
   async listContributors(): Promise<ContributorRecord[]> {
     return new ContributorRepository(this.db).list();
   }
@@ -132,6 +182,55 @@ export class CatalogService {
         subjectId: contributor.id,
         requestId
       });
+      return contributor;
+    });
+  }
+
+  async updateContributor(
+    contributorId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<ContributorRecord | null> {
+    const input = parseContributorBody(body);
+    return this.db.transaction(async (client) => {
+      const contributors = new ContributorRepository(client);
+      const audit = new AuditRepository(client);
+      const contributor = await contributors.update(contributorId, {
+        ...input,
+        actorUserId: actor.id
+      });
+      if (contributor !== null) {
+        await audit.record({
+          eventName: "contributor.updated",
+          actor,
+          subjectType: "contributor",
+          subjectId: contributor.id,
+          requestId
+        });
+      }
+      return contributor;
+    });
+  }
+
+  async deactivateContributor(
+    contributorId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<ContributorRecord | null> {
+    return this.db.transaction(async (client) => {
+      const contributors = new ContributorRepository(client);
+      const audit = new AuditRepository(client);
+      const contributor = await contributors.deactivate(contributorId, actor.id);
+      if (contributor !== null) {
+        await audit.record({
+          eventName: "contributor.deactivated",
+          actor,
+          subjectType: "contributor",
+          subjectId: contributor.id,
+          requestId
+        });
+      }
       return contributor;
     });
   }
@@ -164,6 +263,16 @@ function parseFeatureGroupBody(body: unknown) {
     name: assertNonEmptyString(record.name, "name"),
     slug: optionalString(record.slug, "slug"),
     description: optionalString(record.description, "description") ?? ""
+  };
+}
+
+function parseFeatureGroupPatchBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    name: record.name === undefined ? undefined : assertNonEmptyString(record.name, "name"),
+    slug: record.slug === undefined ? undefined : optionalString(record.slug, "slug"),
+    description:
+      record.description === undefined ? undefined : optionalString(record.description, "description") ?? ""
   };
 }
 

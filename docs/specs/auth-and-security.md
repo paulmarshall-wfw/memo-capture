@@ -190,6 +190,8 @@ Protected:
 
 `GET /api/auth/session`
 
+`GET /api/current-session` is supported as the capture API current-session route alias.
+
 Response:
 
 ```json
@@ -241,4 +243,3 @@ Existing runtime configuration also includes:
 - Provider secrets are never returned by settings APIs.
 - Audit and logs redact sensitive values.
 - Expired desktop session allows local staging but blocks upload/finalize.
-
