@@ -4,22 +4,23 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-05-29T07:48:06Z
+- Created timestamp UTC: 2026-05-29T12:22:26Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: concept grilling was captured, the project was bootstrapped, and this handoff now records the current implementation starting point.
+- Session scope: refreshed the design learnings after the second grill-me pass and updated this handoff for a clean next-session start before build work.
 
 ### Checkpoint Status
 
 - Git HEAD: `391caa4`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - None
+  - `docs/design/memo-capture-design-learnings.md`
+  - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `handoff.md`
+  - None
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
@@ -35,59 +36,92 @@
   - command: `node scripts/doctor.mjs`
   - result: passed
   - timestamp UTC: 2026-05-29T07:48:06Z
+- Documentation sanity check:
+  - command: `git diff --check`
+  - result: passed
+  - command: `node scripts/doctor.mjs`
+  - result: passed
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current code scaffold is committed at `391caa4`; the only intentional untracked file after this update is `handoff.md`.
-- Next checkpoint action: run `npm install`, then `npm run verify`; commit `handoff.md` if the handoff should be part of the repo checkpoint.
+- Safe-to-continue basis: current code scaffold remains committed at `391caa4`; this session changed documentation only.
+- Next checkpoint action: review the docs diff, then commit `docs/design/memo-capture-design-learnings.md` and `handoff.md` if this continuity state should become the next repo checkpoint.
 
 ## 2. Executive Summary
 
-Memo Capture is currently a freshly bootstrapped TypeScript/Tauri workspace. The repo now has a committed baseline scaffold for a desktop app, API, worker, shared domain/config packages, docs, and an initial Postgres schema migration.
+Memo Capture is a freshly bootstrapped TypeScript/Tauri workspace with the major V1 product and architecture decisions now consolidated in `docs/design/memo-capture-design-learnings.md`.
 
 Complete now:
 
 - Git repo initialized and committed at `391caa4 Bootstrap Memo Capture workspace scaffold`.
 - Root project policy and workflow notes are in `AGENTS.md`.
-- Concept decisions are captured in `docs/design/memo-capture-design-learnings.md`.
 - Runtime architecture is captured in `docs/architecture.md`.
 - npm workspace scaffold exists for desktop, API, worker, domain, and config packages.
-- Dependency-free bootstrap doctor passes.
+- Initial Postgres schema baseline exists at `apps/api/db/migrations/0001_initial.sql`.
+- Dependency-free bootstrap doctor passed earlier in this checkpoint.
+- The design learnings doc now resolves the major grill-me topics:
+  - deletion/retention
+  - security/privacy
+  - project, feature group, and contributor governance
+  - settings/audit
+  - workflow import/activation
+  - processing diagnostics
+  - ingestion edge cases
+  - desktop local cache
+  - provider configuration
+  - API/desktop boundaries
+  - UI structure
+  - auth/session behavior
+  - export semantics
+  - schema edge cases
+  - MVP boundary and implementation sequence
+  - versioning/compatibility
+  - testing/verification
+  - failure recovery/operator responsibilities
+  - first specification artifact shape
 
 Incomplete now:
 
 - Dependencies have not been installed in this workspace.
 - Typecheck, tests, builds, and dev servers have not been run after bootstrap.
 - API, worker, desktop UI, database migrations, auth, workflow runtime integration, object storage, and processing jobs are skeletal.
+- The focused technical product specs have not been created yet.
+- No build implementation has started.
 
-Safe to continue from this state, with the verification caveat above. Broader durable context is in `docs/design/memo-capture-design-learnings.md`; do not duplicate it into this handoff.
+Safe to continue from this state, with the verification caveat above. The next workstream should turn the refreshed design record into focused technical product specs before feature implementation begins.
 
 ## 3. Current Objective
 
-Immediate goal: turn the scaffold into a verified development baseline.
+Immediate goal: create the technical product specification set from the refreshed design learnings, then commit the documentation checkpoint when explicitly requested.
 
 Intended finished state for the next workstream:
 
-- dependencies installed with a committed lockfile
-- `npm run verify` passing or failures triaged
-- dev commands confirmed
-- scaffold bugs fixed before feature implementation begins
+- focused spec set created under `docs/specs/`
+- implementation-relevant decisions copied from `docs/design/memo-capture-design-learnings.md`
+- database table and API route contracts drafted immediately
+- low-fidelity screen inventory and interaction rules included
+- vertical-slice acceptance tests defined
+- unresolved implementation decisions tracked in `docs/specs/decision-log.md`
+- documentation sanity check performed
+- docs checkpoint committed only if explicitly requested
 
-Definition of done:
+Definition of done for the spec work:
 
-- root install, typecheck, tests, and build work from the documented commands
-- any Tauri or TypeScript bootstrap issues are fixed
-- docs updated if setup or command behavior changes
+- `docs/specs/index.md` links the focused specs
+- all initial spec files exist and are internally consistent
+- accepted V1 decisions are not left only in chat
+- no build work starts until the user approves moving from specification into implementation
 
 ## 4. Current State
 
 ### Working
 
-- `node scripts/doctor.mjs` passes.
+- `node scripts/doctor.mjs` passed earlier in the checkpoint.
 - Git repo exists on branch `main`.
 - Root scripts are defined in `package.json`.
 - Shared domain constants define V1 workflow states, bucket roles, processing job kinds, active file types, and export schema.
 - API has placeholder health, readiness, and version endpoints.
 - Worker has a placeholder startup path and references V1 processing job kinds.
 - Desktop has a placeholder React operational workspace UI and Tauri shell config.
+- `docs/design/memo-capture-design-learnings.md` is now the current design decision source for V1.
 
 ### Partially Working
 
@@ -107,6 +141,7 @@ Definition of done:
 - AI expansion and structured output validation.
 - Export batch generation.
 - Real settings screens and persistence.
+- Technical product specs under `docs/specs/`.
 
 ### Not Yet Verified
 
@@ -114,6 +149,7 @@ Definition of done:
 - `npm run typecheck`
 - `npm test`
 - `npm run build`
+- `npm run verify`
 - `npm run dev:api`
 - `npm run dev:worker`
 - `npm run dev:desktop`
@@ -124,7 +160,8 @@ Definition of done:
 
 - Follow `AGENTS.md`; default to Build Mode.
 - Do not use `latest`; use numbered dependency versions.
-- Do not install dependencies, commit, tag, release, publish, deploy, or delete files unless explicitly asked.
+- Do not install dependencies, commit, tag, release, publish, deploy, delete files, or create additional artifacts unless explicitly asked.
+- Warn before starting build work, editing files, creating docs/artifacts, installing dependencies, or committing.
 - Apply `engineering-project-standard` for setup/maintenance/stack work.
 - Apply `web-app-design-standard` for frontend UI work.
 - Desktop clients must not connect directly to Postgres or object storage.
@@ -133,6 +170,8 @@ Definition of done:
 - V1 requires real OIDC auth, but all signed-in users are admins.
 - AI output consumed by code must be structured JSON and validated before storage.
 - CSV export is out of scope for V1.
+- V1 has no user delete or privacy purge behavior.
+- No manual file import outside watched folders in MVP.
 
 ## 6. Commands and Verification
 
@@ -150,13 +189,13 @@ npm run dev:worker
 npm run dev:desktop
 ```
 
-Latest verified command:
+Most recent verified command:
 
 ```bash
 node scripts/doctor.mjs
 ```
 
-Result: passed.
+Result: passed earlier in the checkpoint.
 
 Prerequisites:
 
@@ -172,7 +211,8 @@ Unverified areas: dependency install, TypeScript, tests, builds, Tauri, dev serv
 ## 7. Files to Open First
 
 - `AGENTS.md`: repo-local instructions and constraints.
-- `docs/design/memo-capture-design-learnings.md`: accepted product and architecture decisions from the grilling session.
+- `handoff.md`: hot-context continuity source.
+- `docs/design/memo-capture-design-learnings.md`: current V1 design decision record.
 - `README.md`: current workspace overview and documented commands.
 - `package.json`: root workspace scripts and dependency policy.
 - `docs/architecture.md`: runtime boundaries and service ownership.
@@ -184,22 +224,35 @@ Unverified areas: dependency install, TypeScript, tests, builds, Tauri, dev serv
 
 Next:
 
-- Run `npm install` if the user approves dependency installation.
-- Run `npm run verify` after install.
-- Fix any TypeScript, Vite, Tauri, or test failures from first verification.
-- Commit `handoff.md` if the handoff should become part of the baseline checkpoint.
+- Review the docs diff.
+- If the user asks for the docs checkpoint, commit `docs/design/memo-capture-design-learnings.md` and `handoff.md`.
+- When explicitly instructed, create the technical product spec set:
+  - `docs/specs/index.md`
+  - `docs/specs/domain-model-and-schema.md`
+  - `docs/specs/workflow-runtime-integration.md`
+  - `docs/specs/ingestion-and-artifacts.md`
+  - `docs/specs/processing-jobs-and-diagnostics.md`
+  - `docs/specs/settings-and-audit.md`
+  - `docs/specs/auth-and-security.md`
+  - `docs/specs/exports.md`
+  - `docs/specs/mvp-implementation-plan.md`
+  - `docs/specs/decision-log.md`
 
 Blocked:
 
 - Full verification is blocked until dependencies are installed.
+- Implementation should wait until the technical product specs are created and reviewed.
 
 Later:
 
+- Run `npm install` if explicitly approved.
+- Run `npm run verify` after install.
+- Fix any TypeScript, Vite, Tauri, or test failures from first verification.
 - Wire a migration runner or ORM choice.
 - Add real API routing and persistence boundaries.
-- Add workflow runtime integration once a workflow bundle exists.
+- Add workflow runtime integration after the spec and workflow bundle contract are established.
 - Add desktop/API connection and local watched-folder settings.
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source of current state. Then review `AGENTS.md`, `docs/design/memo-capture-design-learnings.md`, `README.md`, `package.json`, `docs/architecture.md`, and `packages/domain/src/index.ts`. Treat the committed scaffold at `391caa4` plus the current handoff as the starting point. Do not reopen accepted product constraints unless implementation evidence requires it. First get dependencies installed only if explicitly approved, then run `npm run verify`, fix bootstrap failures, and report exactly what was verified. Load broader design docs only if the task clearly requires them.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source of current state. Then review `AGENTS.md`, `docs/design/memo-capture-design-learnings.md`, `README.md`, `package.json`, `docs/architecture.md`, `docs/schema-baseline.md`, `apps/api/db/migrations/0001_initial.sql`, and `packages/domain/src/index.ts`. Treat the committed scaffold at `391caa4` plus the current documentation changes as the starting point. Do not reopen accepted product constraints unless implementation evidence requires it. The next planned work is to generate the focused technical product specs under `docs/specs/`; do not start build implementation until the specs exist and the user approves moving forward. Do not install dependencies, commit, tag, release, publish, or delete files unless explicitly requested.
