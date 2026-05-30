@@ -223,8 +223,14 @@ export class WorkflowService {
 
   async getBuckets() {
     const active = await requireActiveWorkflow(new WorkflowRepository(this.db));
+    const workItems = new WorkItemRepository(this.db);
     return {
-      buckets: this.runtime.getBuckets(active.bundle)
+      buckets: await Promise.all(
+        this.runtime.getBuckets(active.bundle).map(async (bucket) => ({
+          ...bucket,
+          count: await workItems.countByStates(bucket.states)
+        }))
+      )
     };
   }
 

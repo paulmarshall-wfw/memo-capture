@@ -2,11 +2,13 @@ import type { ApiConfig } from "../config.js";
 import type { Database } from "../db/types.js";
 import { createPgDatabase } from "../db/postgres.js";
 import type { Logger } from "../logger.js";
+import type { AppUserRecord } from "../repositories/rows.js";
 import { UserRepository } from "../repositories/users.js";
-import { WorkItemRepository } from "../repositories/work-items.js";
+import type { WorkItemRecord } from "../repositories/work-items.js";
 import { AuthService } from "./auth.js";
 import { CatalogService } from "./catalog.js";
 import { FormMemoService } from "./form-memos.js";
+import { WorkItemService } from "./work-items.js";
 import { WorkflowService } from "./workflows.js";
 
 export interface AppServices {
@@ -14,8 +16,19 @@ export interface AppServices {
   catalog: CatalogService;
   formMemos: FormMemoService;
   workflows: WorkflowService;
-  workItems: WorkItemRepository;
+  workItems: WorkItemOperations;
   close(): Promise<void>;
+}
+
+export interface WorkItemOperations {
+  list(input?: { bucketId?: string | null }): Promise<WorkItemRecord[]>;
+  findById(workItemId: string): Promise<WorkItemRecord | null>;
+  update(
+    workItemId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<WorkItemRecord>;
 }
 
 export function createAppServices(config: ApiConfig, logger: Logger): AppServices {
@@ -29,7 +42,7 @@ export function createAppServicesFromDatabase(config: ApiConfig, db: Database): 
     catalog: new CatalogService(db),
     formMemos: new FormMemoService(db),
     workflows: new WorkflowService(db, config.authMode),
-    workItems: new WorkItemRepository(db),
+    workItems: new WorkItemService(db),
     close: () => db.close()
   };
 }

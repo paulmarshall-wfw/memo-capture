@@ -47,6 +47,11 @@ async function handleRequest(input: {
   });
 
   try {
+    if (input.request.method === "OPTIONS") {
+      sendNoContent(input.response);
+      return;
+    }
+
     const publicPayload = await handlePublicRoute(context, input.config, input.services);
     if (publicPayload.handled) {
       sendJson(input.response, publicPayload.statusCode, publicPayload.payload);
@@ -261,7 +266,11 @@ function matchProtectedRoute(
   }
 
   if (method === "GET" && pathname === "/api/work-items") {
-    return async () => ({ workItems: await services.workItems.list() });
+    return async (context) => ({
+      workItems: await services.workItems.list({
+        bucketId: context.url.searchParams.get("bucketId")
+      })
+    });
   }
 
   if (method === "GET" && pathname === "/api/workflow/status") {
@@ -294,6 +303,17 @@ function matchProtectedRoute(
       workItem: requireFound(
         await services.workItems.findById(workItemDetailMatch[1] ?? ""),
         "work_item"
+      )
+    });
+  }
+
+  if (method === "PATCH" && workItemDetailMatch !== null) {
+    return async (context, session) => ({
+      workItem: await services.workItems.update(
+        decodeURIComponent(workItemDetailMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
       )
     });
   }
@@ -345,9 +365,15 @@ function requireFound<Record>(record: Record | null, subjectType: string): Recor
 function sendJson(response: ServerResponse, statusCode: number, payload: unknown): void {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
+    ...corsHeaders()
   });
   response.end(JSON.stringify(payload));
+}
+
+function sendNoContent(response: ServerResponse): void {
+  response.writeHead(204, corsHeaders());
+  response.end();
 }
 
 function sendNotFound(response: ServerResponse): void {
@@ -409,6 +435,14 @@ function readRequestId(request: IncomingMessage): string {
 
 function normalizeHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function corsHeaders(): Record<string, string> {
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-headers": "authorization,content-type,x-request-id"
+  };
 }
 
 function serializeSession(session: AuthenticatedSession, accessToken?: string) {

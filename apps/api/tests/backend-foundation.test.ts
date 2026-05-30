@@ -137,6 +137,34 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(workItemDetail.response.status, 200);
     assert.equal(workItemDetail.body.workItem.title, "Captured memo");
 
+    const workItemPatch = await authedJson(baseUrl, "/api/work-items/work-item-1", {
+      method: "PATCH",
+      body: JSON.stringify({
+        expectedVersion: 1,
+        title: "Captured memo updated",
+        body: "Updated memo body",
+        projectId: "project-1",
+        featureGroupId: "feature-1",
+        contributorId: "contributor-1",
+        contributorText: "Paul"
+      })
+    });
+    assert.equal(workItemPatch.response.status, 200);
+    assert.equal(workItemPatch.body.workItem.title, "Captured memo updated");
+    assert.equal(workItemPatch.body.workItem.workflowItemVersion, 2);
+
+    const staleWorkItemPatch = await authedJson(baseUrl, "/api/work-items/work-item-1", {
+      method: "PATCH",
+      body: JSON.stringify({
+        expectedVersion: 1,
+        title: "Stale title",
+        body: "Stale body"
+      })
+    });
+    assert.equal(staleWorkItemPatch.response.status, 409);
+    assert.equal(staleWorkItemPatch.body.error.code, "stale_work_item_version");
+    assert.equal(staleWorkItemPatch.body.error.details.currentVersion, 2);
+
     const workflowStatus = await authedJson(baseUrl, "/api/workflow/status");
     assert.equal(workflowStatus.response.status, 200);
     assert.equal(workflowStatus.body.active.workflowVersion, "0.2.2");
@@ -151,7 +179,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
 
     const workflowAction = await authedJson(baseUrl, "/api/work-items/work-item-1/actions/memo.accepted", {
       method: "POST",
-      body: JSON.stringify({ expectedVersion: 1 })
+      body: JSON.stringify({ expectedVersion: 2 })
     });
     assert.equal(workflowAction.response.status, 200);
     assert.equal(workflowAction.body.newState, "accepted");
@@ -253,7 +281,7 @@ function captureRouteServices(): AppServices {
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
   };
-  const workItem = {
+  let workItem = {
     id: "work-item-1",
     sourceMemoId: "source-memo-1",
     projectId: "project-1",
@@ -362,7 +390,25 @@ function captureRouteServices(): AppServices {
     } as AppServices["workflows"],
     workItems: {
       list: async () => [workItem],
-      findById: async (workItemId: string) => (workItemId === workItem.id ? workItem : null)
+      findById: async (workItemId: string) => (workItemId === workItem.id ? workItem : null),
+      update: async (_workItemId: string, body: unknown) => {
+        const record = body as { expectedVersion?: number };
+        if (record.expectedVersion !== workItem.workflowItemVersion) {
+          throw new HttpError(409, "stale_work_item_version", "Work item version is stale.", {
+            currentVersion: workItem.workflowItemVersion,
+            workItem
+          });
+        }
+
+        workItem = {
+          ...workItem,
+          title: "Captured memo updated",
+          body: "Updated memo body",
+          workflowItemVersion: 2,
+          updatedAt: "2026-05-29T00:01:00.000Z"
+        };
+        return workItem;
+      }
     } as AppServices["workItems"],
     close: async () => undefined
   };

@@ -21,15 +21,33 @@ export type WorkItemRecord = ReturnType<typeof mapWorkItem>;
 export class WorkItemRepository {
   constructor(private readonly db: Queryable) {}
 
-  async list(limit = 100): Promise<WorkItemRecord[]> {
+  async list(input: { states?: string[]; limit?: number } = {}): Promise<WorkItemRecord[]> {
+    const states = input.states?.filter((state) => state.trim() !== "") ?? [];
+    const limit = input.limit ?? 100;
     const result = await this.db.query<WorkItemRow>(
       `select *
        from work_items
+       where (cardinality($2::text[]) = 0 or workflow_state = any($2::text[]))
        order by updated_at desc
        limit $1`,
-      [limit]
+      [limit, states]
     );
     return result.rows.map(mapWorkItem);
+  }
+
+  async countByStates(states: string[]): Promise<number> {
+    if (states.length === 0) {
+      return 0;
+    }
+
+    const result = await this.db.query<{ count: string | number }>(
+      `select count(*) as count
+       from work_items
+       where workflow_state = any($1::text[])`,
+      [states]
+    );
+    const value = result.rows[0]?.count ?? 0;
+    return typeof value === "number" ? value : Number.parseInt(value, 10);
   }
 
   async findById(workItemId: string): Promise<WorkItemRecord | null> {
@@ -130,6 +148,51 @@ export class WorkItemRepository {
       throw new Error("Failed to set accepted snapshot.");
     }
     return mapWorkItem(row);
+  }
+
+  async updateContent(input: {
+    workItemId: string;
+    expectedVersion: number;
+    title: string;
+    body: string;
+    projectId: string | null;
+    featureGroupId: string | null;
+    contributorId: string | null;
+    contributorText: string | null;
+    actorUserId: string;
+  }): Promise<WorkItemRecord | null> {
+    const result = await this.db.query<WorkItemRow>(
+      `update work_items
+       set
+         title = $3,
+         body = $4,
+         project_id = $5,
+         feature_group_id = $6,
+         contributor_id = $7,
+         contributor_text = $8,
+         workflow_item_version = workflow_item_version + 1,
+         accepted_unexported_changes = case
+           when accepted_snapshot_id is null then accepted_unexported_changes
+           else true
+         end,
+         updated_by = $9,
+         updated_at = now()
+       where id = $1 and workflow_item_version = $2
+       returning *`,
+      [
+        input.workItemId,
+        input.expectedVersion,
+        input.title,
+        input.body,
+        input.projectId,
+        input.featureGroupId,
+        input.contributorId,
+        input.contributorText,
+        input.actorUserId
+      ]
+    );
+
+    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
   }
 }
 
