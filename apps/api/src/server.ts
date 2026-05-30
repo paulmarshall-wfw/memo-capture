@@ -264,6 +264,30 @@ function matchProtectedRoute(
     return async () => ({ workItems: await services.workItems.list() });
   }
 
+  if (method === "GET" && pathname === "/api/workflow/status") {
+    return async () => services.workflows.getStatus();
+  }
+
+  if (method === "POST" && pathname === "/api/workflow/imports") {
+    return async (context, session) =>
+      services.workflows.importBundle(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const workflowActivateMatch = /^\/api\/workflow\/imports\/([^/]+)\/activate$/.exec(pathname);
+  if (method === "POST" && workflowActivateMatch !== null) {
+    return async (context, session) =>
+      services.workflows.activateStagedImport(
+        decodeURIComponent(workflowActivateMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  if (method === "GET" && pathname === "/api/workflow/buckets") {
+    return async () => services.workflows.getBuckets();
+  }
+
   const workItemDetailMatch = /^\/api\/work-items\/([^/]+)$/.exec(pathname);
   if (method === "GET" && workItemDetailMatch !== null) {
     return async () => ({
@@ -272,6 +296,23 @@ function matchProtectedRoute(
         "work_item"
       )
     });
+  }
+
+  const workItemActionsMatch = /^\/api\/work-items\/([^/]+)\/actions$/.exec(pathname);
+  if (method === "GET" && workItemActionsMatch !== null) {
+    return async () => services.workflows.getAllowedActions(decodeURIComponent(workItemActionsMatch[1] ?? ""));
+  }
+
+  const workItemExecuteActionMatch = /^\/api\/work-items\/([^/]+)\/actions\/([^/]+)$/.exec(pathname);
+  if (method === "POST" && workItemExecuteActionMatch !== null) {
+    return async (context, session) =>
+      services.workflows.executeAction(
+        decodeURIComponent(workItemExecuteActionMatch[1] ?? ""),
+        decodeURIComponent(workItemExecuteActionMatch[2] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
   }
 
   if (method === "POST" && pathname === "/api/source-memos/form") {

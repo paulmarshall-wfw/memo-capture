@@ -7,11 +7,13 @@ import { WorkItemRepository } from "../repositories/work-items.js";
 import { AuthService } from "./auth.js";
 import { CatalogService } from "./catalog.js";
 import { FormMemoService } from "./form-memos.js";
+import { WorkflowService } from "./workflows.js";
 
 export interface AppServices {
   auth: AuthService;
   catalog: CatalogService;
   formMemos: FormMemoService;
+  workflows: WorkflowService;
   workItems: WorkItemRepository;
   close(): Promise<void>;
 }
@@ -26,6 +28,7 @@ export function createAppServicesFromDatabase(config: ApiConfig, db: Database): 
     auth: new AuthService(config, new UserRepository(db)),
     catalog: new CatalogService(db),
     formMemos: new FormMemoService(db),
+    workflows: new WorkflowService(db, config.authMode),
     workItems: new WorkItemRepository(db),
     close: () => db.close()
   };

@@ -137,6 +137,25 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(workItemDetail.response.status, 200);
     assert.equal(workItemDetail.body.workItem.title, "Captured memo");
 
+    const workflowStatus = await authedJson(baseUrl, "/api/workflow/status");
+    assert.equal(workflowStatus.response.status, 200);
+    assert.equal(workflowStatus.body.active.workflowVersion, "0.2.2");
+
+    const workflowBuckets = await authedJson(baseUrl, "/api/workflow/buckets");
+    assert.equal(workflowBuckets.response.status, 200);
+    assert.equal(workflowBuckets.body.buckets[0].id, "memos");
+
+    const workflowActions = await authedJson(baseUrl, "/api/work-items/work-item-1/actions");
+    assert.equal(workflowActions.response.status, 200);
+    assert.equal(workflowActions.body.actions[0].id, "memo.accepted");
+
+    const workflowAction = await authedJson(baseUrl, "/api/work-items/work-item-1/actions/memo.accepted", {
+      method: "POST",
+      body: JSON.stringify({ expectedVersion: 1 })
+    });
+    assert.equal(workflowAction.response.status, 200);
+    assert.equal(workflowAction.body.newState, "accepted");
+
     const missingWorkItem = await authedJson(baseUrl, "/api/work-items/missing");
     assert.equal(missingWorkItem.response.status, 404);
     assert.equal(missingWorkItem.body.error.code, "not_found");
@@ -172,6 +191,20 @@ function stubServices(): AppServices {
       listProjects: async () => []
     } as AppServices["catalog"],
     formMemos: {} as AppServices["formMemos"],
+    workflows: {
+      getStatus: async () => ({ active: null, supportedHookHandlers: [] }),
+      getBuckets: async () => ({ buckets: [] }),
+      getAllowedActions: async () => ({ workItemId: "missing", workflowState: "memo", actions: [] }),
+      importBundle: async () => {
+        throw new Error("not used");
+      },
+      activateStagedImport: async () => {
+        throw new Error("not used");
+      },
+      executeAction: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["workflows"],
     workItems: {
       list: async () => [],
       findById: async () => null
@@ -278,6 +311,55 @@ function captureRouteServices(): AppServices {
         workItem
       })
     } as AppServices["formMemos"],
+    workflows: {
+      getStatus: async () => ({
+        active: {
+          workflowId: "memo-capture_workflow",
+          workflowVersion: "0.2.2",
+          stateMachineVersion: "0.2.2",
+          contentHash: "sha256:test",
+          activatedAt: "2026-05-29T00:00:00.000Z"
+        },
+        supportedHookHandlers: ["create_accepted_snapshot"]
+      }),
+      getBuckets: async () => ({
+        buckets: [{ id: "memos", label: "Memos", order: 20, states: ["memo"] }]
+      }),
+      getAllowedActions: async (workItemId: string) => ({
+        workItemId,
+        workflowState: "memo",
+        actions: [
+          {
+            id: "memo.accepted",
+            label: "Accept",
+            visible: true,
+            trigger: "user",
+            requiresInput: false,
+            confirmationRequired: false
+          }
+        ]
+      }),
+      executeAction: async (workItemId: string, actionId: string) => ({
+        workItemId,
+        actionId,
+        previousState: "memo",
+        newState: "accepted",
+        newVersion: 2,
+        createdSnapshotId: "snapshot-1",
+        allowedActions: []
+      }),
+      importBundle: async () => ({
+        stagedImportId: "workflow-import-1",
+        status: "staged",
+        validation: { ok: true, warnings: [], errors: [], identity: null },
+        identity: null
+      }),
+      activateStagedImport: async () => ({
+        activated: true,
+        activeWorkflowVersion: "0.2.2",
+        contentHash: "sha256:test"
+      })
+    } as AppServices["workflows"],
     workItems: {
       list: async () => [workItem],
       findById: async (workItemId: string) => (workItemId === workItem.id ? workItem : null)

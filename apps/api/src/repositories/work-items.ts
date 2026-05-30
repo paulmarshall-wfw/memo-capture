@@ -86,4 +86,113 @@ export class WorkItemRepository {
 
     return mapWorkItem(row);
   }
+
+  async updateWorkflowState(input: {
+    workItemId: string;
+    expectedVersion: number;
+    nextState: string;
+    actorUserId: string;
+  }): Promise<WorkItemRecord | null> {
+    const result = await this.db.query<WorkItemRow>(
+      `update work_items
+       set
+         workflow_state = $3,
+         workflow_item_version = workflow_item_version + 1,
+         updated_by = $4,
+         updated_at = now()
+       where id = $1 and workflow_item_version = $2
+       returning *`,
+      [input.workItemId, input.expectedVersion, input.nextState, input.actorUserId]
+    );
+
+    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+  }
+
+  async setAcceptedSnapshot(input: {
+    workItemId: string;
+    acceptedSnapshotId: string;
+    actorUserId: string;
+  }): Promise<WorkItemRecord> {
+    const result = await this.db.query<WorkItemRow>(
+      `update work_items
+       set
+         accepted_snapshot_id = $2,
+         accepted_unexported_changes = false,
+         updated_by = $3,
+         updated_at = now()
+       where id = $1
+       returning *`,
+      [input.workItemId, input.acceptedSnapshotId, input.actorUserId]
+    );
+
+    const row = result.rows[0];
+    if (row === undefined) {
+      throw new Error("Failed to set accepted snapshot.");
+    }
+    return mapWorkItem(row);
+  }
+}
+
+export class AcceptedSnapshotRepository {
+  constructor(private readonly db: Queryable) {}
+
+  async createFromWorkItem(input: {
+    workItemId: string;
+    actorUserId: string;
+  }): Promise<{ id: string } | null> {
+    const result = await this.db.query<{ id: string }>(
+      `with next_snapshot as (
+         select coalesce(max(snapshot_number), 0) + 1 as snapshot_number
+         from accepted_snapshots
+         where work_item_id = $1
+       )
+       insert into accepted_snapshots (
+         id,
+         work_item_id,
+         snapshot_number,
+         title,
+         body,
+         body_format,
+         project_id,
+         project_slug,
+         project_name,
+         feature_group_id,
+         feature_group_name,
+         contributor_text,
+         contributor_id,
+         source_memo_id,
+         source_content_hash,
+         created_by,
+         created_at
+       )
+       select
+         $2,
+         work_items.id,
+         next_snapshot.snapshot_number,
+         work_items.title,
+         work_items.body,
+         work_items.body_format,
+         projects.id,
+         projects.slug,
+         projects.name,
+         work_items.feature_group_id,
+         feature_groups.name,
+         work_items.contributor_text,
+         work_items.contributor_id,
+         work_items.source_memo_id,
+         source_memos.content_hash,
+         $3,
+         now()
+       from work_items
+       cross join next_snapshot
+       join projects on projects.id = work_items.project_id
+       join source_memos on source_memos.id = work_items.source_memo_id
+       left join feature_groups on feature_groups.id = work_items.feature_group_id
+       where work_items.id = $1
+       returning id`,
+      [input.workItemId, randomUUID(), input.actorUserId]
+    );
+
+    return result.rows[0] ?? null;
+  }
 }

@@ -266,6 +266,15 @@ export interface AllowedWorkflowAction {
   label: string;
   visible: boolean;
   trigger: "user" | "automatic";
+  requiresInput: boolean;
+  confirmationRequired: boolean;
+}
+
+export interface WorkflowBucket {
+  id: string;
+  label: string;
+  order: number;
+  states: string[];
 }
 
 export interface HealthPayload {
