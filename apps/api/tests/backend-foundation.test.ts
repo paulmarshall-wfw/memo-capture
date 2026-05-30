@@ -199,6 +199,40 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(exportBatchDetail.response.status, 200);
     assert.equal(exportBatchDetail.body.batch.status, "pending");
 
+    const jobs = await authedJson(baseUrl, "/api/jobs?status=failed");
+    assert.equal(jobs.response.status, 200);
+    assert.equal(jobs.body.jobs[0].id, "job-1");
+
+    const jobDetail = await authedJson(baseUrl, "/api/jobs/job-1");
+    assert.equal(jobDetail.response.status, 200);
+    assert.equal(jobDetail.body.job.status, "failed");
+
+    const retryJob = await authedJson(baseUrl, "/api/jobs/job-1/retry", {
+      method: "POST",
+      body: JSON.stringify({ reason: "Provider recovered." })
+    });
+    assert.equal(retryJob.response.status, 200);
+    assert.equal(retryJob.body.job.status, "queued");
+
+    const cancelJob = await authedJson(baseUrl, "/api/jobs/job-1/cancel", {
+      method: "POST",
+      body: JSON.stringify({ reason: "No longer needed." })
+    });
+    assert.equal(cancelJob.response.status, 200);
+    assert.equal(cancelJob.body.job.status, "cancelled");
+
+    const systemDiagnostics = await authedJson(baseUrl, "/api/diagnostics/system");
+    assert.equal(systemDiagnostics.response.status, 200);
+    assert.equal(systemDiagnostics.body.database.ok, true);
+
+    const providerDiagnostics = await authedJson(baseUrl, "/api/diagnostics/providers");
+    assert.equal(providerDiagnostics.response.status, 200);
+    assert.deepEqual(providerDiagnostics.body.providers, []);
+
+    const itemDiagnostics = await authedJson(baseUrl, "/api/work-items/work-item-1/diagnostics");
+    assert.equal(itemDiagnostics.response.status, 200);
+    assert.equal(itemDiagnostics.body.workItemId, "work-item-1");
+
     const missingWorkItem = await authedJson(baseUrl, "/api/work-items/missing");
     assert.equal(missingWorkItem.response.status, 404);
     assert.equal(missingWorkItem.body.error.code, "not_found");
@@ -214,6 +248,52 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(formMemo.response.status, 200);
     assert.equal(formMemo.body.result.sourceMemoId, "source-memo-1");
     assert.equal(formMemo.body.result.workItem.workflowState, "memo");
+
+    const uploadSession = await authedJson(baseUrl, "/api/imports/upload-sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        machineId: "machine-1",
+        watchFolderId: "watch-1",
+        sourceType: "watched_text_file",
+        originalFilename: "memo.md",
+        originalPath: "/watched/memo.md",
+        mimeType: "text/markdown",
+        byteSize: 10,
+        contentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      })
+    });
+    assert.equal(uploadSession.response.status, 200);
+    assert.equal(uploadSession.body.status, "upload_required");
+
+    const uploadArtifact = await authedJson(baseUrl, "/api/imports/upload-sessions/upload-session-1/artifact", {
+      method: "PUT",
+      body: "memo body"
+    });
+    assert.equal(uploadArtifact.response.status, 200);
+    assert.equal(uploadArtifact.body.status, "uploaded");
+
+    const finalizedImport = await authedJson(
+      baseUrl,
+      "/api/imports/upload-sessions/upload-session-1/finalize",
+      {
+        method: "POST",
+        body: JSON.stringify({ machineId: "machine-1", archivePlanned: true })
+      }
+    );
+    assert.equal(finalizedImport.response.status, 200);
+    assert.equal(finalizedImport.body.initialWorkflowState, "needs_review");
+
+    const archiveResult = await authedJson(baseUrl, "/api/imports/import-event-1/archive-result", {
+      method: "POST",
+      body: JSON.stringify({
+        machineId: "machine-1",
+        archivePath: "/archive/2026/05/30/uploaded.md",
+        status: "archived",
+        warning: null
+      })
+    });
+    assert.equal(archiveResult.response.status, 200);
+    assert.equal(archiveResult.body.status, "imported");
   } finally {
     server.close();
     await services.close();
@@ -233,6 +313,11 @@ function stubServices(): AppServices {
     catalog: {
       listProjects: async () => []
     } as AppServices["catalog"],
+    diagnostics: {
+      getWorkItemDiagnostics: async () => ({ workItemId: "missing" }),
+      listProviderHealth: async () => ({ providers: [] }),
+      getSystemDiagnostics: async () => ({})
+    } as AppServices["diagnostics"],
     exports: {
       listAcceptedSnapshots: async () => ({ snapshots: [] }),
       listBatches: async () => ({ batches: [] }),
@@ -250,6 +335,32 @@ function stubServices(): AppServices {
       }
     } as AppServices["exports"],
     formMemos: {} as AppServices["formMemos"],
+    imports: {
+      createUploadSession: async () => {
+        throw new Error("not used");
+      },
+      uploadSessionArtifact: async () => {
+        throw new Error("not used");
+      },
+      finalizeUploadSession: async () => {
+        throw new Error("not used");
+      },
+      reportArchiveResult: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["imports"],
+    jobs: {
+      list: async () => ({ jobs: [] }),
+      get: async () => {
+        throw new Error("not used");
+      },
+      retry: async () => {
+        throw new Error("not used");
+      },
+      cancel: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["jobs"],
     workflows: {
       getStatus: async () => ({ active: null, supportedHookHandlers: [] }),
       getBuckets: async () => ({ buckets: [] }),
@@ -418,12 +529,106 @@ function captureRouteServices(): AppServices {
         throw new Error("not used");
       }
     } as AppServices["exports"],
+    diagnostics: {
+      getWorkItemDiagnostics: async (workItemId: string) => ({
+        workItemId,
+        sourceMemo: { id: "source-memo-1", sourceType: "form" },
+        importEvents: [],
+        artifacts: [],
+        jobs: [],
+        possibleDuplicates: [],
+        archiveWarnings: []
+      }),
+      listProviderHealth: async () => ({ providers: [] }),
+      getSystemDiagnostics: async () => ({
+        api: { service: "memo-capture-api", version: "0.1.0", commitSha: "test-sha" },
+        database: { ok: true },
+        worker: null,
+        providers: { providers: [] },
+        exportSchemaVersion: "memo-capture-export.v1"
+      })
+    } as AppServices["diagnostics"],
     formMemos: {
       createFromRequest: async () => ({
         sourceMemoId: "source-memo-1",
         workItem
       })
     } as AppServices["formMemos"],
+    imports: {
+      createUploadSession: async () => ({
+        sessionId: "upload-session-1",
+        status: "upload_required",
+        upload: {
+          method: "PUT",
+          url: "/api/imports/upload-sessions/upload-session-1/artifact",
+          headers: { "content-type": "application/octet-stream" }
+        }
+      }),
+      uploadSessionArtifact: async () => ({ sessionId: "upload-session-1", status: "uploaded" }),
+      finalizeUploadSession: async () => ({
+        sourceMemoId: "source-memo-1",
+        workItemId: "work-item-1",
+        artifactId: "artifact-1",
+        importEventId: "import-event-1",
+        initialWorkflowState: "needs_review",
+        processingJobs: ["job-1"]
+      }),
+      reportArchiveResult: async () => ({
+        importEventId: "import-event-1",
+        status: "imported",
+        archivePath: "/archive/2026/05/30/uploaded.md"
+      })
+    } as AppServices["imports"],
+    jobs: {
+      list: async () => ({
+        jobs: [
+          {
+            id: "job-1",
+            jobKind: "generate_export_batch",
+            status: "failed",
+            attemptCount: 1,
+            maxAttempts: 1,
+            runAfter: "2026-05-29T00:00:00.000Z",
+            sourceMemoId: null,
+            workItemId: "work-item-1",
+            exportBatchId: "export-batch-1",
+            providerName: null,
+            modelName: null,
+            userSafeErrorMessage: "The job failed."
+          }
+        ]
+      }),
+      get: async (jobId: string) => ({
+        job: {
+          id: jobId,
+          jobKind: "generate_export_batch",
+          status: "failed",
+          attemptCount: 1,
+          maxAttempts: 1,
+          runAfter: "2026-05-29T00:00:00.000Z",
+          sourceMemoId: null,
+          workItemId: "work-item-1",
+          exportBatchId: "export-batch-1"
+        }
+      }),
+      retry: async (jobId: string) => ({
+        job: {
+          id: jobId,
+          jobKind: "generate_export_batch",
+          status: "queued",
+          attemptCount: 1,
+          maxAttempts: 2
+        }
+      }),
+      cancel: async (jobId: string) => ({
+        job: {
+          id: jobId,
+          jobKind: "generate_export_batch",
+          status: "cancelled",
+          cancelRequestedAt: "2026-05-29T00:04:00.000Z"
+        }
+      })
+    } as AppServices["jobs"],
     workflows: {
       getStatus: async () => ({
         active: {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ObjectStorageConfig } from "../config.js";
 import { HttpError } from "./errors.js";
@@ -16,6 +16,10 @@ export class ObjectStorageService {
 
   constructor(private readonly config: ObjectStorageConfig) {
     this.root = path.resolve(config.localRoot);
+  }
+
+  get bucket(): string {
+    return this.config.bucket;
   }
 
   async putObject(input: { objectKey: string; body: Buffer | string }): Promise<StoredObject> {
@@ -37,6 +41,26 @@ export class ObjectStorageService {
       return await readFile(target);
     } catch {
       throw new HttpError(404, "artifact_object_not_found", "Artifact object was not found in storage.");
+    }
+  }
+
+  async checkHealth(): Promise<{ ok: boolean; bucket: string; localRoot: string; message: string }> {
+    const bucketRoot = path.join(this.root, this.config.bucket);
+    try {
+      await access(bucketRoot);
+      return {
+        ok: true,
+        bucket: this.config.bucket,
+        localRoot: this.root,
+        message: "Object storage bucket root is accessible."
+      };
+    } catch {
+      return {
+        ok: false,
+        bucket: this.config.bucket,
+        localRoot: this.root,
+        message: "Object storage bucket root is not accessible yet."
+      };
     }
   }
 

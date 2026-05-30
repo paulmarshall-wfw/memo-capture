@@ -1,7 +1,7 @@
 # Processing Jobs And Diagnostics
 
 Status: Draft implementation specification
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 ## Purpose
 
@@ -286,6 +286,16 @@ System diagnostics:
 
 V1 uses UI failure indicators only; no active failure notifications.
 
+## Implementation Notes
+
+Implemented backend support includes:
+
+- `0006_processing_jobs_and_diagnostics.sql` for worker heartbeats, job status constraints, and diagnostics indexes.
+- Worker claim, lease renewal, cancellation checks, retry scheduling, failure audit events, and heartbeat recording.
+- Protected API routes for job list/detail/manual retry/cancel, item diagnostics, provider diagnostics, and system diagnostics.
+
+Provider health is currently database-reported from `provider_configs`; V1 does not actively probe external providers during diagnostics requests.
+
 ## API Contracts
 
 ### List jobs
@@ -395,4 +405,3 @@ Never log:
 - Transcription failure leaves item recoverable in ingestion review.
 - Invalid AI structured output creates failure diagnostics and no suggestions.
 - Export generation failure can be retried without changing included snapshot IDs.
-

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   DEFAULT_MEMO_WORK_ITEM_STATE,
   ARTIFACT_KINDS,
+  AUDIT_EVENT_NAMES,
   EXPORT_BATCH_STATUSES,
   INITIAL_WORK_ITEM_STATES,
   IMPORT_EVENT_STATUSES,
@@ -44,6 +45,7 @@ test("schema contract constants include v1 storage states", () => {
   ]);
   assert.equal(ARTIFACT_KINDS.includes("export_bundle"), true);
   assert.equal(IMPORT_EVENT_STATUSES.includes("duplicate_exact"), true);
+  assert.equal(AUDIT_EVENT_NAMES.includes("source_memo.archive_result_recorded"), true);
   assert.equal(POSSIBLE_DUPLICATE_STATUSES.includes("confirmed_duplicate"), true);
   assert.equal(EXPORT_BATCH_STATUSES.includes("generating"), true);
 });

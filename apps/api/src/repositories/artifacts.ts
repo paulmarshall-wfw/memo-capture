@@ -3,6 +3,7 @@ import type { ArtifactKind } from "@memo-capture/domain";
 import type { Queryable } from "../db/types.js";
 
 export interface ArtifactInput {
+  id?: string;
   artifactKind: ArtifactKind;
   objectKey: string;
   bucket: string;
@@ -46,7 +47,7 @@ export class ArtifactRepository {
   constructor(private readonly db: Queryable) {}
 
   async create(input: ArtifactInput): Promise<{ id: string }> {
-    const id = randomUUID();
+    const id = input.id ?? randomUUID();
     await this.db.query(
       `insert into artifacts (
          id,

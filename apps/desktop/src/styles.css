@@ -254,6 +254,10 @@ button:disabled {
   grid-template-columns: auto minmax(220px, 1fr) auto auto;
 }
 
+.watched-toolbar {
+  grid-template-columns: auto minmax(180px, 1fr) auto auto;
+}
+
 .content-grid {
   display: grid;
   min-height: 0;
@@ -267,6 +271,14 @@ button:disabled {
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(420px, 1fr) minmax(360px, 440px);
+  gap: 14px;
+}
+
+.watched-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(420px, 520px) minmax(420px, 1fr);
   gap: 14px;
 }
 
@@ -601,6 +613,56 @@ button:disabled {
   padding: 12px;
 }
 
+.watch-folder-list {
+  display: grid;
+  gap: 12px;
+}
+
+.watch-folder-row {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #d8e1ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.watch-folder-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.watch-folder-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  color: #35445a;
+  font-size: 13px;
+  font-weight: 640;
+}
+
+.field-group.compact {
+  width: 140px;
+}
+
+.icon-only {
+  width: 38px;
+  padding: 0 !important;
+}
+
+.watched-candidate-row {
+  align-items: center;
+}
+
+.candidate-message {
+  display: block !important;
+  margin-bottom: 0 !important;
+  -webkit-line-clamp: unset !important;
+}
+
 .batch-title {
   display: flex;
   flex-wrap: wrap;
@@ -683,11 +745,13 @@ button:disabled {
 
   .content-grid,
   .export-grid,
+  .watched-grid,
   .field-grid {
     grid-template-columns: 1fr;
   }
 
-  .export-toolbar {
+  .export-toolbar,
+  .watched-toolbar {
     grid-template-columns: auto minmax(0, 1fr);
   }
 

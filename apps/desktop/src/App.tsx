@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
   Check,
@@ -7,12 +8,16 @@ import {
   Download,
   FileText,
   FolderInput,
+  FolderSearch,
   PackageCheck,
   PackagePlus,
+  Plus,
   RefreshCcw,
   Save,
   Search,
   Settings,
+  Trash2,
+  Upload,
   Workflow
 } from "lucide-react";
 import {
@@ -23,7 +28,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
-type ActiveView = "work-items" | "exports";
+type ActiveView = "work-items" | "exports" | "watched-folders";
 
 interface SessionResponse {
   accessToken?: string;
@@ -140,6 +145,52 @@ interface ExportBatch {
   itemCount: number;
 }
 
+interface WatchedFolderSetting {
+  id: string;
+  path: string;
+  archivePath: string;
+  recursive: boolean;
+  enabled: boolean;
+  stabilityMs: number;
+}
+
+interface WatchedTextCandidate {
+  watchFolderId: string;
+  path: string;
+  filename: string;
+  extension: string;
+  byteSize: number;
+  modifiedAt: string;
+}
+
+type ImportCandidateState = "idle" | "importing" | "imported" | "duplicate" | "error";
+
+interface ImportCandidateStatus {
+  state: ImportCandidateState;
+  message: string | null;
+}
+
+interface UploadSessionResponse {
+  sessionId: string;
+  status: "upload_required" | "duplicate_exact";
+  importEventId?: string;
+  duplicateOfSourceMemoId?: string;
+  upload?: {
+    method: "PUT";
+    url: string;
+    headers: Record<string, string>;
+  };
+}
+
+interface FinalizeUploadSessionResponse {
+  sourceMemoId: string;
+  workItemId: string;
+  artifactId: string;
+  importEventId: string;
+  initialWorkflowState: string;
+  processingJobs: string[];
+}
+
 class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -153,6 +204,8 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
   /\/$/,
   ""
 );
+const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
+const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 function createDraft(item: WorkItem): DraftState {
   return {
@@ -189,6 +242,12 @@ export function App() {
   const [exportBatches, setExportBatches] = useState<ExportBatch[]>([]);
   const [exportSearch, setExportSearch] = useState("");
   const [exportCreating, setExportCreating] = useState(false);
+  const [machineId, setMachineId] = useState<string | null>(null);
+  const [watchedFolders, setWatchedFolders] = useState<WatchedFolderSetting[]>([]);
+  const [watchedCandidates, setWatchedCandidates] = useState<WatchedTextCandidate[]>([]);
+  const [candidateStatuses, setCandidateStatuses] = useState<Record<string, ImportCandidateStatus>>({});
+  const [watchScanInFlight, setWatchScanInFlight] = useState(false);
+  const [watchedSettingsSaved, setWatchedSettingsSaved] = useState(false);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -287,6 +346,19 @@ export function App() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    setWatchedFolders(readWatchedFolderSettings());
+    if (!isTauriRuntime) {
+      return;
+    }
+
+    invoke<string>("watched_text_machine_id")
+      .then(setMachineId)
+      .catch((error: unknown) => {
+        setStatusMessage(error instanceof Error ? error.message : "Unable to load machine identity.");
+      });
   }, []);
 
   useEffect(() => {
@@ -588,6 +660,139 @@ export function App() {
     }
   }
 
+  function addWatchedFolder() {
+    setWatchedSettingsSaved(false);
+    setWatchedFolders((current) => [
+      ...current,
+      {
+        id: `watch-${crypto.randomUUID()}`,
+        path: "",
+        archivePath: "",
+        recursive: false,
+        enabled: true,
+        stabilityMs: 3000
+      }
+    ]);
+  }
+
+  function updateWatchedFolder<Field extends keyof WatchedFolderSetting>(
+    id: string,
+    field: Field,
+    value: WatchedFolderSetting[Field]
+  ) {
+    setWatchedSettingsSaved(false);
+    setWatchedFolders((current) =>
+      current.map((folder) => (folder.id === id ? { ...folder, [field]: value } : folder))
+    );
+  }
+
+  function removeWatchedFolder(id: string) {
+    setWatchedSettingsSaved(false);
+    setWatchedFolders((current) => current.filter((folder) => folder.id !== id));
+    setWatchedCandidates((current) => current.filter((candidate) => candidate.watchFolderId !== id));
+  }
+
+  function saveWatchedFolders() {
+    localStorage.setItem(watchedSettingsStorageKey, JSON.stringify(watchedFolders));
+    setWatchedSettingsSaved(true);
+  }
+
+  async function scanWatchedTextFolders() {
+    if (!isTauriRuntime) {
+      setStatusMessage("Watched-folder scanning is available in the Tauri desktop app.");
+      return;
+    }
+
+    setWatchScanInFlight(true);
+    setStatusMessage(null);
+    try {
+      const candidates = await invoke<WatchedTextCandidate[]>("scan_watched_text_folders", {
+        folders: watchedFolders
+      });
+      setWatchedCandidates(candidates);
+      setCandidateStatuses({});
+      setStatusMessage(`${candidates.length} stable text files found.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to scan watched folders.");
+    } finally {
+      setWatchScanInFlight(false);
+    }
+  }
+
+  async function importWatchedCandidate(candidate: WatchedTextCandidate) {
+    if (accessToken === null || machineId === null) {
+      setStatusMessage("Sign in and machine identity are required before importing watched files.");
+      return;
+    }
+
+    const watchFolder = watchedFolders.find((folder) => folder.id === candidate.watchFolderId);
+    if (watchFolder === undefined || watchFolder.archivePath.trim() === "") {
+      setCandidateStatus(candidate.path, "error", "Archive path is required before import.");
+      return;
+    }
+
+    setCandidateStatus(candidate.path, "importing", null);
+    try {
+      const bytes = new Uint8Array(await invoke<number[]>("read_watched_text_file", { path: candidate.path }));
+      const contentHash = await sha256Digest(bytes);
+      const uploadSession = await authedJson<UploadSessionResponse>(accessToken, "/api/imports/upload-sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          machineId,
+          watchFolderId: candidate.watchFolderId,
+          sourceType: "watched_text_file",
+          originalFilename: candidate.filename,
+          originalPath: candidate.path,
+          mimeType: mimeTypeForExtension(candidate.extension),
+          byteSize: bytes.byteLength,
+          contentHash
+        })
+      });
+
+      if (uploadSession.status === "duplicate_exact") {
+        await archiveImportedCandidate({
+          token: accessToken,
+          machineId,
+          candidate,
+          archiveRoot: watchFolder.archivePath,
+          importEventId: requireValue(uploadSession.importEventId, "Duplicate response did not include an import event.")
+        });
+        setCandidateStatus(candidate.path, "duplicate", "Exact duplicate archived without creating a new work item.");
+        return;
+      }
+
+      const upload = requireValue(uploadSession.upload, "Upload session did not include upload instructions.");
+      await authedFetch(accessToken, upload.url, {
+        method: upload.method,
+        headers: upload.headers,
+        body: bytes
+      });
+      const finalized = await authedJson<FinalizeUploadSessionResponse>(
+        accessToken,
+        `/api/imports/upload-sessions/${encodeURIComponent(uploadSession.sessionId)}/finalize`,
+        {
+          method: "POST",
+          body: JSON.stringify({ machineId, archivePlanned: true })
+        }
+      );
+      await archiveImportedCandidate({
+        token: accessToken,
+        machineId,
+        candidate,
+        archiveRoot: watchFolder.archivePath,
+        importEventId: finalized.importEventId
+      });
+      setCandidateStatus(candidate.path, "imported", "Imported, finalized, and archived.");
+      await refreshBucket();
+    } catch (error) {
+      setCandidateStatus(candidate.path, "error", error instanceof Error ? error.message : "Import failed.");
+    }
+  }
+
+  function setCandidateStatus(path: string, state: ImportCandidateState, message: string | null) {
+    setCandidateStatuses((current) => ({ ...current, [path]: { state, message } }));
+  }
+
   if (loadState === "loading") {
     return (
       <main className="center-stage">
@@ -633,6 +838,13 @@ export function App() {
           >
             <span>Exports</span>
           </button>
+          <button
+            className={`bucket-button ${activeView === "watched-folders" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("watched-folders")}
+          >
+            <span>Watched folders</span>
+          </button>
         </nav>
 
         <nav className="bucket-list" aria-label="Workflow buckets">
@@ -653,7 +865,7 @@ export function App() {
         </nav>
 
         <div className="sidebar-actions">
-          <button className="icon-text-button" type="button">
+          <button className="icon-text-button" type="button" onClick={() => setActiveView("watched-folders")}>
             <FolderInput size={18} />
             Watched folders
           </button>
@@ -667,10 +879,18 @@ export function App() {
       <section className="workspace" aria-label="Work items">
         <header className="workspace-header">
           <div>
-            <h1>{activeView === "exports" ? "Exports" : selectedBucket?.label ?? "Work queue"}</h1>
+            <h1>
+              {activeView === "exports"
+                ? "Exports"
+                : activeView === "watched-folders"
+                ? "Watched folders"
+                : selectedBucket?.label ?? "Work queue"}
+            </h1>
             <p>
               {activeView === "exports"
                 ? `${MEMO_CAPTURE_EXPORT_SCHEMA_VERSION} accepted snapshot batches`
+                : activeView === "watched-folders"
+                ? `${ACTIVE_TEXT_FILE_EXTENSIONS.join(", ")} imports with archive-after-finalize`
                 : selectedBucket === null
                 ? "No active workflow bucket is selected."
                 : `${selectedBucket.states.join(", ")} workflow states`}
@@ -679,10 +899,22 @@ export function App() {
           <button
             className="primary-button"
             type="button"
-            onClick={() => void (activeView === "exports" ? loadExports() : refreshBucket())}
+            onClick={() =>
+              void (activeView === "exports"
+                ? loadExports()
+                : activeView === "watched-folders"
+                ? scanWatchedTextFolders()
+                : refreshBucket())
+            }
           >
-            <RefreshCcw size={18} />
-            Refresh
+            {activeView === "watched-folders" && watchScanInFlight ? (
+              <RefreshCcw className="spin" size={18} />
+            ) : activeView === "watched-folders" ? (
+              <FolderSearch size={18} />
+            ) : (
+              <RefreshCcw size={18} />
+            )}
+            {activeView === "watched-folders" ? "Scan" : "Refresh"}
           </button>
         </header>
 
@@ -703,7 +935,7 @@ export function App() {
               onChange={(event) => setSearch(event.currentTarget.value)}
             />
           </div>
-        ) : (
+        ) : activeView === "exports" ? (
           <div className="toolbar export-toolbar" role="search">
             <Search size={18} />
             <input
@@ -728,6 +960,19 @@ export function App() {
             >
               {exportCreating ? <RefreshCcw className="spin" size={18} /> : <PackagePlus size={18} />}
               Create batch
+            </button>
+          </div>
+        ) : (
+          <div className="toolbar watched-toolbar">
+            <FolderInput size={18} />
+            <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled folders</span>
+            <button className="secondary-button" type="button" onClick={addWatchedFolder}>
+              <Plus size={18} />
+              Add folder
+            </button>
+            <button className="primary-button" type="button" onClick={saveWatchedFolders}>
+              <Save size={18} />
+              Save settings
             </button>
           </div>
         )}
@@ -949,7 +1194,7 @@ export function App() {
             )}
           </aside>
         </div>
-        ) : (
+        ) : activeView === "exports" ? (
           <div className="export-grid">
             <section className="export-list" aria-label="Accepted snapshots">
               <div className="export-summary">
@@ -1036,6 +1281,134 @@ export function App() {
               </div>
             </aside>
           </div>
+        ) : (
+          <div className="watched-grid">
+            <section className="detail-panel" aria-label="Watched-folder settings">
+              <div className="detail-header">
+                <div>
+                  <p className="eyebrow">Desktop local</p>
+                  <h2>Text import settings</h2>
+                </div>
+                <FolderInput size={22} />
+              </div>
+              <div className="detail-meta">
+                <span>Machine {machineId ?? "not loaded"}</span>
+                <span>{watchedSettingsSaved ? "Settings saved" : "Unsaved settings allowed"}</span>
+              </div>
+
+              {watchedFolders.length === 0 ? (
+                <div className="empty-detail">
+                  <FolderInput size={22} />
+                  <span>No watched folders configured</span>
+                </div>
+              ) : null}
+
+              <div className="watch-folder-list">
+                {watchedFolders.map((folder) => (
+                  <article className="watch-folder-row" key={folder.id}>
+                    <div className="field-grid">
+                      <div className="field-group">
+                        <label htmlFor={`${folder.id}-path`}>Watched path</label>
+                        <input
+                          id={`${folder.id}-path`}
+                          value={folder.path}
+                          onChange={(event) => updateWatchedFolder(folder.id, "path", event.currentTarget.value)}
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor={`${folder.id}-archive`}>Archive path</label>
+                        <input
+                          id={`${folder.id}-archive`}
+                          value={folder.archivePath}
+                          onChange={(event) =>
+                            updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="watch-folder-controls">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={folder.enabled}
+                          onChange={(event) => updateWatchedFolder(folder.id, "enabled", event.currentTarget.checked)}
+                        />
+                        Enabled
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={folder.recursive}
+                          onChange={(event) =>
+                            updateWatchedFolder(folder.id, "recursive", event.currentTarget.checked)
+                          }
+                        />
+                        Recursive
+                      </label>
+                      <div className="field-group compact">
+                        <label htmlFor={`${folder.id}-stability`}>Stability ms</label>
+                        <input
+                          id={`${folder.id}-stability`}
+                          type="number"
+                          min={1000}
+                          step={500}
+                          value={folder.stabilityMs}
+                          onChange={(event) =>
+                            updateWatchedFolder(
+                              folder.id,
+                              "stabilityMs",
+                              Number.parseInt(event.currentTarget.value, 10) || 3000
+                            )
+                          }
+                        />
+                      </div>
+                      <button className="secondary-button icon-only" type="button" onClick={() => removeWatchedFolder(folder.id)}>
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+
+            <section className="item-list" aria-label="Stable watched text files">
+              {watchedCandidates.length === 0 ? (
+                <div className="empty-state">
+                  <FolderSearch size={20} />
+                  <span>No stable text files found</span>
+                </div>
+              ) : null}
+              {watchedCandidates.map((candidate) => {
+                const status = candidateStatuses[candidate.path] ?? { state: "idle", message: null };
+                return (
+                  <article className="item-row watched-candidate-row" key={candidate.path}>
+                    <div className="item-row-main">
+                      <div className="item-title-line">
+                        <FileText size={18} />
+                        <h2>{candidate.filename}</h2>
+                      </div>
+                      <p>{candidate.path}</p>
+                      <div className="item-meta">
+                        <span>{formatBytes(candidate.byteSize)}</span>
+                        <span>Modified {formatDate(candidate.modifiedAt)}</span>
+                        <span>{statusLabel(status.state)}</span>
+                      </div>
+                      {status.message === null ? null : <p className="candidate-message">{status.message}</p>}
+                    </div>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={status.state === "importing" || status.state === "imported" || status.state === "duplicate"}
+                      onClick={() => void importWatchedCandidate(candidate)}
+                    >
+                      {status.state === "importing" ? <RefreshCcw className="spin" size={18} /> : <Upload size={18} />}
+                      Import
+                    </button>
+                  </article>
+                );
+              })}
+            </section>
+          </div>
         )}
 
         <footer className="workspace-footer">
@@ -1107,11 +1480,120 @@ function readDownloadFilename(contentDisposition: string | null): string | null 
   return match?.[1] ?? null;
 }
 
+function readWatchedFolderSettings(): WatchedFolderSetting[] {
+  const raw = localStorage.getItem(watchedSettingsStorageKey);
+  if (raw === null) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((item): item is Partial<WatchedFolderSetting> => item !== null && typeof item === "object")
+      .map((item) => ({
+        id: typeof item.id === "string" && item.id !== "" ? item.id : `watch-${crypto.randomUUID()}`,
+        path: typeof item.path === "string" ? item.path : "",
+        archivePath: typeof item.archivePath === "string" ? item.archivePath : "",
+        recursive: item.recursive === true,
+        enabled: item.enabled !== false,
+        stabilityMs: typeof item.stabilityMs === "number" && item.stabilityMs >= 1000 ? item.stabilityMs : 3000
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function archiveImportedCandidate(input: {
+  token: string;
+  machineId: string;
+  candidate: WatchedTextCandidate;
+  archiveRoot: string;
+  importEventId: string;
+}): Promise<void> {
+  try {
+    const archivePath = await invoke<string>("archive_watched_text_file", {
+      originalPath: input.candidate.path,
+      archiveRoot: input.archiveRoot,
+      archiveLeaf: buildArchiveLeaf(input.importEventId, input.candidate.filename)
+    });
+    await authedJson(input.token, `/api/imports/${encodeURIComponent(input.importEventId)}/archive-result`, {
+      method: "POST",
+      body: JSON.stringify({
+        machineId: input.machineId,
+        archivePath,
+        status: "archived",
+        warning: null
+      })
+    });
+  } catch (error) {
+    await authedJson(input.token, `/api/imports/${encodeURIComponent(input.importEventId)}/archive-result`, {
+      method: "POST",
+      body: JSON.stringify({
+        machineId: input.machineId,
+        archivePath: null,
+        status: "archive_failed",
+        warning: error instanceof Error ? error.message : "Archive move failed."
+      })
+    });
+    throw error;
+  }
+}
+
+function buildArchiveLeaf(importEventId: string, filename: string): string {
+  const now = new Date();
+  const year = String(now.getFullYear()).padStart(4, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}/${month}/${day}/${importEventId.slice(0, 8)}-${filename}`;
+}
+
+async function sha256Digest(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `sha256:${hex}`;
+}
+
+function mimeTypeForExtension(extension: string): string {
+  switch (extension.toLowerCase()) {
+    case ".md":
+    case ".markdown":
+      return "text/markdown";
+    default:
+      return "text/plain";
+  }
+}
+
+function requireValue<Value>(value: Value | null | undefined, message: string): Value {
+  if (value === null || value === undefined) {
+    throw new Error(message);
+  }
+  return value;
+}
+
+function statusLabel(state: ImportCandidateState): string {
+  return state.replaceAll("_", " ");
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function formatDate(value: string): string {
+  const dateValue = /^\d+$/.test(value) ? Number.parseInt(value, 10) : value;
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
-  }).format(new Date(value));
+  }).format(new Date(dateValue));
 }

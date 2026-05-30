@@ -276,6 +276,45 @@ function matchProtectedRoute(
     });
   }
 
+  if (method === "GET" && pathname === "/api/jobs") {
+    return async (context) => services.jobs.list(context.url.searchParams);
+  }
+
+  const jobRetryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(pathname);
+  if (method === "POST" && jobRetryMatch !== null) {
+    return async (context, session) =>
+      services.jobs.retry(
+        decodeURIComponent(jobRetryMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const jobCancelMatch = /^\/api\/jobs\/([^/]+)\/cancel$/.exec(pathname);
+  if (method === "POST" && jobCancelMatch !== null) {
+    return async (context, session) =>
+      services.jobs.cancel(
+        decodeURIComponent(jobCancelMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const jobDetailMatch = /^\/api\/jobs\/([^/]+)$/.exec(pathname);
+  if (method === "GET" && jobDetailMatch !== null) {
+    return async () => services.jobs.get(decodeURIComponent(jobDetailMatch[1] ?? ""));
+  }
+
+  if (method === "GET" && pathname === "/api/diagnostics/system") {
+    return async () => services.diagnostics.getSystemDiagnostics();
+  }
+
+  if (method === "GET" && pathname === "/api/diagnostics/providers") {
+    return async () => services.diagnostics.listProviderHealth();
+  }
+
   if (method === "GET" && pathname === "/api/exports/accepted-snapshots") {
     return async (context) => services.exports.listAcceptedSnapshots(context.url.searchParams);
   }
@@ -345,6 +384,12 @@ function matchProtectedRoute(
     });
   }
 
+  const workItemDiagnosticsMatch = /^\/api\/work-items\/([^/]+)\/diagnostics$/.exec(pathname);
+  if (method === "GET" && workItemDiagnosticsMatch !== null) {
+    return async () =>
+      services.diagnostics.getWorkItemDiagnostics(decodeURIComponent(workItemDiagnosticsMatch[1] ?? ""));
+  }
+
   if (method === "PATCH" && workItemDetailMatch !== null) {
     return async (context, session) => ({
       workItem: await services.workItems.update(
@@ -381,6 +426,42 @@ function matchProtectedRoute(
         context.requestId
       )
     });
+  }
+
+  if (method === "POST" && pathname === "/api/imports/upload-sessions") {
+    return async (context, session) =>
+      services.imports.createUploadSession(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const importUploadArtifactMatch = /^\/api\/imports\/upload-sessions\/([^/]+)\/artifact$/.exec(pathname);
+  if (method === "PUT" && importUploadArtifactMatch !== null) {
+    return async (context) =>
+      services.imports.uploadSessionArtifact(
+        decodeURIComponent(importUploadArtifactMatch[1] ?? ""),
+        await readBinaryBody(context.request)
+      );
+  }
+
+  const importFinalizeMatch = /^\/api\/imports\/upload-sessions\/([^/]+)\/finalize$/.exec(pathname);
+  if (method === "POST" && importFinalizeMatch !== null) {
+    return async (context, session) =>
+      services.imports.finalizeUploadSession(
+        decodeURIComponent(importFinalizeMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const archiveResultMatch = /^\/api\/imports\/([^/]+)\/archive-result$/.exec(pathname);
+  if (method === "POST" && archiveResultMatch !== null) {
+    return async (context, session) =>
+      services.imports.reportArchiveResult(
+        decodeURIComponent(archiveResultMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
   }
 
   if (pathname.startsWith("/api/")) {
@@ -475,6 +556,16 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
+async function readBinaryBody(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks);
+}
+
 function readRequestId(request: IncomingMessage): string {
   const header = request.headers["x-request-id"];
   if (Array.isArray(header)) {
@@ -491,7 +582,7 @@ function normalizeHeader(value: string | string[] | undefined): string | undefin
 function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,OPTIONS",
     "access-control-allow-headers": "authorization,content-type,x-request-id",
     "access-control-expose-headers": "content-disposition,x-request-id"
   };
