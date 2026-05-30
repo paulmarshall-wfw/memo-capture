@@ -4,164 +4,126 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-05-29T19:59:58Z
+- Created timestamp UTC: 2026-05-30T04:53:00Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: refreshed after Milestone 1 backend foundation scaffolding was added.
+- Session scope: refreshed after AI expansion/settings hardening and the follow-up photo-ingestion design plan were committed.
 
 ### Checkpoint Status
 
-- Git HEAD: `504d2da`
+- Git HEAD: `b59c895`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `.env.example`
-  - `apps/api/package.json`
-  - `apps/api/src/config.ts`
-  - `apps/api/src/index.ts`
-  - `apps/api/src/server.ts`
-  - `docs/development.md`
-  - `docs/env.md`
-  - `docs/specs/settings-and-audit.md`
   - `handoff.md`
-  - `package.json`
-  - `packages/domain/src/index.ts`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `apps/api/db/migrations/0002_align_target_v1_schema.sql`
-  - `apps/api/src/db/`
-  - `apps/api/src/migrate.ts`
-  - `apps/api/src/repositories/`
-  - `apps/api/src/services/`
-  - `apps/api/tests/backend-foundation.test.ts`
+  - None
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
   - `AGENTS.md`
-  - `README.md`
-  - `package.json`
+  - `docs/completed-tasks.md`
   - `docs/design/memo-capture-design-learnings.md`
-  - `docs/architecture.md`
-  - `docs/schema-baseline.md`
+  - `docs/design/Photo-ingestion-plan.md`
   - `docs/specs/index.md`
-  - `docs/specs/schema-alignment.md`
   - `docs/specs/domain-model-and-schema.md`
-  - `docs/specs/workflow-runtime-integration.md`
   - `docs/specs/ingestion-and-artifacts.md`
   - `docs/specs/processing-jobs-and-diagnostics.md`
   - `docs/specs/settings-and-audit.md`
-  - `docs/specs/auth-and-security.md`
-  - `docs/specs/exports.md`
-  - `docs/specs/mvp-implementation-plan.md`
-  - `docs/specs/decision-log.md`
   - `apps/api/db/migrations/0001_initial.sql`
   - `apps/api/db/migrations/0002_align_target_v1_schema.sql`
+  - `apps/api/db/migrations/0003_align_workflow_state_contract.sql`
+  - `apps/api/db/migrations/0004_workflow_runtime_operations.sql`
+  - `apps/api/db/migrations/0005_export_runtime.sql`
+  - `apps/api/db/migrations/0006_processing_jobs_and_diagnostics.sql`
+  - `apps/api/db/migrations/0007_import_upload_sessions.sql`
+  - `apps/api/db/migrations/0008_ai_settings_and_audit.sql`
   - `apps/api/src/config.ts`
-  - `apps/api/src/db/migrations.ts`
-  - `apps/api/src/db/postgres.ts`
-  - `apps/api/src/db/types.ts`
-  - `apps/api/src/migrate.ts`
+  - `apps/api/src/server.ts`
   - `apps/api/src/repositories/`
   - `apps/api/src/services/`
-  - `apps/api/src/server.ts`
   - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/desktop/src/App.tsx`
+  - `apps/desktop/src/styles.css`
+  - `apps/worker/src/index.ts`
   - `packages/domain/src/index.ts`
-  - `packages/domain/tests/states.test.ts`
 - Last verification:
-  - command: `node scripts/doctor.mjs`
+  - command: `node scripts/doctor.mjs`; `git diff --check`
   - result: passed
-  - timestamp UTC: 2026-05-29T21:12:00Z
+  - timestamp UTC: 2026-05-30T04:53:00Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: schema-alignment work is committed at `504d2da`; backend foundation files are intentionally dirty/untracked and not yet committed.
-- Next checkpoint action: install dependencies only if explicitly approved, then run typecheck/tests/verify; review and commit the backend foundation changes if they pass.
+- Safe-to-continue basis: current `HEAD` is recorded, `handoff.md` is the only intentional dirty file, core docs and source paths exist, and verification blockers are explicitly listed.
+- Next checkpoint action: commit the handoff refresh if desired; otherwise install dependencies only if explicitly approved, switch to Node `>=22.14.0 <23`, then run `npm run verify`.
 
 ## 2. Executive Summary
 
-Memo Capture is a scaffolded TypeScript/Tauri workspace. Milestone 0 schema/spec alignment is committed at `504d2da Add schema alignment spec and shared domain constants`. Milestone 1 backend foundation scaffolding has now been added in the dirty working tree.
+Memo Capture is a TypeScript/Tauri desktop app with a TypeScript API and worker, Postgres persistence, S3-compatible artifact storage, workflow-runtime driven review states, watched-folder ingestion, export batches, transcription recovery, and AI suggestion hardening in place.
 
 Complete now:
 
-- `docs/specs/schema-alignment.md` records the concrete delta from `0001_initial.sql` to the target V1 schema.
-- The selected migration path is a forward-only `0002_align_target_v1_schema.sql`; `0001_initial.sql` remains the committed bootstrap baseline.
-- `docs/specs/index.md`, `domain-model-and-schema.md`, `mvp-implementation-plan.md`, and `decision-log.md` point to the schema-alignment contract.
-- `packages/domain/src/index.ts` now includes shared schema/API constants and types for source memos, artifacts, import events, possible duplicates, provider/settings states, workflow staged imports, export batches, audit events, and accepted snapshots.
-- `packages/domain/tests/states.test.ts` includes a focused contract test for the new constants.
-- `node scripts/doctor.mjs` and `git diff --check` passed during the schema-alignment work.
-- `apps/api/db/migrations/0002_align_target_v1_schema.sql` now represents the forward-only V1 schema alignment migration.
-- `apps/api/src/db/` now contains the Postgres query/transaction abstraction and SQL migration runner.
-- `npm run db:migrate` now delegates to `@memo-capture/api`.
-- `apps/api/src/repositories/` and `apps/api/src/services/` now contain the first backend repository/service boundaries for users, catalog data, source memos, work items, artifacts, audit, jobs, auth, OIDC, and form memo creation.
-- `apps/api/src/server.ts` now has request IDs, public health/version routes, local-dev auth route, protected route enforcement, current session, catalog route skeletons, work item read skeletons, and form memo creation.
-- Local-dev auth is explicitly configurable and returns a development-only bearer token when enabled.
-- OIDC validation has a backend boundary with issuer, audience, expiry, RS256 signature, and JWKS validation.
-- `apps/api/tests/backend-foundation.test.ts` adds focused tests for local-dev auth, form memo creation, and protected route behavior, but they are not executable until dependencies are installed.
+- Backend foundation, auth boundary, migration runner, catalog/form memo APIs, workflow runtime operations, work queue UI, accepted snapshot/export flow, processing job diagnostics, watched text/audio ingestion, transcription recovery, and AI expansion/settings hardening are implemented in the repo.
+- AI expansion now has a backend provider/prompt boundary, strict structured JSON validation, suggestion create/list/accept/dismiss flows, settings summary/update APIs, audit filters, and desktop UI controls.
+- `docs/design/Photo-ingestion-plan.md` exists at `HEAD` as the next design-plan artifact.
+- Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 Incomplete now:
 
-- The new backend foundation has not been typechecked or test-run because dependencies are not installed.
-- The new `0002` migration has not been applied to a live Postgres database.
-- Database-backed route behavior has not been manually exercised against Postgres.
-- Workflow runtime adapter, object storage, processing job execution, exports, and providers are still unimplemented beyond repository/skeleton boundaries.
-- Dependencies are not installed in this workspace, so typecheck, tests, builds, and dev servers have not passed.
+- Dependencies are not installed in this checkout, so TypeScript typecheck, tests, build, dev servers, and full verification cannot run yet.
+- The local shell is Node `v24.14.0` and npm `11.9.0`, outside `package.json` engines (`node >=22.14.0 <23`, `npm >=10.9.0 <11`).
+- Database migrations through `0008` have not been verified against a live local Postgres in this session.
+- Browser/Tauri UI validation has not been run after the AI/settings UI changes.
 
-Safe to continue from this state, but the next practical step is dependency installation and verification before building more feature behavior on top.
+Safe to continue from this state if the next session treats `b59c895` as the committed code baseline, preserves the dirty `handoff.md` refresh, and does not assume runtime verification has passed.
 
 ## 3. Current Objective
 
-Immediate goal: verify and harden the newly added Milestone 1 backend foundation.
+Immediate goal: perform deterministic verification of the committed V1 implementation and fix any compile/test/runtime issues.
 
 Intended finished state for the next workstream:
 
-- install dependencies only with explicit approval
-- use the required Node range `>=22.14.0 <23`
-- run `npm run typecheck`, `npm test`, and `npm run verify`
-- fix any compile/test failures in the backend foundation
-- run `npm run db:migrate` against a local Postgres `DATABASE_URL` when available
-- verify local-dev auth and protected route behavior against the running API
-- document any implementation-discovered schema changes in `docs/specs/decision-log.md`
+- Use a compatible Node/npm toolchain.
+- Install dependencies only with explicit approval.
+- Run `npm run verify`.
+- Apply migrations through `0008` against a local Postgres target when available.
+- Smoke the API and desktop UI, including watched import, audio/transcript recovery, exports, settings, audit filters, and AI suggestion flows.
+- Update `docs/completed-tasks.md` after any completed verification or fix work.
 
 Definition of done:
 
-- the backend foundation compiles and tests
-- the migration runner can apply `0001` and `0002` to local Postgres
-- local-dev auth creates the fixed app user
-- form submission creates `source_memo`, `work_item`, import event, and audit rows
+- `npm run verify` passes or has a clearly documented blocker.
+- Migrations apply cleanly from a fresh database or the migration blocker is captured precisely.
+- AI expansion rejects invalid output and persists only validated suggestions.
+- Suggestion accept creates a normal `memo` work item without mutating the parent workflow state.
+- Desktop UI has been checked in Chrome/Tauri with the backend running.
 
 ## 4. Current State
 
 ### Working
 
-- Git repo is on `main` at `504d2da`.
-- Root scripts are defined in `package.json`.
+- Git repo is on `main` at `b59c895` with only `handoff.md` dirty from this refresh.
 - `node scripts/doctor.mjs` passes and confirms required bootstrap files.
-- API exposes health, readiness, version, local-dev auth, current session, protected route skeletons, catalog skeletons, work item read skeletons, and form memo creation.
-- Request IDs are generated or propagated via `x-request-id`.
-- Protected `/api/*` routes require bearer auth except explicitly public/dev routes.
-- Local-dev auth can create or refresh the fixed development app user when explicitly enabled.
-- OIDC validation boundary exists for issuer, audience, expiry, RS256 signature, and JWKS.
-- Postgres DB client, transaction wrapper, SQL migration runner, and `npm run db:migrate` exist.
-- Repository/service boundaries exist for users, projects, feature groups, contributors, source memos, import events, work items, artifacts, processing jobs, audit events, auth, and form memos.
-- Worker has a placeholder startup path.
-- Desktop has a placeholder React/Tauri operational workspace UI.
-- Shared domain constants cover the first schema/API contract and include source/work item audit events.
+- `git diff --check` passes.
+- Root scripts exist: `doctor`, `db:migrate`, `typecheck`, `test`, `build`, `verify`, `dev:api`, `dev:worker`, and `dev:desktop`.
+- API has health/readiness/version, local-dev auth, protected route enforcement, catalog APIs, work-item APIs, workflow buckets/actions, export APIs, diagnostics/jobs APIs, upload/finalize/archive APIs, settings/audit APIs, and AI suggestion APIs.
+- Desktop UI has work queue, exports, watched folders, audio transcript recovery, AI expansion/suggestion controls, settings provider toggles, and audit filtering.
+- Worker has processing job loop support for transcription and export generation.
+- Shared domain constants include current workflow states, provider/config states, processing jobs, export statuses, and audit events.
 
 ### Partially Working
 
-- `0001_initial.sql` exists as a bootstrap schema and `0002_align_target_v1_schema.sql` exists as the target V1 alignment migration, but it has not been applied to Postgres.
-- Backend foundation tests exist, but cannot run until dependencies are installed.
-- API route skeletons exist, but most domain behavior beyond catalog scaffolding and form memo creation is not implemented.
-- Desktop UI is static and not API-backed.
+- `0001` through `0008` migrations exist, but this session did not apply them to Postgres.
+- API and desktop route tests are written, but cannot run without dependencies.
+- Local-dev deterministic transcription and AI expansion providers are present; external provider integration remains intentionally bounded by configuration.
+- Object storage currently uses the local backend adapter path and still needs environment-specific verification.
 
 ### Not Working Yet
 
-- Workflow definition import, staging, activation, and runtime actions.
-- Watched-folder ingestion and archive handling.
-- Artifact upload, playback, download, and object storage integration.
-- Processing job claiming, retries, cancellation, execution, and diagnostics.
-- Accepted snapshots and export batch generation.
-- AI expansion and transcription providers.
-- Real settings, operations, export, and diagnostics screens.
+- Full verification in this checkout because `node_modules` is absent.
+- Tauri/Rust desktop build verification after the UI work.
+- End-to-end import/transcription/export/AI validation against a running API, worker, Postgres, and object storage.
+- External LLM/transcription provider implementations beyond the configured/deterministic local-dev boundary.
 
 ### Not Yet Verified
 
@@ -174,21 +136,22 @@ Definition of done:
 - `npm run dev:api`
 - `npm run dev:worker`
 - `npm run dev:desktop`
-- Tauri Rust build
-- Chrome validation of the desktop UI
+- Tauri Rust build/check
+- Chrome/Tauri browser validation of the desktop UI
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
 - Do not install dependencies, commit, tag, release, publish, deploy, delete files, or weaken project instructions unless explicitly asked.
 - Never use `latest`; always use numbered versions.
-- Apply `engineering-project-standard` for setup, maintenance, versioning, and stack work.
+- Apply `engineering-project-standard` for setup, maintenance, versioning, stack, documentation, and verification work.
 - Apply `web-app-design-standard` for frontend UI work.
 - Use Chrome for browser automation unless the user explicitly asks for another browser or Chrome is unavailable.
 - Desktop clients must not connect directly to Postgres or object storage.
 - Backend settings are canonical; watched-folder and archive paths are desktop-local settings.
 - Workflow actions, buckets, and reopen behavior must be driven by the active workflow definition wherever possible.
 - AI output consumed by code must be structured JSON and validated before storage.
+- AI expansion is an app-owned side action, not a workflow transition.
 - CSV export, delete behavior, and privacy purge behavior are out of scope for V1.
 
 ## 6. Commands and Verification
@@ -208,27 +171,20 @@ npm run dev:worker
 npm run dev:desktop
 ```
 
-Most recent passed command:
+Passed in this refresh:
 
 ```bash
 node scripts/doctor.mjs
+git diff --check
 ```
-
-Result: passed at 2026-05-29T19:59:58Z.
-Latest result: passed at 2026-05-29T21:12:00Z.
-
-Additional verification from the backend foundation work:
-
-- `git diff --check`: passed.
-- `npm run typecheck -w @memo-capture/api`: blocked because `tsc` is unavailable.
-- `npm test -w @memo-capture/api`: blocked because `tsx` is unavailable.
-- `npm run verify`: blocked at workspace typecheck because `tsc` is unavailable.
 
 Current blockers:
 
-- `node_modules` is absent. Install dependencies before typecheck, tests, builds, or dev servers.
-- The local shell reported Node `v24.14.0` during the failed test attempt, while `package.json` requires `>=22.14.0 <23`.
-- Postgres-backed migration and route verification need a live `DATABASE_URL` target.
+- `node_modules` is absent.
+- `npm run verify` previously stopped at workspace typecheck because `tsc` was unavailable.
+- `npm test` previously stopped because `tsx` was unavailable.
+- Current shell reports Node `v24.14.0` and npm `11.9.0`, outside the declared engine range.
+- No `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py` exists in this repo, so freshness was checked manually with Git status and file existence.
 
 Prerequisites:
 
@@ -236,53 +192,38 @@ Prerequisites:
 - npm `>=10.9.0 <11`
 - Rust stable toolchain for Tauri builds
 - Postgres for backend persistence work
-- S3-compatible object storage for artifact/export integration work
+- S3-compatible object storage or local object-storage root for artifacts
 - OIDC provider details or local-dev auth mode for auth work
 
 ## 7. Files to Open First
 
 - `AGENTS.md`: repo-local instructions and constraints.
 - `handoff.md`: hot-context continuity source.
-- `docs/specs/index.md`: reading order for the V1 spec set.
-- `docs/specs/schema-alignment.md`: concrete migration delta and next schema path.
-- `docs/specs/mvp-implementation-plan.md`: milestone sequence.
-- `docs/specs/domain-model-and-schema.md`: target schema and API contracts.
-- `docs/specs/decision-log.md`: schema decisions and open implementation decisions.
-- `apps/api/db/migrations/0001_initial.sql`: bootstrap migration that `0002` must build from.
-- `apps/api/db/migrations/0002_align_target_v1_schema.sql`: target V1 alignment migration added in the dirty tree.
-- `apps/api/src/db/migrations.ts`: migration runner.
-- `apps/api/src/db/postgres.ts`: Postgres DB client and transaction wrapper.
+- `docs/completed-tasks.md`: compact completed work ledger.
+- `docs/design/memo-capture-design-learnings.md`: resolved V1 product decisions.
+- `docs/design/Photo-ingestion-plan.md`: current photo ingestion design plan at `HEAD`.
+- `docs/specs/index.md`: V1 spec reading order.
+- `docs/specs/domain-model-and-schema.md`: schema and API contract.
+- `docs/specs/ingestion-and-artifacts.md`: watched import and managed artifact rules.
+- `docs/specs/processing-jobs-and-diagnostics.md`: jobs, retries, diagnostics, provider health.
+- `docs/specs/settings-and-audit.md`: settings, provider/prompt, audit, and AI suggestion contracts.
+- `apps/api/db/migrations/0008_ai_settings_and_audit.sql`: latest schema migration.
+- `apps/api/src/server.ts`: protected route wiring.
 - `apps/api/src/services/app.ts`: service composition.
-- `apps/api/src/services/auth.ts`: local-dev/OIDC auth boundary.
-- `apps/api/src/services/form-memos.ts`: form memo creation service.
-- `apps/api/src/server.ts`: request routing, request IDs, protected skeletons.
-- `apps/api/tests/backend-foundation.test.ts`: new focused backend foundation tests.
-- `packages/domain/src/index.ts`: shared constants/types that implementation code should import.
-- `package.json`: root scripts, workspace shape, and runtime version requirements.
+- `apps/api/src/services/ai-expansion.ts`: AI expansion orchestration and validation.
+- `apps/api/src/services/settings.ts`: settings service.
+- `apps/api/src/repositories/ai-suggestions.ts`: suggestion persistence.
+- `apps/api/src/repositories/settings.ts`: settings persistence.
+- `apps/desktop/src/App.tsx`: desktop UI flows.
+- `apps/desktop/src/styles.css`: desktop UI layout and controls.
+- `apps/worker/src/index.ts`: worker job loop.
+- `packages/domain/src/index.ts`: shared constants and types.
 
-## 8. Next Actions
+## 8. Suggested Next Steps
 
-Next:
-
-- Review the backend foundation diff.
-- Install dependencies only if explicitly approved.
-- Switch to a Node version matching `>=22.14.0 <23`.
-- Run `npm run typecheck`, `npm test`, and `npm run verify`.
-- Fix compile/test issues surfaced by verification.
-- Run `npm run db:migrate` against local Postgres when `DATABASE_URL` is available.
-
-Blocked:
-
-- Full verification is blocked until dependencies are installed.
-- Postgres-backed verification is blocked until a local `DATABASE_URL` target is available.
-- Current shell Node version is outside the declared engine range.
-
-Later:
-
-- Implement workflow runtime operations after backend foundation verification passes.
-- Implement backend repositories/services beyond the initial catalog/form-memo skeletons.
-- Use Chrome verification for future UI behavior/layout changes.
-
-## 9. Ready-Made Prompt for Starting a New Thread
-
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source of current state. Then review `AGENTS.md`, `docs/specs/index.md`, `docs/specs/schema-alignment.md`, `docs/specs/mvp-implementation-plan.md`, `docs/specs/domain-model-and-schema.md`, `docs/specs/auth-and-security.md`, `docs/specs/settings-and-audit.md`, `apps/api/db/migrations/0001_initial.sql`, `apps/api/db/migrations/0002_align_target_v1_schema.sql`, `apps/api/src/db/migrations.ts`, `apps/api/src/db/postgres.ts`, `apps/api/src/services/app.ts`, `apps/api/src/services/auth.ts`, `apps/api/src/services/form-memos.ts`, `apps/api/src/server.ts`, `apps/api/tests/backend-foundation.test.ts`, `packages/domain/src/index.ts`, and `package.json`. Treat `504d2da Add schema alignment spec and shared domain constants` as the current committed checkpoint with backend foundation changes intentionally dirty/untracked. Start by verifying the backend foundation after dependency installation and a Node version matching `>=22.14.0 <23`; do not install dependencies, commit, tag, release, publish, deploy, delete files, or start unrelated feature implementation unless explicitly requested.
+1. Switch to Node `>=22.14.0 <23` and npm `>=10.9.0 <11`.
+2. Ask explicitly before running `npm install`.
+3. Run `npm run verify`; fix compile/test issues first.
+4. Start Postgres/object storage as needed and run `npm run db:migrate`.
+5. Launch API, worker, and desktop; smoke the main flows with Chrome/Tauri.
+6. Record completed verification/fix work in `docs/completed-tasks.md`.
