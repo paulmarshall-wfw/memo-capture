@@ -505,22 +505,24 @@ export function App() {
       return;
     }
 
+    const token = accessToken;
+    const workItemId = selectedItemId;
     let cancelled = false;
     async function loadSelectedItem() {
       try {
         const [detailResponse, actionsResponse, diagnosticsResponse, suggestionsResponse] = await Promise.all([
-          authedJson<{ workItem: WorkItem }>(accessToken, `/api/work-items/${encodeURIComponent(selectedItemId)}`),
+          authedJson<{ workItem: WorkItem }>(token, `/api/work-items/${encodeURIComponent(workItemId)}`),
           authedJson<{ actions: AllowedWorkflowAction[] }>(
-            accessToken,
-            `/api/work-items/${encodeURIComponent(selectedItemId)}/actions`
+            token,
+            `/api/work-items/${encodeURIComponent(workItemId)}/actions`
           ),
           authedJson<WorkItemDiagnostics>(
-            accessToken,
-            `/api/work-items/${encodeURIComponent(selectedItemId)}/diagnostics`
+            token,
+            `/api/work-items/${encodeURIComponent(workItemId)}/diagnostics`
           ),
           authedJson<{ suggestions: AiSuggestion[] }>(
-            accessToken,
-            `/api/work-items/${encodeURIComponent(selectedItemId)}/ai-suggestions`
+            token,
+            `/api/work-items/${encodeURIComponent(workItemId)}/ai-suggestions`
           )
         ]);
         if (cancelled) {

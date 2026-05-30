@@ -207,7 +207,7 @@ export class ExportService {
         throw new Error("Export artifact creation failed.");
       }
 
-      const itemArtifacts = [];
+      const itemArtifacts: { acceptedSnapshotId: string; artifactId: string }[] = [];
       for (const itemFile of rendered.itemMarkdownFiles) {
         const artifact = await this.createStoredArtifact(
           {

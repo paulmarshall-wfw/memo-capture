@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { readApiConfig } from "../src/config.js";
 import type { Database, Queryable, QueryParams, QueryResult } from "../src/db/types.js";
 import { createLogger } from "../src/logger.js";
+import type { AiSuggestionRecord } from "../src/repositories/ai-suggestions.js";
 import type { AppServices } from "../src/services/app.js";
 import { createAppServicesFromDatabase } from "../src/services/app.js";
 import { HttpError } from "../src/services/errors.js";
@@ -387,15 +388,15 @@ function stubServices(): AppServices {
       dismissSuggestion: async () => {
         throw new Error("not used");
       }
-    } as AppServices["ai"],
+    } as unknown as AppServices["ai"],
     audit: {
       list: async () => []
-    } as AppServices["audit"],
+    } as unknown as AppServices["audit"],
     artifacts: {
       download: async () => {
         throw new Error("not used");
       }
-    } as AppServices["artifacts"],
+    } as unknown as AppServices["artifacts"],
     auth: {
       authenticateAuthorizationHeader: async () => {
         throw new HttpError(401, "unauthorized", "Missing bearer token.");
@@ -403,15 +404,15 @@ function stubServices(): AppServices {
       createLocalDevSession: async () => {
         throw new Error("not used");
       }
-    } as AppServices["auth"],
+    } as unknown as AppServices["auth"],
     catalog: {
       listProjects: async () => []
-    } as AppServices["catalog"],
+    } as unknown as AppServices["catalog"],
     diagnostics: {
       getWorkItemDiagnostics: async () => ({ workItemId: "missing" }),
       listProviderHealth: async () => ({ providers: [] }),
       getSystemDiagnostics: async () => ({})
-    } as AppServices["diagnostics"],
+    } as unknown as AppServices["diagnostics"],
     exports: {
       listAcceptedSnapshots: async () => ({ snapshots: [] }),
       listBatches: async () => ({ batches: [] }),
@@ -427,8 +428,8 @@ function stubServices(): AppServices {
       generateBatch: async () => {
         throw new Error("not used");
       }
-    } as AppServices["exports"],
-    formMemos: {} as AppServices["formMemos"],
+    } as unknown as AppServices["exports"],
+    formMemos: {} as unknown as AppServices["formMemos"],
     imports: {
       createUploadSession: async () => {
         throw new Error("not used");
@@ -442,7 +443,7 @@ function stubServices(): AppServices {
       reportArchiveResult: async () => {
         throw new Error("not used");
       }
-    } as AppServices["imports"],
+    } as unknown as AppServices["imports"],
     jobs: {
       list: async () => ({ jobs: [] }),
       get: async () => {
@@ -454,7 +455,7 @@ function stubServices(): AppServices {
       cancel: async () => {
         throw new Error("not used");
       }
-    } as AppServices["jobs"],
+    } as unknown as AppServices["jobs"],
     settings: {
       getSummary: async () => ({ providers: [] }),
       updateExtraction: async () => {
@@ -469,7 +470,7 @@ function stubServices(): AppServices {
       createPromptVersion: async () => {
         throw new Error("not used");
       }
-    } as AppServices["settings"],
+    } as unknown as AppServices["settings"],
     workflows: {
       getStatus: async () => ({ active: null, supportedHookHandlers: [] }),
       getBuckets: async () => ({ buckets: [] }),
@@ -483,14 +484,14 @@ function stubServices(): AppServices {
       executeAction: async () => {
         throw new Error("not used");
       }
-    } as AppServices["workflows"],
+    } as unknown as AppServices["workflows"],
     workItems: {
       list: async () => [],
       findById: async () => null,
       recoverTranscript: async () => {
         throw new Error("not used");
       }
-    } as AppServices["workItems"],
+    } as unknown as AppServices["workItems"],
     close: async () => undefined
   };
 }
@@ -552,7 +553,7 @@ function captureRouteServices(): AppServices {
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
   };
-  let suggestionOne = {
+  let suggestionOne: AiSuggestionRecord = {
     id: "suggestion-1",
     parentWorkItemId: "work-item-1",
     status: "pending",
@@ -617,7 +618,7 @@ function captureRouteServices(): AppServices {
         };
         return { suggestion: suggestionTwo };
       }
-    } as AppServices["ai"],
+    } as unknown as AppServices["ai"],
     audit: {
       list: async () => [
         {
@@ -637,14 +638,14 @@ function captureRouteServices(): AppServices {
           createdAt: "2026-05-29T00:06:00.000Z"
         }
       ]
-    } as AppServices["audit"],
+    } as unknown as AppServices["audit"],
     artifacts: {
       download: async () => ({
         filename: "memo.m4a",
         contentType: "audio/mp4",
         body: Buffer.from("audio")
       })
-    } as AppServices["artifacts"],
+    } as unknown as AppServices["artifacts"],
     auth: {
       authenticateAuthorizationHeader: async (header: string | undefined) => {
         if (header !== "Bearer test-token") {
@@ -663,7 +664,7 @@ function captureRouteServices(): AppServices {
         isAdmin: true,
         accessToken: "test-token"
       })
-    } as AppServices["auth"],
+    } as unknown as AppServices["auth"],
     catalog: {
       listProjects: async () => [project],
       createProject: async () => project,
@@ -677,7 +678,7 @@ function captureRouteServices(): AppServices {
       createContributor: async () => contributor,
       updateContributor: async () => contributor,
       deactivateContributor: async () => ({ ...contributor, isActive: false })
-    } as AppServices["catalog"],
+    } as unknown as AppServices["catalog"],
     exports: {
       listAcceptedSnapshots: async () => ({
         snapshots: [
@@ -731,7 +732,7 @@ function captureRouteServices(): AppServices {
       generateBatch: async () => {
         throw new Error("not used");
       }
-    } as AppServices["exports"],
+    } as unknown as AppServices["exports"],
     diagnostics: {
       getWorkItemDiagnostics: async (workItemId: string) => ({
         workItemId,
@@ -750,13 +751,13 @@ function captureRouteServices(): AppServices {
         providers: { providers: [] },
         exportSchemaVersion: "memo-capture-export.v1"
       })
-    } as AppServices["diagnostics"],
+    } as unknown as AppServices["diagnostics"],
     formMemos: {
       createFromRequest: async () => ({
         sourceMemoId: "source-memo-1",
         workItem
       })
-    } as AppServices["formMemos"],
+    } as unknown as AppServices["formMemos"],
     imports: {
       createUploadSession: async () => ({
         sessionId: "upload-session-1",
@@ -781,7 +782,7 @@ function captureRouteServices(): AppServices {
         status: "imported",
         archivePath: "/archive/2026/05/30/uploaded.md"
       })
-    } as AppServices["imports"],
+    } as unknown as AppServices["imports"],
     jobs: {
       list: async () => ({
         jobs: [
@@ -831,7 +832,7 @@ function captureRouteServices(): AppServices {
           cancelRequestedAt: "2026-05-29T00:04:00.000Z"
         }
       })
-    } as AppServices["jobs"],
+    } as unknown as AppServices["jobs"],
     settings: {
       getSummary: async () => ({
         fileTypes: [],
@@ -900,7 +901,7 @@ function captureRouteServices(): AppServices {
         }
       }),
       createPromptVersion: async () => ({ prompt: { id: "prompt-1", activeVersion: 2 } })
-    } as AppServices["settings"],
+    } as unknown as AppServices["settings"],
     workflows: {
       getStatus: async () => ({
         active: {
@@ -949,7 +950,7 @@ function captureRouteServices(): AppServices {
         activeWorkflowVersion: "0.2.2",
         contentHash: "sha256:test"
       })
-    } as AppServices["workflows"],
+    } as unknown as AppServices["workflows"],
     workItems: {
       list: async () => [workItem],
       findById: async (workItemId: string) => (workItemId === workItem.id ? workItem : null),
@@ -981,7 +982,7 @@ function captureRouteServices(): AppServices {
         };
         return workItem;
       }
-    } as AppServices["workItems"],
+    } as unknown as AppServices["workItems"],
     close: async () => undefined
   };
 }
@@ -1047,7 +1048,7 @@ class FakeDatabase implements Database {
         this.users.push(user);
       }
 
-      return rows([user] as Row[]);
+      return rows([user] as unknown as Row[]);
     }
 
     if (text.includes("insert into source_memos")) {
@@ -1074,7 +1075,7 @@ class FakeDatabase implements Database {
         updated_at: "2026-05-29T00:00:00.000Z"
       };
       this.workItems.push(row);
-      return rows([row] as Row[]);
+      return rows([row] as unknown as Row[]);
     }
 
     if (text.includes("insert into import_events")) {

@@ -13,7 +13,10 @@ try {
     logger
   });
 
-  logger.info("db_migrations_complete", result);
+  logger.info("db_migrations_complete", {
+    applied: result.applied,
+    skipped: result.skipped
+  });
 } finally {
   await db.close();
 }

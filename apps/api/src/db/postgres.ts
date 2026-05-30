@@ -20,10 +20,7 @@ export class PgDatabase implements Database {
     values: QueryParams = []
   ): Promise<QueryResult<Row>> {
     const result = await this.pool.query<Row>(text, [...values]);
-    return {
-      rows: result.rows,
-      rowCount: result.rowCount ?? result.rows.length
-    };
+    return normalizeQueryResult(result);
   }
 
   async transaction<Result>(operation: (client: Queryable) => Promise<Result>): Promise<Result> {
@@ -37,10 +34,7 @@ export class PgDatabase implements Database {
           values: QueryParams = []
         ): Promise<QueryResult<Row>> => {
           const queryResult = await client.query<Row>(text, [...values]);
-          return {
-            rows: queryResult.rows,
-            rowCount: queryResult.rowCount ?? queryResult.rows.length
-          };
+          return normalizeQueryResult(queryResult);
         }
       });
       await client.query("commit");
@@ -63,4 +57,19 @@ export class PgDatabase implements Database {
 
 export function createPgDatabase(connectionString: string, logger: Logger): Database {
   return new PgDatabase(connectionString, logger);
+}
+
+function normalizeQueryResult<Row extends Record<string, unknown>>(
+  result: pg.QueryResult<Row> | pg.QueryResult<Row>[]
+): QueryResult<Row> {
+  if (Array.isArray(result)) {
+    const rows = result.flatMap((entry) => entry.rows ?? []);
+    const rowCount = result.reduce((count, entry) => count + (entry.rowCount ?? entry.rows?.length ?? 0), 0);
+    return { rows, rowCount };
+  }
+
+  return {
+    rows: result.rows ?? [],
+    rowCount: result.rowCount ?? result.rows?.length ?? 0
+  };
 }

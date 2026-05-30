@@ -5,8 +5,8 @@
   "type": "module",
   "packageManager": "npm@10.9.2",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
@@ -17,7 +17,7 @@
     "doctor": "node scripts/doctor.mjs",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "tsc -b tsconfig.json",
     "verify": "npm run doctor && npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {

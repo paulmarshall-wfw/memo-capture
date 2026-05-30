@@ -3,146 +3,145 @@
 ## 1. Metadata
 
 - Project name: Memo Capture
-- Handoff type: implementation handoff
-- Created timestamp UTC: 2026-05-30T04:53:00Z
+- Handoff type: verification handoff
+- Created timestamp UTC: 2026-05-30T05:20:57Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: refreshed after AI expansion/settings hardening and the follow-up photo-ingestion design plan were committed.
+- Session scope: dependencies installed, verification fixed, migrations applied, and local app smoke-tested.
 
 ### Checkpoint Status
 
-- Git HEAD: `b59c895`
+- Git HEAD: `1d38833`
 - Working tree: dirty
 - Dirty files intentionally in scope:
+  - `apps/api/src/db/postgres.ts`
+  - `apps/api/src/migrate.ts`
+  - `apps/api/src/services/exports.ts`
+  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/desktop/src/App.tsx`
+  - `docs/completed-tasks.md`
   - `handoff.md`
+  - `package.json`
+  - `packages/config/package.json`
+  - `packages/domain/package.json`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - None
+  - `package-lock.json`
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
   - `AGENTS.md`
   - `docs/completed-tasks.md`
   - `docs/design/memo-capture-design-learnings.md`
-  - `docs/design/Photo-ingestion-plan.md`
+  - `docs/design/memo-capture-0.2.2-workflow-definition-bundled.json`
   - `docs/specs/index.md`
   - `docs/specs/domain-model-and-schema.md`
   - `docs/specs/ingestion-and-artifacts.md`
   - `docs/specs/processing-jobs-and-diagnostics.md`
   - `docs/specs/settings-and-audit.md`
+  - `docs/specs/workflow-runtime-integration.md`
   - `apps/api/db/migrations/0001_initial.sql`
-  - `apps/api/db/migrations/0002_align_target_v1_schema.sql`
-  - `apps/api/db/migrations/0003_align_workflow_state_contract.sql`
-  - `apps/api/db/migrations/0004_workflow_runtime_operations.sql`
-  - `apps/api/db/migrations/0005_export_runtime.sql`
-  - `apps/api/db/migrations/0006_processing_jobs_and_diagnostics.sql`
-  - `apps/api/db/migrations/0007_import_upload_sessions.sql`
   - `apps/api/db/migrations/0008_ai_settings_and_audit.sql`
-  - `apps/api/src/config.ts`
+  - `apps/api/src/db/postgres.ts`
   - `apps/api/src/server.ts`
-  - `apps/api/src/repositories/`
   - `apps/api/src/services/`
   - `apps/api/tests/backend-foundation.test.ts`
   - `apps/desktop/src/App.tsx`
-  - `apps/desktop/src/styles.css`
   - `apps/worker/src/index.ts`
   - `packages/domain/src/index.ts`
 - Last verification:
-  - command: `node scripts/doctor.mjs`; `git diff --check`
+  - command: `npm run verify`; `npm run db:migrate`; `git diff --check`
   - result: passed
-  - timestamp UTC: 2026-05-30T04:53:00Z
+  - timestamp UTC: 2026-05-30T05:20:57Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD` is recorded, `handoff.md` is the only intentional dirty file, core docs and source paths exist, and verification blockers are explicitly listed.
-- Next checkpoint action: commit the handoff refresh if desired; otherwise install dependencies only if explicitly approved, switch to Node `>=22.14.0 <23`, then run `npm run verify`.
+- Safe-to-continue basis: current `HEAD` is recorded, dirty/untracked files are accounted for, full npm verification passed, migrations through `0008` applied, and Chrome smoke testing reached a populated work queue.
+- Next checkpoint action: review the dirty changes, then commit or continue runtime testing.
 
 ## 2. Executive Summary
 
-Memo Capture is a TypeScript/Tauri desktop app with a TypeScript API and worker, Postgres persistence, S3-compatible artifact storage, workflow-runtime driven review states, watched-folder ingestion, export batches, transcription recovery, and AI suggestion hardening in place.
+Memo Capture is now runnable for local testing from this checkout.
 
 Complete now:
 
-- Backend foundation, auth boundary, migration runner, catalog/form memo APIs, workflow runtime operations, work queue UI, accepted snapshot/export flow, processing job diagnostics, watched text/audio ingestion, transcription recovery, and AI expansion/settings hardening are implemented in the repo.
-- AI expansion now has a backend provider/prompt boundary, strict structured JSON validation, suggestion create/list/accept/dismiss flows, settings summary/update APIs, audit filters, and desktop UI controls.
-- `docs/design/Photo-ingestion-plan.md` exists at `HEAD` as the next design-plan artifact.
+- Node `22.14.0` and npm `10.9.2` were installed via nvm.
+- npm workspace dependencies were installed and `package-lock.json` was created.
+- TypeScript project-reference verification now works from the root `typecheck` script.
+- Shared workspace package `main`/`types` entries now match the emitted `dist/src/index.*` files.
+- Strict TypeScript errors in API, desktop, and tests were fixed.
+- Postgres adapter result normalization now handles multi-statement migration SQL.
+- `npm run verify` passed outside the sandbox.
+- Migrations `0001` through `0008` applied to a local Postgres `16.8-alpine` dev container.
+- API, worker, and desktop dev servers are running.
+- Workflow bundle `0.2.2` was imported and activated for local testing.
+- A smoke-test project, feature group, and form memo were created through the API and rendered in Chrome in the Memos bucket.
 - Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 Incomplete now:
 
-- Dependencies are not installed in this checkout, so TypeScript typecheck, tests, build, dev servers, and full verification cannot run yet.
-- The local shell is Node `v24.14.0` and npm `11.9.0`, outside `package.json` engines (`node >=22.14.0 <23`, `npm >=10.9.0 <11`).
-- Database migrations through `0008` have not been verified against a live local Postgres in this session.
-- Browser/Tauri UI validation has not been run after the AI/settings UI changes.
+- The dirty fixes and generated `package-lock.json` are not committed.
+- Tauri/Rust desktop build/check was not run in this pass.
+- Full watched-folder, audio/transcription, export download, settings/audit, and AI suggestion workflows still need manual/end-to-end testing.
+- Object storage was only exercised enough for app startup; export artifact generation still needs a runtime smoke.
 
-Safe to continue from this state if the next session treats `b59c895` as the committed code baseline, preserves the dirty `handoff.md` refresh, and does not assume runtime verification has passed.
+Safe to continue from this state if the next session treats `1d38833` as the committed baseline plus the dirty verification/runtime-readiness patch set listed above.
 
 ## 3. Current Objective
 
-Immediate goal: perform deterministic verification of the committed V1 implementation and fix any compile/test/runtime issues.
+Immediate goal: continue local runtime testing from a verified, migrated, running app.
 
-Intended finished state for the next workstream:
+Intended finished state:
 
-- Use a compatible Node/npm toolchain.
-- Install dependencies only with explicit approval.
-- Run `npm run verify`.
-- Apply migrations through `0008` against a local Postgres target when available.
-- Smoke the API and desktop UI, including watched import, audio/transcript recovery, exports, settings, audit filters, and AI suggestion flows.
-- Update `docs/completed-tasks.md` after any completed verification or fix work.
+- Smoke the main V1 flows end-to-end against the local Postgres dev database.
+- Fix any runtime issues found in watched import, transcription recovery, exports, settings/audit, and AI suggestion flows.
+- Commit the dependency/runtime-readiness fixes when reviewed.
 
 Definition of done:
 
-- `npm run verify` passes or has a clearly documented blocker.
-- Migrations apply cleanly from a fresh database or the migration blocker is captured precisely.
-- AI expansion rejects invalid output and persists only validated suggestions.
-- Suggestion accept creates a normal `memo` work item without mutating the parent workflow state.
-- Desktop UI has been checked in Chrome/Tauri with the backend running.
+- Dirty fixes are reviewed and committed.
+- Runtime smoke coverage includes at least one work item through accepted/export flow.
+- Any remaining environmental blockers are recorded explicitly.
 
 ## 4. Current State
 
 ### Working
 
-- Git repo is on `main` at `b59c895` with only `handoff.md` dirty from this refresh.
-- `node scripts/doctor.mjs` passes and confirms required bootstrap files.
-- `git diff --check` passes.
-- Root scripts exist: `doctor`, `db:migrate`, `typecheck`, `test`, `build`, `verify`, `dev:api`, `dev:worker`, and `dev:desktop`.
-- API has health/readiness/version, local-dev auth, protected route enforcement, catalog APIs, work-item APIs, workflow buckets/actions, export APIs, diagnostics/jobs APIs, upload/finalize/archive APIs, settings/audit APIs, and AI suggestion APIs.
-- Desktop UI has work queue, exports, watched folders, audio transcript recovery, AI expansion/suggestion controls, settings provider toggles, and audit filtering.
-- Worker has processing job loop support for transcription and export generation.
-- Shared domain constants include current workflow states, provider/config states, processing jobs, export statuses, and audit events.
+- `npm run verify` passes under Node `22.14.0`/npm `10.9.2`.
+- `npm run db:migrate` applied migrations `0001` through `0008`.
+- API public health route works at `http://127.0.0.1:4788/health`.
+- Local-dev auth session creation works at `POST /api/dev-auth/session`.
+- Desktop Vite UI is running at `http://127.0.0.1:5175/`.
+- Worker dev process is running and supports `transcribe_audio` and `generate_export_batch`.
+- Active workflow status reports workflow version `0.2.2`.
+- Chrome smoke verified the populated Memos bucket and visible workflow actions for a smoke-test memo.
 
 ### Partially Working
 
-- `0001` through `0008` migrations exist, but this session did not apply them to Postgres.
-- API and desktop route tests are written, but cannot run without dependencies.
-- Local-dev deterministic transcription and AI expansion providers are present; external provider integration remains intentionally bounded by configuration.
-- Object storage currently uses the local backend adapter path and still needs environment-specific verification.
+- Local Postgres is running in Docker container `memo-capture-postgres-16-8` from image `postgres:16.8-alpine`.
+- `.env` exists locally from `.env.example`; it is intentionally git-ignored.
+- Dev servers were started with local-dev auth overrides for API and worker.
+- Object storage uses the configured local adapter path and still needs export/runtime validation.
 
 ### Not Working Yet
 
-- Full verification in this checkout because `node_modules` is absent.
-- Tauri/Rust desktop build verification after the UI work.
-- End-to-end import/transcription/export/AI validation against a running API, worker, Postgres, and object storage.
-- External LLM/transcription provider implementations beyond the configured/deterministic local-dev boundary.
+- `/api/health` is protected and returns `unauthorized` without a bearer token; this is expected, not a health-route failure.
+- No active workflow exists in a fresh database until a workflow bundle is imported and activated.
+- The ambient shell may still default to Node `v24.14.0`; use the Node 22 nvm path or `nvm use 22.14.0`.
 
 ### Not Yet Verified
 
-- `npm install`
-- `npm run typecheck`
-- `npm test`
-- `npm run build`
-- `npm run verify`
-- `npm run db:migrate`
-- `npm run dev:api`
-- `npm run dev:worker`
-- `npm run dev:desktop`
-- Tauri Rust build/check
-- Chrome/Tauri browser validation of the desktop UI
+- Tauri Rust build/check.
+- Watched-folder file scanning from the native shell path.
+- Audio playback/transcription retry/manual recovery against the running worker.
+- Export generation and authenticated bundle download.
+- Settings/audit filters against live data.
+- AI expansion with any non-disabled provider.
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
-- Do not install dependencies, commit, tag, release, publish, deploy, delete files, or weaken project instructions unless explicitly asked.
+- Do not commit, tag, release, publish, deploy, delete files, or weaken project instructions unless explicitly asked.
 - Never use `latest`; always use numbered versions.
 - Apply `engineering-project-standard` for setup, maintenance, versioning, stack, documentation, and verification work.
 - Apply `web-app-design-standard` for frontend UI work.
@@ -156,44 +155,45 @@ Definition of done:
 
 ## 6. Commands and Verification
 
-Current known commands:
+Use Node 22 for npm commands:
 
 ```bash
-npm install
-npm run doctor
-npm run db:migrate
-npm run typecheck
-npm test
-npm run build
+nvm use 22.14.0
 npm run verify
+npm run db:migrate
 npm run dev:api
 npm run dev:worker
+npm run dev:desktop
+```
+
+Current local runtime commands used:
+
+```bash
+docker run --name memo-capture-postgres-16-8 -e POSTGRES_USER=memo_capture -e POSTGRES_PASSWORD=memo_capture -e POSTGRES_DB=memo_capture -p 5432:5432 -d postgres:16.8-alpine
+MEMO_CAPTURE_AUTH_MODE=local-dev MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED=true npm run dev:api
+MEMO_CAPTURE_AUTH_MODE=local-dev MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED=true npm run dev:worker
 npm run dev:desktop
 ```
 
 Passed in this refresh:
 
 ```bash
-node scripts/doctor.mjs
+npm run verify
+npm run db:migrate
 git diff --check
 ```
 
+Runtime smoke evidence:
+
+- `GET http://127.0.0.1:4788/health` returned `ok: true`.
+- `POST http://127.0.0.1:4788/api/dev-auth/session` returned a local-dev bearer token.
+- Workflow import/activation of `docs/design/memo-capture-0.2.2-workflow-definition-bundled.json` succeeded.
+- Smoke memo `Smoke test memo` rendered in Chrome under the Memos bucket.
+
 Current blockers:
 
-- `node_modules` is absent.
-- `npm run verify` previously stopped at workspace typecheck because `tsc` was unavailable.
-- `npm test` previously stopped because `tsx` was unavailable.
-- Current shell reports Node `v24.14.0` and npm `11.9.0`, outside the declared engine range.
-- No `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py` exists in this repo, so freshness was checked manually with Git status and file existence.
-
-Prerequisites:
-
-- Node.js `>=22.14.0 <23`
-- npm `>=10.9.0 <11`
-- Rust stable toolchain for Tauri builds
-- Postgres for backend persistence work
-- S3-compatible object storage or local object-storage root for artifacts
-- OIDC provider details or local-dev auth mode for auth work
+- No `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py` exists in this repo, so freshness was checked manually with Git status, file existence, and verification evidence.
+- Sandbox blocks localhost listen/tsx IPC for some commands; run verification and dev servers outside the sandbox when needed.
 
 ## 7. Files to Open First
 
@@ -201,29 +201,22 @@ Prerequisites:
 - `handoff.md`: hot-context continuity source.
 - `docs/completed-tasks.md`: compact completed work ledger.
 - `docs/design/memo-capture-design-learnings.md`: resolved V1 product decisions.
-- `docs/design/Photo-ingestion-plan.md`: current photo ingestion design plan at `HEAD`.
+- `docs/design/memo-capture-0.2.2-workflow-definition-bundled.json`: workflow bundle activated in local smoke testing.
 - `docs/specs/index.md`: V1 spec reading order.
-- `docs/specs/domain-model-and-schema.md`: schema and API contract.
-- `docs/specs/ingestion-and-artifacts.md`: watched import and managed artifact rules.
-- `docs/specs/processing-jobs-and-diagnostics.md`: jobs, retries, diagnostics, provider health.
-- `docs/specs/settings-and-audit.md`: settings, provider/prompt, audit, and AI suggestion contracts.
-- `apps/api/db/migrations/0008_ai_settings_and_audit.sql`: latest schema migration.
+- `docs/specs/workflow-runtime-integration.md`: import/activation/status/bucket contracts.
+- `apps/api/src/db/postgres.ts`: DB adapter fix for multi-statement migration results.
 - `apps/api/src/server.ts`: protected route wiring.
 - `apps/api/src/services/app.ts`: service composition.
-- `apps/api/src/services/ai-expansion.ts`: AI expansion orchestration and validation.
-- `apps/api/src/services/settings.ts`: settings service.
-- `apps/api/src/repositories/ai-suggestions.ts`: suggestion persistence.
-- `apps/api/src/repositories/settings.ts`: settings persistence.
+- `apps/api/tests/backend-foundation.test.ts`: route/service coverage and test stubs.
 - `apps/desktop/src/App.tsx`: desktop UI flows.
-- `apps/desktop/src/styles.css`: desktop UI layout and controls.
 - `apps/worker/src/index.ts`: worker job loop.
-- `packages/domain/src/index.ts`: shared constants and types.
+- `package.json`: workspace order and root verification script.
 
 ## 8. Suggested Next Steps
 
-1. Switch to Node `>=22.14.0 <23` and npm `>=10.9.0 <11`.
-2. Ask explicitly before running `npm install`.
-3. Run `npm run verify`; fix compile/test issues first.
-4. Start Postgres/object storage as needed and run `npm run db:migrate`.
-5. Launch API, worker, and desktop; smoke the main flows with Chrome/Tauri.
-6. Record completed verification/fix work in `docs/completed-tasks.md`.
+1. Review the dirty changes and `package-lock.json`.
+2. Continue runtime smoke testing from `http://127.0.0.1:5175/`.
+3. Test accepted/export flow with the smoke memo.
+4. Test watched text/audio import paths.
+5. Run Tauri/Rust verification if native desktop packaging is in scope.
+6. Commit the readiness fixes once the patch set is acceptable.
