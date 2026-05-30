@@ -42,10 +42,10 @@ Every successful capture creates provenance first:
 
 Initial state:
 
-- `new_idea` for form submissions and high-confidence imports.
-- `needs_ingestion_review` for incomplete or low-confidence imports.
+- `memo` for form submissions and high-confidence imports.
+- `needs_review` for incomplete or low-confidence imports.
 
-Promotion from `needs_ingestion_review` to `new_idea` requires:
+Promotion from `needs_review` to `memo` requires:
 
 - selected `project_id`
 - title
@@ -213,7 +213,7 @@ Response:
   "sourceMemoId": "uuid",
   "workItemId": "uuid",
   "artifactId": "uuid",
-  "initialWorkflowState": "needs_ingestion_review",
+  "initialWorkflowState": "needs_review",
   "processingJobs": ["uuid"]
 }
 ```
@@ -308,4 +308,3 @@ Rules:
 - Exact duplicate content hash creates duplicate import event only.
 - Upload-finalize failure can retry without reuploading.
 - Desktop restart preserves staged upload state.
-

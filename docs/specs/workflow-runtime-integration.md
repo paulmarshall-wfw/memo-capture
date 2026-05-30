@@ -17,26 +17,44 @@ Workflow actions must be executed through backend/runtime integration. The front
 
 Memo Capture expects the active workflow definition to support these state semantics:
 
-- `needs_ingestion_review`
-- `new_idea`
+- `needs_review`
+- `memo`
 - `parked`
 - `accepted`
 - `rejected`
 - `ignored`
 - `failed`
 
-The active workflow definition may define labels, buckets, display order, visible actions, guards, and reopen behavior. The app requires semantic compatibility, not hardcoded visual labels.
+The active workflow definition owns state IDs, labels, buckets, display order, visible actions, guards, terminality, and reopen behavior.
 
-## Required Bucket Roles
+Memo Capture owns only app-side compatibility:
 
-Every activatable workflow bundle must define bucket metadata for:
+- successful captures start in `memo`
+- incomplete or low-confidence captures start in `needs_review`
+- workflow hook handlers must be implemented by the app before activation
+- app-owned side effects remain backend-enforced
 
-- `ingestion_review`
-- `new_ideas`
-- `accepted`
-- `closed`
+The workflow definition may group `rejected`, `ignored`, and `failed` however the definition author chooses. The app must not hardcode a closed bucket.
 
-The `closed` bucket visually groups `rejected`, `ignored`, and `failed`, but those states remain semantically distinct, filterable, and auditable.
+## App Capabilities
+
+`requiredAppCapabilities` is app-owned compatibility metadata. State-workflow definitions do not need it to describe states, actions, buckets, or hooks, but a bundle can declare capabilities when activation needs app support for side effects.
+
+Current supported capability:
+
+```json
+{
+  "requiredAppCapabilities": [
+    "memo-capture.workflow-hooks.create_accepted_snapshot.v1"
+  ]
+}
+```
+
+The app also validates hook `handlerKey` values. V1 supports:
+
+```json
+["create_accepted_snapshot"]
+```
 
 ## Runtime Capabilities
 
@@ -103,7 +121,6 @@ Required columns:
 
 - `singleton_id boolean primary key default true`
 - `workflow_id text not null`
-- `variant_key text not null`
 - `workflow_version text not null`
 - `state_machine_version text not null`
 - `required_app_capabilities jsonb not null`
@@ -127,7 +144,6 @@ Required columns:
 
 - `id uuid primary key`
 - `workflow_id text not null`
-- `variant_key text not null`
 - `previous_workflow_version text`
 - `previous_state_machine_version text`
 - `previous_content_hash text`
@@ -147,7 +163,6 @@ Required columns:
 
 - `id uuid primary key`
 - `workflow_id text not null`
-- `variant_key text not null`
 - `workflow_version text not null`
 - `state_machine_version text not null`
 - `content_hash text not null`
@@ -170,7 +185,7 @@ Statuses:
 1. User opens Operations.
 2. User imports workflow bundle.
 3. Backend validates bundle and stores a staged import.
-4. UI shows validation result, identity, version, variant, content hash, changelog, warnings, and activation implications.
+4. UI shows validation result, identity, version, content hash, changelog, warnings, and activation implications.
 5. User explicitly activates a staged bundle.
 6. Backend revalidates the staged bundle transactionally.
 7. Backend checks active processing job compatibility.
@@ -185,11 +200,9 @@ Bundle validation must verify:
 
 - `workflow_id`
 - `version`
-- `variant`
 - state machine version
-- required bucket roles
 - known V1 state semantics
-- initial states include `needs_ingestion_review` and `new_idea`
+- app initial-state policy can map to `needs_review` and `memo`
 - app-supported handlers and guards
 - app-supported side-effect bindings
 - required app capability set
@@ -200,12 +213,11 @@ V1 blocks activation if:
 
 - app-code migrations are required
 - required guards or handlers are missing
-- required bucket roles are missing
 - initial state semantics are incompatible
 - active processing jobs depend on workflow actions or states that the activation would invalidate
-- normal mode sees a previously activated version/variant with different content
+- normal mode sees a previously activated workflow version with different content
 
-Local-dev mode may allow workflow version/variant reuse with different content.
+Local-dev mode may allow workflow version reuse with different content.
 
 ## Processing Job Compatibility
 
@@ -236,13 +248,12 @@ Response:
 {
   "active": {
     "workflowId": "memo-capture-review",
-    "variantKey": "default",
     "workflowVersion": "0.1.0",
     "stateMachineVersion": "0.1.0",
     "contentHash": "sha256:...",
     "activatedAt": "2026-05-29T00:00:00.000Z"
   },
-  "bucketRoles": ["ingestion_review", "new_ideas", "accepted", "closed"]
+  "supportedHookHandlers": ["create_accepted_snapshot"]
 }
 ```
 
@@ -272,7 +283,6 @@ Response:
   },
   "identity": {
     "workflowId": "memo-capture-review",
-    "variantKey": "default",
     "workflowVersion": "0.1.0",
     "stateMachineVersion": "0.1.0",
     "contentHash": "sha256:..."
@@ -313,10 +323,10 @@ Response:
 {
   "buckets": [
     {
-      "role": "new_ideas",
-      "label": "New ideas",
+      "id": "memos",
+      "label": "Memos",
       "order": 20,
-      "states": ["new_idea"]
+      "states": ["memo"]
     }
   ]
 }
@@ -331,10 +341,10 @@ Response:
 ```json
 {
   "workItemId": "uuid",
-  "workflowState": "new_idea",
+  "workflowState": "memo",
   "actions": [
     {
-      "id": "accept",
+      "id": "memo.accept",
       "label": "Accept",
       "visible": true,
       "requiresInput": false,
@@ -363,7 +373,8 @@ Response:
 ```json
 {
   "workItemId": "uuid",
-  "previousState": "new_idea",
+  "actionId": "memo.accept",
+  "previousState": "memo",
   "newState": "accepted",
   "newVersion": 4,
   "createdSnapshotId": "uuid | null",
@@ -376,7 +387,7 @@ Response:
 Accepting an item:
 
 - executes runtime action
-- creates accepted snapshot if transition lands in `accepted`
+- runs the `create_accepted_snapshot` hook supplied by the active workflow definition
 - clears `accepted_unexported_changes` on the new snapshot baseline
 - writes audit event
 
@@ -384,7 +395,7 @@ Rejecting, ignoring, or failing:
 
 - executes runtime action
 - preserves source memo, work item, artifacts, and audit
-- remains filterable by terminal state
+- remains filterable by workflow state
 
 Reopening:
 
@@ -403,18 +414,27 @@ Workflow events:
 - `work_item.workflow_action_executed`
 - `work_item.workflow_action_rejected`
 
-Audit payloads must include actor, workflow identity, work item ID where relevant, previous/new states, action ID, and sanitized validation details.
+Audit payloads must include actor, workflow identity, work item ID where relevant, workflow action ID, previous/new states, and sanitized validation details. UI labels are display text only and must not be used as durable audit meaning.
+
+Stable action ID example:
+
+```json
+{
+  "actionId": "memo.accept",
+  "previousState": "memo",
+  "newState": "accepted"
+}
+```
 
 ## Acceptance Tests
 
-- Bundle without required bucket roles is rejected.
 - Bundle requiring missing app capability is rejected.
+- Bundle requiring an unsupported hook handler is rejected.
 - Import validates and stages without changing active workflow.
 - Activation requires explicit confirmation.
 - Activation replaces active bundle transactionally.
 - Activation blocks when incompatible active jobs exist.
 - Work item action availability comes from backend/runtime.
 - Illegal action returns a safe 409 or 422 response and does not mutate state.
-- Accept action creates an accepted snapshot exactly once for the transition.
+- Accept action runs `create_accepted_snapshot` exactly once for the transition.
 - Reopen action appears only when supplied by the active workflow.
-

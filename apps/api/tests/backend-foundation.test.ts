@@ -53,7 +53,7 @@ test("form memo service creates source memo, work item, import event, and audit 
   assert.equal(db.workItems.length, 1);
   assert.equal(db.importEvents.length, 1);
   assert.equal(db.auditEvents.length, 2);
-  assert.equal(result.workItem.workflowState, "new_idea");
+  assert.equal(result.workItem.workflowState, "memo");
   assert.equal(result.workItem.title, "Capture this");
 });
 
@@ -151,7 +151,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     });
     assert.equal(formMemo.response.status, 200);
     assert.equal(formMemo.body.result.sourceMemoId, "source-memo-1");
-    assert.equal(formMemo.body.result.workItem.workflowState, "new_idea");
+    assert.equal(formMemo.body.result.workItem.workflowState, "memo");
   } finally {
     server.close();
     await services.close();
@@ -230,7 +230,7 @@ function captureRouteServices(): AppServices {
     title: "Captured memo",
     body: "Useful memo body",
     bodyFormat: "markdown",
-    workflowState: "new_idea",
+    workflowState: "memo",
     workflowItemVersion: 1,
     acceptedSnapshotId: null,
     acceptedUnexportedChanges: false,

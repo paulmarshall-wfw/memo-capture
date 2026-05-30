@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { DEFAULT_MEMO_WORK_ITEM_STATE } from "@memo-capture/domain";
 import type { Database, Queryable } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import { ImportEventRepository, SourceMemoRepository } from "../repositories/source-memos.js";
@@ -67,7 +68,7 @@ async function createFormMemoWithClient(
     title: input.title,
     body: input.body,
     bodyFormat: "markdown",
-    workflowState: "new_idea",
+    workflowState: DEFAULT_MEMO_WORK_ITEM_STATE,
     actorUserId: actor.id
   });
 
@@ -95,7 +96,7 @@ async function createFormMemoWithClient(
     requestId,
     sourceMemoId: sourceMemo.id,
     workItemId: workItem.id,
-    metadata: { workflowState: "new_idea" }
+    metadata: { workflowState: DEFAULT_MEMO_WORK_ITEM_STATE }
   });
 
   return {

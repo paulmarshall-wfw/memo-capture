@@ -35,8 +35,8 @@ Primary entities:
 2. Backend creates or reuses `source_memo` according to duplicate rules.
 3. Backend creates a `work_item` immediately for successful non-duplicate captures.
 4. The active workflow definition determines the initial state:
-   - `needs_ingestion_review` for low-confidence or incomplete imports.
-   - `new_idea` for form submissions and high-confidence imports.
+   - `needs_review` for low-confidence or incomplete imports.
+   - `memo` for form submissions and high-confidence imports.
 5. Users edit current `work_item` fields directly.
 6. Accepting a work item creates an immutable accepted snapshot.
 7. Editing an accepted work item creates a new accepted snapshot and marks prior export state as stale where applicable.
@@ -46,8 +46,8 @@ Primary entities:
 
 V1 known states:
 
-- `needs_ingestion_review`
-- `new_idea`
+- `needs_review`
+- `memo`
 - `parked`
 - `accepted`
 - `rejected`
@@ -56,23 +56,19 @@ V1 known states:
 
 Valid initial states:
 
-- `needs_ingestion_review`
-- `new_idea`
+- `needs_review`
+- `memo`
 
-Active states:
+App-recognized active states:
 
-- `needs_ingestion_review`
-- `new_idea`
+- `needs_review`
+- `memo`
 - `parked`
 - `accepted`
 
-Terminal states:
-
-- `rejected`
-- `ignored`
-- `failed`
-
 `accepted` is not terminal. Accepted items can still be edited, exported again, and accumulate unexported accepted changes.
+
+Workflow terminality and reopen behavior are owned by the active workflow definition, not hardcoded by the app.
 
 ## Required Tables
 
@@ -550,13 +546,13 @@ Request:
 Behavior:
 
 - Creates `source_memo` with `source_type = form`.
-- Creates `work_item` in `new_idea`.
+- Creates `work_item` in `memo`.
 - Writes audit and import/provenance records.
 
 ## Acceptance Tests
 
-- Form submission creates one source memo and one work item in `new_idea`.
-- Low-confidence import creates a source memo and work item in `needs_ingestion_review`.
+- Form submission creates one source memo and one work item in `memo`.
+- Low-confidence import creates a source memo and work item in `needs_review`.
 - Exact duplicate file import creates an import event and no new work item.
 - Possible duplicate import creates a new source memo/work item and an open possible duplicate record.
 - Editing a non-accepted item mutates the current work item only.

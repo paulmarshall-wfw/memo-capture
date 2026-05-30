@@ -57,7 +57,7 @@ API:
 Acceptance:
 
 - Local-dev auth creates fixed development app user.
-- Form submission creates `source_memo` and `work_item` in `new_idea`.
+- Form submission creates `source_memo` and `work_item` in `memo`.
 - Audit events are written for create/update operations.
 - Tests cover repository/service basics.
 
@@ -180,8 +180,8 @@ Acceptance:
 
 - AI expansion creates validated pending suggestions.
 - Invalid output creates diagnostics and no suggestion/work-item records.
-- Accepting suggestion creates `source_memo` with `source_type = ai_generated` and work item in `new_idea`.
-- Dismissing suggestion does not create work item or terminal workflow state.
+- Accepting suggestion creates `source_memo` with `source_type = ai_generated` and work item in `memo`.
+- Dismissing suggestion does not create a work item or mutate workflow state.
 
 ## Milestone 9: Hardening And V1 Readiness
 
@@ -206,7 +206,7 @@ Acceptance:
 Work queue:
 
 - Sidebar buckets from workflow metadata.
-- List filters for project, feature group, contributor, tags, date range, export status, terminal state, and search.
+- List filters for project, feature group, contributor, tags, date range, export status, workflow state, and search.
 - Detail panel with editable title/body/project/feature group/contributor/tags.
 - Source/provenance block.
 - Runtime-backed workflow action area.

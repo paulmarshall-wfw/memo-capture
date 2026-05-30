@@ -39,8 +39,8 @@ export type SourceMemoArtifactRelationship =
   (typeof SOURCE_MEMO_ARTIFACT_RELATIONSHIPS)[number];
 
 export const WORK_ITEM_STATES = [
-  "needs_ingestion_review",
-  "new_idea",
+  "needs_review",
+  "memo",
   "parked",
   "accepted",
   "rejected",
@@ -50,27 +50,32 @@ export const WORK_ITEM_STATES = [
 
 export type WorkItemState = (typeof WORK_ITEM_STATES)[number];
 
-export const ACTIVE_WORK_ITEM_STATES = [
-  "needs_ingestion_review",
-  "new_idea",
-  "parked",
-  "accepted"
+export const INGESTION_REVIEW_WORK_ITEM_STATE =
+  "needs_review" as const satisfies WorkItemState;
+export const DEFAULT_MEMO_WORK_ITEM_STATE = "memo" as const satisfies WorkItemState;
+export const ACCEPTED_WORK_ITEM_STATE = "accepted" as const satisfies WorkItemState;
+
+export const INITIAL_WORK_ITEM_STATES = [
+  INGESTION_REVIEW_WORK_ITEM_STATE,
+  DEFAULT_MEMO_WORK_ITEM_STATE
 ] as const satisfies readonly WorkItemState[];
 
-export const TERMINAL_WORK_ITEM_STATES = [
-  "rejected",
-  "ignored",
-  "failed"
-] as const satisfies readonly WorkItemState[];
+export const ACTIVE_WORK_ITEM_STATES = WORK_ITEM_STATES satisfies readonly WorkItemState[];
 
-export const REQUIRED_BUCKET_ROLES = [
-  "ingestion_review",
-  "new_ideas",
-  "accepted",
-  "closed"
+export const TERMINAL_WORK_ITEM_STATES = [] as const satisfies readonly WorkItemState[];
+
+export const SUPPORTED_WORKFLOW_HOOK_HANDLERS = [
+  "create_accepted_snapshot"
 ] as const;
 
-export type RequiredBucketRole = (typeof REQUIRED_BUCKET_ROLES)[number];
+export type SupportedWorkflowHookHandler = (typeof SUPPORTED_WORKFLOW_HOOK_HANDLERS)[number];
+
+export const SUPPORTED_WORKFLOW_APP_CAPABILITIES = [
+  "memo-capture.workflow-hooks.create_accepted_snapshot.v1"
+] as const;
+
+export type SupportedWorkflowAppCapability =
+  (typeof SUPPORTED_WORKFLOW_APP_CAPABILITIES)[number];
 
 export const IMPORT_EVENT_STATUSES = [
   "staged",

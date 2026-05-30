@@ -285,13 +285,13 @@ button {
   text-transform: capitalize;
 }
 
-.state-new_idea,
+.state-memo,
 .state-accepted {
   color: #0f5f51;
   background: #ddf5ee;
 }
 
-.state-needs_ingestion_review {
+.state-needs_review {
   color: #775300;
   background: #fff0c2;
 }

@@ -1,32 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DEFAULT_MEMO_WORK_ITEM_STATE,
   ARTIFACT_KINDS,
   EXPORT_BATCH_STATUSES,
+  INITIAL_WORK_ITEM_STATES,
   IMPORT_EVENT_STATUSES,
   isActiveWorkItemState,
   isTerminalWorkItemState,
   POSSIBLE_DUPLICATE_STATUSES,
   SOURCE_MEMO_TYPES,
-  REQUIRED_BUCKET_ROLES,
+  SUPPORTED_WORKFLOW_APP_CAPABILITIES,
+  SUPPORTED_WORKFLOW_HOOK_HANDLERS,
   WORK_ITEM_STATES
 } from "../src/index.js";
 
-test("work item states include accepted active state and closed terminal states", () => {
+test("work item states use memo as the successful capture state", () => {
+  assert.equal(DEFAULT_MEMO_WORK_ITEM_STATE, "memo");
+  assert.deepEqual([...INITIAL_WORK_ITEM_STATES], ["needs_review", "memo"]);
+  assert.equal(WORK_ITEM_STATES.includes("memo"), true);
+  assert.equal((WORK_ITEM_STATES as readonly string[]).includes("new_idea"), false);
   assert.equal(isActiveWorkItemState("accepted"), true);
   assert.equal(isTerminalWorkItemState("accepted"), false);
-  assert.equal(isTerminalWorkItemState("rejected"), true);
-  assert.equal(isTerminalWorkItemState("ignored"), true);
-  assert.equal(isTerminalWorkItemState("failed"), true);
-  assert.equal(WORK_ITEM_STATES.includes("needs_ingestion_review"), true);
+  assert.equal(isTerminalWorkItemState("rejected"), false);
+  assert.equal(isTerminalWorkItemState("ignored"), false);
+  assert.equal(isTerminalWorkItemState("failed"), false);
+  assert.equal(WORK_ITEM_STATES.includes("needs_review"), true);
 });
 
-test("required workflow bucket roles are stable", () => {
-  assert.deepEqual([...REQUIRED_BUCKET_ROLES], [
-    "ingestion_review",
-    "new_ideas",
-    "accepted",
-    "closed"
+test("supported workflow hook handlers are app-owned", () => {
+  assert.deepEqual([...SUPPORTED_WORKFLOW_HOOK_HANDLERS], ["create_accepted_snapshot"]);
+  assert.deepEqual([...SUPPORTED_WORKFLOW_APP_CAPABILITIES], [
+    "memo-capture.workflow-hooks.create_accepted_snapshot.v1"
   ]);
 });
 

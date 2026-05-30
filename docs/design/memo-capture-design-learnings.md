@@ -22,7 +22,7 @@ The app uses two linked primary records:
 
 `work_item` stores the reviewable idea content and metadata that users edit, browse, accept, park, reject, ignore, fail, or export.
 
-Every successfully detected/imported source memo creates a work item immediately. Form submissions and high-confidence imports instantiate work items in `new_idea`. Low-confidence imports instantiate work items in `needs_ingestion_review`.
+Every successfully detected/imported source memo creates a work item immediately. Form submissions and high-confidence imports instantiate work items in `memo`. Low-confidence imports instantiate work items in `needs_review`.
 
 ## Classification Model
 
@@ -50,9 +50,9 @@ Supported V1 ingestion channels:
 
 Watched-folder imports always create source memo provenance first, then create the workflow work item in the appropriate initial state.
 
-Automatic extraction should produce candidate project, feature group, title, body, contributor, and tags with confidence metadata. Low-confidence or incomplete imports enter `needs_ingestion_review`. Once a signed-in user supplies required fields, confidence scores should not block promotion.
+Automatic extraction should produce candidate project, feature group, title, body, contributor, and tags with confidence metadata. Low-confidence or incomplete imports enter `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block promotion.
 
-Promotion from `needs_ingestion_review` to `new_idea` requires:
+Promotion from `needs_review` to `memo` requires:
 
 - selected `project_id`
 - title
@@ -119,8 +119,8 @@ The workflow covers both ingestion review and idea review.
 
 Known V1 states:
 
-- `needs_ingestion_review`
-- `new_idea`
+- `needs_review`
+- `memo`
 - `parked`
 - `accepted`
 - `rejected`
@@ -129,36 +129,23 @@ Known V1 states:
 
 Valid initial workflow states:
 
-- `needs_ingestion_review`
-- `new_idea`
+- `needs_review`
+- `memo`
 
-Active states:
+App-recognized active states:
 
-- `needs_ingestion_review`
-- `new_idea`
+- `needs_review`
+- `memo`
 - `parked`
 - `accepted`
 
-Terminal states:
-
-- `rejected`
-- `ignored`
-- `failed`
-
 `accepted` is not terminal because accepted items can still be edited, exported, and can accumulate unexported accepted changes.
 
-The `closed` bucket visually groups `rejected`, `ignored`, and `failed`, but those states remain semantically distinct, filterable, and auditable.
+Terminality and reopen behavior are owned by the active workflow definition. The app must not hardcode a closed bucket or terminal state list.
 
 ## Workflow-Driven UI Rules
 
-Buckets should come from workflow definition metadata. The app may require semantic bucket roles, but labels, state membership, and display order are definition-driven.
-
-Required semantic bucket roles:
-
-- `ingestion_review`
-- `new_ideas`
-- `accepted`
-- `closed`
+Buckets should come from workflow definition metadata. Labels, state membership, display order, and bucket IDs are definition-driven.
 
 The app should render visible no-input actions generically from runtime `getAllowedActions`. Custom UI is needed only for actions that require extra input, confirmation, or app-owned side effects.
 
@@ -178,7 +165,7 @@ V1 rules:
 
 - import workflow bundle through a dedicated operations/admin surface or endpoint
 - validate bundle before activation
-- require explicit activation of a specific version/variant
+- require explicit activation of a specific workflow version
 - block activation if required guards, handlers, or migrations are missing
 - store only the active workflow definition bundle
 - activation replaces the previous stored active bundle
@@ -193,7 +180,7 @@ Workflow import UI must warn that the previous workflow bundle content is not re
 
 AI expansion is an app-owned side action in V1, not a workflow transition. It does not change lifecycle state by itself.
 
-The work-item detail panel can offer AI expansion for appropriate states, likely `new_idea` and possibly `parked`.
+The work-item detail panel can offer AI expansion for appropriate states, likely `memo` and possibly `parked`.
 
 AI expansion sends structured context to the configured LLM service:
 
@@ -232,9 +219,9 @@ AI-generated related ideas are not workflow items immediately. They are `ai_sugg
 Accepting a suggestion creates:
 
 - a `source_memo` with `source_type = ai_generated`
-- a normal `work_item` in `new_idea`
+- a normal `work_item` in `memo`
 
-Dismissing a suggestion does not create a workflow item or terminal workflow state.
+Dismissing a suggestion does not create a workflow item or mutate workflow state.
 
 ## Prompt Versioning And AI Provenance
 
@@ -267,7 +254,7 @@ Backend processing flow:
 
 Automatic transcription retry count is configurable.
 
-Recoverable transcription or extraction failures stay in `needs_ingestion_review` with visible error details and recovery actions. Terminal `failed` is reserved for explicit unrecoverable/system/user failure.
+Recoverable transcription or extraction failures stay in `needs_review` with visible error details and recovery actions. Terminal `failed` is reserved for explicit unrecoverable/system/user failure.
 
 If automatic transcription fails, the user can play the source audio in the detail panel and manually enter or edit transcript/body content.
 
@@ -478,7 +465,7 @@ Filtering should support:
 - tags/keywords
 - date range
 - export status for accepted items
-- terminal state inside the closed bucket
+- workflow state
 
 The right-hand detail panel shows the full memo/work-item content, editable fields, source/provenance details, available workflow actions, AI expansion controls, and audio playback where applicable.
 
@@ -587,7 +574,7 @@ Rules:
 - activation can warn and proceed only when compatibility checks pass and active jobs do not depend on workflow actions/states
 - no dry-run validation against existing work items is required in V1
 - activation is transactional: either the new bundle becomes active or nothing changes
-- workflow identity requires `workflow_id`, `version`, and `variant`
+- workflow identity requires `workflow_id` and `version`
 - content hash is not part of the required workflow identity contract
 - users cannot export/download the active workflow bundle from the app
 
@@ -782,12 +769,12 @@ Rules:
 
 - database migrations are forward-only in V1; rollback is restore-from-backup
 - workflow bundles declare required app capabilities
-- activation checks handlers, guards, bucket roles, app-owned side effects, and minimum app version/capability set
+- activation checks handlers, guards, app-owned side effects, and minimum app version/capability set
 - export schema starts at `memo-capture-export.v1` and remains stable through MVP unless a breaking `v2` is needed
 - API routes do not need a public `/v1` prefix unless external clients are expected
 - object storage key layout includes a numbered layout version
-- workflow version/variant reuse with different content is allowed only in local-dev mode
-- normal mode rejects activating a version/variant that was previously activated with different content
+- workflow version reuse with different content is allowed only in local-dev mode
+- normal mode rejects activating a version that was previously activated with different content
 - system/about diagnostics shows app version, API version/build, DB schema version, active workflow version, and export schema version
 
 ## Testing And Verification

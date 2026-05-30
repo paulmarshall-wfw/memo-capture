@@ -175,7 +175,7 @@ Behavior:
 
 Failure:
 
-- recoverable failure keeps work item in `needs_ingestion_review`
+- recoverable failure keeps work item in `needs_review`
 - user can play audio and manually enter transcript/body
 - terminal `failed` workflow state is reserved for explicit unrecoverable/system/user failure
 
@@ -197,7 +197,7 @@ Output:
 
 Rules:
 
-- Low confidence enters or remains in `needs_ingestion_review`.
+- Low confidence enters or remains in `needs_review`.
 - Confidence scores do not block promotion once a signed-in user supplies required fields.
 - AI/extraction may suggest projects, feature groups, contributors, and tags, but creation/confirmation follows settings rules.
 

@@ -12,6 +12,7 @@ import {
 import {
   ACTIVE_AUDIO_FILE_EXTENSIONS,
   ACTIVE_TEXT_FILE_EXTENSIONS,
+  DEFAULT_MEMO_WORK_ITEM_STATE,
   MEMO_CAPTURE_EXPORT_SCHEMA_VERSION,
   type WorkItemState
 } from "@memo-capture/domain";
@@ -20,7 +21,7 @@ interface BucketSummary {
   id: string;
   label: string;
   count: number;
-  state: WorkItemState | "closed";
+  state: WorkItemState;
 }
 
 interface DemoWorkItem {
@@ -37,10 +38,10 @@ interface DemoWorkItem {
 }
 
 const buckets: BucketSummary[] = [
-  { id: "ingestion", label: "Needs ingestion review", count: 3, state: "needs_ingestion_review" },
-  { id: "new", label: "New ideas", count: 12, state: "new_idea" },
+  { id: "review", label: "Review", count: 3, state: "needs_review" },
+  { id: "memos", label: "Memos", count: 12, state: DEFAULT_MEMO_WORK_ITEM_STATE },
   { id: "accepted", label: "Accepted", count: 5, state: "accepted" },
-  { id: "closed", label: "Closed", count: 8, state: "closed" }
+  { id: "archive", label: "Archive", count: 8, state: "ignored" }
 ];
 
 const demoItems: DemoWorkItem[] = [
@@ -50,7 +51,7 @@ const demoItems: DemoWorkItem[] = [
     project: "Memo Capture",
     featureGroup: "Ingestion",
     contributor: "Paul Marshall",
-    state: "new_idea",
+    state: DEFAULT_MEMO_WORK_ITEM_STATE,
     snippet: "Move watched-folder files into a dated archive folder after managed storage confirms success.",
     body: "After a watched-folder audio or text file is successfully copied into managed object storage, the desktop app should move the original file into a date-grouped archive folder. The archive name should preserve the original filename with an import ID prefix.",
     tags: ["watched-folder", "archive", "provenance"],
@@ -64,7 +65,7 @@ const demoItems: DemoWorkItem[] = [
     contributor: null,
     state: "accepted",
     snippet: "AI-generated related ideas should be suggestions, not workflow items, until a user accepts them.",
-    body: "AI expansion should create pending suggestions linked to the parent work item. Accepting a suggestion creates an AI-generated source memo and a new work item in the new idea bucket.",
+    body: "AI expansion should create pending suggestions linked to the parent work item. Accepting a suggestion creates an AI-generated source memo and a new work item in the memos bucket.",
     tags: ["ai", "workflow", "suggestions"],
     sourceType: "text"
   },
@@ -74,7 +75,7 @@ const demoItems: DemoWorkItem[] = [
     project: "Memo Capture",
     featureGroup: "Transcription",
     contributor: "Paul Marshall",
-    state: "needs_ingestion_review",
+    state: "needs_review",
     snippet: "When automatic transcription fails, users need audio playback and manual transcript entry.",
     body: "The detail panel should expose an audio player when a source memo has an audio artifact. If automatic transcription fails, a user can listen and manually provide the transcript or memo body before promoting the item.",
     tags: ["audio", "recovery", "transcription"],
@@ -124,7 +125,7 @@ export function App() {
       <section className="workspace" aria-label="Work items">
         <header className="workspace-header">
           <div>
-            <h1>New ideas</h1>
+            <h1>Memos</h1>
             <p>Review captured memos, refine details, and use workflow actions from the active definition.</p>
           </div>
           <button className="primary-button" type="button">

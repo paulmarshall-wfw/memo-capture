@@ -35,7 +35,7 @@ Rationale: Avoids hidden inboxes and keeps all captured material reviewable.
 
 ### D005: Ingestion Review Is A Workflow State
 
-Decision: Low-confidence or incomplete imports instantiate work items in `needs_ingestion_review`.
+Decision: Low-confidence or incomplete imports instantiate work items in `needs_review`.
 
 Rationale: Recovery and completion should happen in the same lifecycle model as normal review.
 
