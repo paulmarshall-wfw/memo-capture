@@ -21,7 +21,7 @@ struct WatchedFolderSetting {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct WatchedTextCandidate {
+struct WatchedFileCandidate {
     watch_folder_id: String,
     path: String,
     filename: String,
@@ -56,9 +56,9 @@ fn watched_text_machine_id(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn scan_watched_text_folders(
+fn scan_watched_folders(
     folders: Vec<WatchedFolderSetting>,
-) -> Result<Vec<WatchedTextCandidate>, String> {
+) -> Result<Vec<WatchedFileCandidate>, String> {
     let mut candidates = Vec::new();
     for folder in folders.iter().filter(|folder| folder.enabled) {
         let root = PathBuf::from(folder.path.trim());
@@ -72,13 +72,25 @@ fn scan_watched_text_folders(
 }
 
 #[tauri::command]
+fn scan_watched_text_folders(
+    folders: Vec<WatchedFolderSetting>,
+) -> Result<Vec<WatchedFileCandidate>, String> {
+    scan_watched_folders(folders)
+}
+
+#[tauri::command]
 fn read_watched_text_file(path: String) -> Result<Vec<u8>, String> {
     fs::read(PathBuf::from(path))
         .map_err(|error| format!("Unable to read watched text file: {error}"))
 }
 
 #[tauri::command]
-fn archive_watched_text_file(
+fn read_watched_file(path: String) -> Result<Vec<u8>, String> {
+    fs::read(PathBuf::from(path)).map_err(|error| format!("Unable to read watched file: {error}"))
+}
+
+#[tauri::command]
+fn archive_watched_file(
     original_path: String,
     archive_root: String,
     archive_leaf: String,
@@ -110,10 +122,19 @@ fn archive_watched_text_file(
     Ok(target.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn archive_watched_text_file(
+    original_path: String,
+    archive_root: String,
+    archive_leaf: String,
+) -> Result<String, String> {
+    archive_watched_file(original_path, archive_root, archive_leaf)
+}
+
 fn scan_folder(
     folder: &WatchedFolderSetting,
     path: &Path,
-    candidates: &mut Vec<WatchedTextCandidate>,
+    candidates: &mut Vec<WatchedFileCandidate>,
 ) -> Result<(), String> {
     for entry_result in
         fs::read_dir(path).map_err(|error| format!("Unable to read watched folder: {error}"))?
@@ -131,7 +152,7 @@ fn scan_folder(
             continue;
         }
         if !metadata.is_file()
-            || !is_supported_text_file(&entry_path)
+            || !is_supported_watched_file(&entry_path)
             || !is_stable(&metadata, folder.stability_ms)
         {
             continue;
@@ -142,7 +163,7 @@ fn scan_folder(
             .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
             .map(|value| format_unix_millis(value.as_millis()))
             .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string());
-        candidates.push(WatchedTextCandidate {
+        candidates.push(WatchedFileCandidate {
             watch_folder_id: folder.id.clone(),
             path: entry_path.to_string_lossy().to_string(),
             filename: entry_path
@@ -160,11 +181,17 @@ fn scan_folder(
     Ok(())
 }
 
-fn is_supported_text_file(path: &Path) -> bool {
+fn is_supported_watched_file(path: &Path) -> bool {
     matches!(
         path.extension()
             .map(|value| value.to_string_lossy().to_lowercase()),
-        Some(extension) if extension == "txt" || extension == "md" || extension == "markdown"
+        Some(extension)
+            if extension == "txt"
+                || extension == "md"
+                || extension == "markdown"
+                || extension == "m4a"
+                || extension == "mp3"
+                || extension == "wav"
     )
 }
 
@@ -232,8 +259,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             watched_text_machine_id,
+            scan_watched_folders,
             scan_watched_text_folders,
+            read_watched_file,
             read_watched_text_file,
+            archive_watched_file,
             archive_watched_text_file
         ])
         .run(tauri::generate_context!())

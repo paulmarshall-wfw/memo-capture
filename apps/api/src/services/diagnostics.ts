@@ -30,6 +30,7 @@ interface SourceMemoDiagnosticRow extends Record<string, unknown> {
   original_path: string | null;
   archive_path: string | null;
   contributor_text: string | null;
+  current_transcript_text: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -42,6 +43,7 @@ interface ArtifactDiagnosticRow extends Record<string, unknown> {
   mime_type: string;
   byte_size: number | string;
   content_hash: string;
+  original_filename: string | null;
   relationship: string;
   created_at: Date | string;
 }
@@ -252,7 +254,7 @@ export class DiagnosticsService {
   private async findSourceMemo(sourceMemoId: string): Promise<Record<string, unknown> | null> {
     const result = await this.db.query<SourceMemoDiagnosticRow>(
       `select id, source_type, primary_artifact_id, content_hash, original_path, archive_path,
-              contributor_text, created_at, updated_at
+              contributor_text, current_transcript_text, created_at, updated_at
        from source_memos
        where id = $1`,
       [sourceMemoId]
@@ -268,6 +270,7 @@ export class DiagnosticsService {
           originalPath: row.original_path,
           archivePath: row.archive_path,
           contributorText: row.contributor_text,
+          currentTranscriptText: row.current_transcript_text,
           createdAt: toIso(row.created_at),
           updatedAt: toIso(row.updated_at)
         };
@@ -308,6 +311,7 @@ export class DiagnosticsService {
          artifacts.mime_type,
          artifacts.byte_size,
          artifacts.content_hash,
+         artifacts.original_filename,
          source_memo_artifacts.relationship,
          artifacts.created_at
        from source_memo_artifacts
@@ -324,6 +328,7 @@ export class DiagnosticsService {
       mimeType: row.mime_type,
       byteSize: typeof row.byte_size === "number" ? row.byte_size : Number.parseInt(row.byte_size, 10),
       contentHash: row.content_hash,
+      originalFilename: row.original_filename,
       relationship: row.relationship,
       createdAt: toIso(row.created_at)
     }));

@@ -194,6 +194,27 @@ export class WorkItemRepository {
 
     return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
   }
+
+  async applyTranscriptIfBodyEmpty(input: {
+    workItemId: string;
+    transcriptText: string;
+    actorUserId: string | null;
+  }): Promise<WorkItemRecord | null> {
+    const result = await this.db.query<WorkItemRow>(
+      `update work_items
+       set
+         body = $2,
+         workflow_item_version = workflow_item_version + 1,
+         updated_by = coalesce($3, updated_by),
+         updated_at = now()
+       where id = $1
+         and trim(body) = ''
+       returning *`,
+      [input.workItemId, input.transcriptText, input.actorUserId]
+    );
+
+    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+  }
 }
 
 export class AcceptedSnapshotRepository {

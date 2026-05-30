@@ -9,6 +9,7 @@ import {
   FileText,
   FolderInput,
   FolderSearch,
+  Headphones,
   PackageCheck,
   PackagePlus,
   Plus,
@@ -73,6 +74,39 @@ interface WorkItem {
   acceptedUnexportedChanges: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+interface WorkItemDiagnostics {
+  workItemId: string;
+  sourceMemo: {
+    id: string;
+    sourceType: string;
+    currentTranscriptText: string | null;
+  } | null;
+  artifacts: ArtifactDiagnostic[];
+  jobs: ProcessingJobDiagnostic[];
+  archiveWarnings: Record<string, unknown>[];
+}
+
+interface ArtifactDiagnostic {
+  id: string;
+  artifactKind: string;
+  originalFilename: string | null;
+  mimeType: string;
+  byteSize: number;
+  relationship: string;
+}
+
+interface ProcessingJobDiagnostic {
+  id: string;
+  jobKind: string;
+  status: string;
+  attemptCount: number;
+  maxAttempts: number;
+  errorCode: string | null;
+  userSafeErrorMessage: string | null;
+  providerName: string | null;
+  modelName: string | null;
 }
 
 interface Project {
@@ -154,7 +188,7 @@ interface WatchedFolderSetting {
   stabilityMs: number;
 }
 
-interface WatchedTextCandidate {
+interface WatchedFileCandidate {
   watchFolderId: string;
   path: string;
   filename: string;
@@ -244,10 +278,14 @@ export function App() {
   const [exportCreating, setExportCreating] = useState(false);
   const [machineId, setMachineId] = useState<string | null>(null);
   const [watchedFolders, setWatchedFolders] = useState<WatchedFolderSetting[]>([]);
-  const [watchedCandidates, setWatchedCandidates] = useState<WatchedTextCandidate[]>([]);
+  const [watchedCandidates, setWatchedCandidates] = useState<WatchedFileCandidate[]>([]);
   const [candidateStatuses, setCandidateStatuses] = useState<Record<string, ImportCandidateStatus>>({});
   const [watchScanInFlight, setWatchScanInFlight] = useState(false);
   const [watchedSettingsSaved, setWatchedSettingsSaved] = useState(false);
+  const [selectedDiagnostics, setSelectedDiagnostics] = useState<WorkItemDiagnostics | null>(null);
+  const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null);
+  const [audioLoadState, setAudioLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [transcriptSaving, setTranscriptSaving] = useState(false);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -311,6 +349,14 @@ export function App() {
       draft.featureGroupId !== (selectedItem.featureGroupId ?? "") ||
       draft.contributorId !== (selectedItem.contributorId ?? "") ||
       draft.contributorText !== (selectedItem.contributorText ?? ""));
+  const audioArtifact =
+    selectedDiagnostics?.artifacts.find((artifact) => artifact.artifactKind === "original_audio_file") ?? null;
+  const transcriptArtifacts =
+    selectedDiagnostics?.artifacts.filter((artifact) => artifact.artifactKind === "derived_transcript") ?? [];
+  const transcriptionJobs =
+    selectedDiagnostics?.jobs.filter((job) => job.jobKind === "transcribe_audio") ?? [];
+  const retryableTranscriptionJob =
+    transcriptionJobs.find((job) => job.status === "failed" || job.status === "exhausted") ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -349,6 +395,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (audioObjectUrl !== null) {
+        URL.revokeObjectURL(audioObjectUrl);
+      }
+    };
+  }, [audioObjectUrl]);
+
+  useEffect(() => {
     setWatchedFolders(readWatchedFolderSettings());
     if (!isTauriRuntime) {
       return;
@@ -369,11 +423,15 @@ export function App() {
     let cancelled = false;
     async function loadSelectedItem() {
       try {
-        const [detailResponse, actionsResponse] = await Promise.all([
+        const [detailResponse, actionsResponse, diagnosticsResponse] = await Promise.all([
           authedJson<{ workItem: WorkItem }>(accessToken, `/api/work-items/${encodeURIComponent(selectedItemId)}`),
           authedJson<{ actions: AllowedWorkflowAction[] }>(
             accessToken,
             `/api/work-items/${encodeURIComponent(selectedItemId)}/actions`
+          ),
+          authedJson<WorkItemDiagnostics>(
+            accessToken,
+            `/api/work-items/${encodeURIComponent(selectedItemId)}/diagnostics`
           )
         ]);
         if (cancelled) {
@@ -382,6 +440,14 @@ export function App() {
         setSelectedItem(detailResponse.workItem);
         setDraft(createDraft(detailResponse.workItem));
         setActions(actionsResponse.actions);
+        setSelectedDiagnostics(diagnosticsResponse);
+        setAudioObjectUrl((current) => {
+          if (current !== null) {
+            URL.revokeObjectURL(current);
+          }
+          return null;
+        });
+        setAudioLoadState("idle");
         setSaveState("idle");
       } catch (error) {
         if (!cancelled) {
@@ -697,7 +763,7 @@ export function App() {
     setWatchedSettingsSaved(true);
   }
 
-  async function scanWatchedTextFolders() {
+  async function scanWatchedFolders() {
     if (!isTauriRuntime) {
       setStatusMessage("Watched-folder scanning is available in the Tauri desktop app.");
       return;
@@ -706,12 +772,12 @@ export function App() {
     setWatchScanInFlight(true);
     setStatusMessage(null);
     try {
-      const candidates = await invoke<WatchedTextCandidate[]>("scan_watched_text_folders", {
+      const candidates = await invoke<WatchedFileCandidate[]>("scan_watched_folders", {
         folders: watchedFolders
       });
       setWatchedCandidates(candidates);
       setCandidateStatuses({});
-      setStatusMessage(`${candidates.length} stable text files found.`);
+      setStatusMessage(`${candidates.length} stable watched files found.`);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to scan watched folders.");
     } finally {
@@ -719,7 +785,7 @@ export function App() {
     }
   }
 
-  async function importWatchedCandidate(candidate: WatchedTextCandidate) {
+  async function importWatchedCandidate(candidate: WatchedFileCandidate) {
     if (accessToken === null || machineId === null) {
       setStatusMessage("Sign in and machine identity are required before importing watched files.");
       return;
@@ -733,14 +799,15 @@ export function App() {
 
     setCandidateStatus(candidate.path, "importing", null);
     try {
-      const bytes = new Uint8Array(await invoke<number[]>("read_watched_text_file", { path: candidate.path }));
+      const bytes = new Uint8Array(await invoke<number[]>("read_watched_file", { path: candidate.path }));
       const contentHash = await sha256Digest(bytes);
+      const sourceType = isAudioExtension(candidate.extension) ? "watched_audio_file" : "watched_text_file";
       const uploadSession = await authedJson<UploadSessionResponse>(accessToken, "/api/imports/upload-sessions", {
         method: "POST",
         body: JSON.stringify({
           machineId,
           watchFolderId: candidate.watchFolderId,
-          sourceType: "watched_text_file",
+          sourceType,
           originalFilename: candidate.filename,
           originalPath: candidate.path,
           mimeType: mimeTypeForExtension(candidate.extension),
@@ -782,10 +849,103 @@ export function App() {
         archiveRoot: watchFolder.archivePath,
         importEventId: finalized.importEventId
       });
-      setCandidateStatus(candidate.path, "imported", "Imported, finalized, and archived.");
+      setCandidateStatus(
+        candidate.path,
+        "imported",
+        sourceType === "watched_audio_file"
+          ? "Audio imported and queued for transcription."
+          : "Imported, finalized, and archived."
+      );
       await refreshBucket();
     } catch (error) {
       setCandidateStatus(candidate.path, "error", error instanceof Error ? error.message : "Import failed.");
+    }
+  }
+
+  async function loadAudioPlayback(artifactId: string) {
+    if (accessToken === null) {
+      return;
+    }
+
+    setAudioLoadState("loading");
+    try {
+      const response = await authedFetch(accessToken, `/api/artifacts/${encodeURIComponent(artifactId)}/download`);
+      const blob = await response.blob();
+      const nextUrl = URL.createObjectURL(blob);
+      setAudioObjectUrl((current) => {
+        if (current !== null) {
+          URL.revokeObjectURL(current);
+        }
+        return nextUrl;
+      });
+      setAudioLoadState("ready");
+    } catch (error) {
+      setAudioLoadState("error");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load audio artifact.");
+    }
+  }
+
+  async function retryTranscription(jobId: string) {
+    if (accessToken === null || selectedItem === null) {
+      return;
+    }
+
+    try {
+      await authedJson(accessToken, `/api/jobs/${encodeURIComponent(jobId)}/retry`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Manual retry from work item detail." })
+      });
+      const diagnostics = await authedJson<WorkItemDiagnostics>(
+        accessToken,
+        `/api/work-items/${encodeURIComponent(selectedItem.id)}/diagnostics`
+      );
+      setSelectedDiagnostics(diagnostics);
+      setStatusMessage("Transcription retry queued.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to retry transcription.");
+    }
+  }
+
+  async function saveManualTranscript() {
+    if (accessToken === null || selectedItem === null || draft === null || draft.body.trim() === "") {
+      return;
+    }
+
+    setTranscriptSaving(true);
+    setStatusMessage(null);
+    try {
+      const response = await authedJson<{ workItem: WorkItem }>(
+        accessToken,
+        `/api/work-items/${encodeURIComponent(selectedItem.id)}/manual-transcript`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            expectedVersion: selectedItem.workflowItemVersion,
+            title: draft.title,
+            transcriptText: draft.body
+          })
+        }
+      );
+      setSelectedItem(response.workItem);
+      setDraft(createDraft(response.workItem));
+      await refreshBucket();
+      const diagnostics = await authedJson<WorkItemDiagnostics>(
+        accessToken,
+        `/api/work-items/${encodeURIComponent(response.workItem.id)}/diagnostics`
+      );
+      setSelectedDiagnostics(diagnostics);
+      setStatusMessage("Manual transcript saved as a derived artifact.");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const current = error.body.error?.details?.workItem;
+        if (current !== undefined) {
+          setSelectedItem(current);
+          setDraft(createDraft(current));
+        }
+      }
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save manual transcript.");
+    } finally {
+      setTranscriptSaving(false);
     }
   }
 
@@ -890,7 +1050,7 @@ export function App() {
               {activeView === "exports"
                 ? `${MEMO_CAPTURE_EXPORT_SCHEMA_VERSION} accepted snapshot batches`
                 : activeView === "watched-folders"
-                ? `${ACTIVE_TEXT_FILE_EXTENSIONS.join(", ")} imports with archive-after-finalize`
+                ? `${[...ACTIVE_TEXT_FILE_EXTENSIONS, ...ACTIVE_AUDIO_FILE_EXTENSIONS].join(", ")} imports with archive-after-finalize`
                 : selectedBucket === null
                 ? "No active workflow bucket is selected."
                 : `${selectedBucket.states.join(", ")} workflow states`}
@@ -903,7 +1063,7 @@ export function App() {
               void (activeView === "exports"
                 ? loadExports()
                 : activeView === "watched-folders"
-                ? scanWatchedTextFolders()
+                ? scanWatchedFolders()
                 : refreshBucket())
             }
           >
@@ -1149,6 +1309,75 @@ export function App() {
                   ) : null}
                 </div>
 
+                {audioArtifact !== null ? (
+                  <section className="detail-section" aria-label="Audio and transcription recovery">
+                    <div className="section-title">
+                      <Headphones size={18} />
+                      <h3>Audio transcript</h3>
+                    </div>
+                    <div className="audio-recovery">
+                      <div className="audio-meta">
+                        <span>{audioArtifact.originalFilename ?? "Audio artifact"}</span>
+                        <span>{formatBytes(audioArtifact.byteSize)}</span>
+                        <span>{transcriptArtifacts.length} transcript artifacts</span>
+                      </div>
+                      {audioObjectUrl === null ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={audioLoadState === "loading"}
+                          onClick={() => void loadAudioPlayback(audioArtifact.id)}
+                        >
+                          {audioLoadState === "loading" ? (
+                            <RefreshCcw className="spin" size={18} />
+                          ) : (
+                            <Headphones size={18} />
+                          )}
+                          Load audio
+                        </button>
+                      ) : (
+                        <audio className="audio-player" controls src={audioObjectUrl} />
+                      )}
+                      {transcriptionJobs.length === 0 ? null : (
+                        <div className="job-list">
+                          {transcriptionJobs.map((job) => (
+                            <div className="job-row" key={job.id}>
+                              <div>
+                                <strong>{statusLabel(job.status)}</strong>
+                                <span>
+                                  Attempt {job.attemptCount} of {job.maxAttempts}
+                                </span>
+                                {job.userSafeErrorMessage === null ? null : (
+                                  <p className="error-text">{job.userSafeErrorMessage}</p>
+                                )}
+                              </div>
+                              {retryableTranscriptionJob?.id === job.id ? (
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  onClick={() => void retryTranscription(job.id)}
+                                >
+                                  <RefreshCcw size={18} />
+                                  Retry
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={draft.body.trim() === "" || transcriptSaving}
+                        onClick={() => void saveManualTranscript()}
+                      >
+                        {transcriptSaving ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
+                        Save transcript
+                      </button>
+                    </div>
+                  </section>
+                ) : null}
+
                 <section className="detail-section" aria-label="Workflow actions">
                   <div className="section-title">
                     <Workflow size={18} />
@@ -1287,7 +1516,7 @@ export function App() {
               <div className="detail-header">
                 <div>
                   <p className="eyebrow">Desktop local</p>
-                  <h2>Text import settings</h2>
+                  <h2>Watched import settings</h2>
                 </div>
                 <FolderInput size={22} />
               </div>
@@ -1371,11 +1600,11 @@ export function App() {
               </div>
             </section>
 
-            <section className="item-list" aria-label="Stable watched text files">
+            <section className="item-list" aria-label="Stable watched files">
               {watchedCandidates.length === 0 ? (
                 <div className="empty-state">
                   <FolderSearch size={20} />
-                  <span>No stable text files found</span>
+                  <span>No stable watched files found</span>
                 </div>
               ) : null}
               {watchedCandidates.map((candidate) => {
@@ -1384,7 +1613,7 @@ export function App() {
                   <article className="item-row watched-candidate-row" key={candidate.path}>
                     <div className="item-row-main">
                       <div className="item-title-line">
-                        <FileText size={18} />
+                        {isAudioExtension(candidate.extension) ? <Headphones size={18} /> : <FileText size={18} />}
                         <h2>{candidate.filename}</h2>
                       </div>
                       <p>{candidate.path}</p>
@@ -1510,12 +1739,12 @@ function readWatchedFolderSettings(): WatchedFolderSetting[] {
 async function archiveImportedCandidate(input: {
   token: string;
   machineId: string;
-  candidate: WatchedTextCandidate;
+  candidate: WatchedFileCandidate;
   archiveRoot: string;
   importEventId: string;
 }): Promise<void> {
   try {
-    const archivePath = await invoke<string>("archive_watched_text_file", {
+    const archivePath = await invoke<string>("archive_watched_file", {
       originalPath: input.candidate.path,
       archiveRoot: input.archiveRoot,
       archiveLeaf: buildArchiveLeaf(input.importEventId, input.candidate.filename)
@@ -1559,12 +1788,22 @@ async function sha256Digest(bytes: Uint8Array): Promise<string> {
 
 function mimeTypeForExtension(extension: string): string {
   switch (extension.toLowerCase()) {
+    case ".m4a":
+      return "audio/mp4";
+    case ".mp3":
+      return "audio/mpeg";
+    case ".wav":
+      return "audio/wav";
     case ".md":
     case ".markdown":
       return "text/markdown";
     default:
       return "text/plain";
   }
+}
+
+function isAudioExtension(extension: string): boolean {
+  return ACTIVE_AUDIO_FILE_EXTENSIONS.some((candidate) => candidate === extension.toLowerCase());
 }
 
 function requireValue<Value>(value: Value | null | undefined, message: string): Value {

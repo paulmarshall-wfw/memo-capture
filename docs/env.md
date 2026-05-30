@@ -44,4 +44,5 @@ See `.env.example` for the current non-secret template.
 ## AI And Transcription
 
 - `LLM_PROVIDER`: configured LLM provider, or `disabled`.
-- `TRANSCRIPTION_PROVIDER`: configured transcription provider, or `disabled`.
+- `TRANSCRIPTION_PROVIDER`: configured transcription provider. Use `disabled` by default, or `local-dev` for deterministic local-development transcripts.
+- `TRANSCRIPTION_MODEL`: model label recorded on transcription jobs. Defaults to `memo-capture-local-dev-transcriber-v1`.

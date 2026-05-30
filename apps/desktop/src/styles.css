@@ -605,6 +605,50 @@ button:disabled {
   gap: 10px;
 }
 
+.audio-recovery {
+  display: grid;
+  gap: 10px;
+}
+
+.audio-meta,
+.job-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #647386;
+  font-size: 13px;
+}
+
+.audio-meta span,
+.job-row span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef3f6;
+}
+
+.audio-player {
+  width: 100%;
+}
+
+.job-list {
+  display: grid;
+  gap: 8px;
+}
+
+.job-row {
+  justify-content: space-between;
+  padding: 10px;
+  border: 1px solid #e5ebf1;
+  border-radius: 8px;
+}
+
+.job-row div {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
 .batch-row {
   display: flex;
   align-items: flex-start;

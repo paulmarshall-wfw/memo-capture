@@ -31,6 +31,8 @@ Active audio formats:
 
 Unsupported configured types can be stored as inactive or `not_supported_yet`, but watched-folder ingestion must not attempt unsupported file types.
 
+Current implementation note: watched-folder scanning and upload sessions accept the active text and audio extensions. Text finalization extracts UTF-8 text immediately. Audio finalization creates the source memo, original audio artifact, work item, import event, and a `transcribe_audio` processing job before archive reporting.
+
 ## Source Creation Rules
 
 Every successful capture creates provenance first:
@@ -114,6 +116,8 @@ Rules:
 - Playback/download uses backend-authorized routes or signed access.
 - Raw file blobs are not stored in Postgres.
 - Original imported files are permanent managed artifacts unless a future explicit deletion feature is introduced.
+
+Current implementation note: authenticated artifact playback/download is exposed through `GET /api/artifacts/{artifactId}/download`; the desktop UI fetches audio with the bearer token and plays a local object URL.
 
 Object key layout includes a numbered layout version:
 
@@ -217,6 +221,8 @@ Response:
   "processingJobs": ["uuid"]
 }
 ```
+
+For audio imports, `processingJobs` includes the queued `transcribe_audio` job. The work item remains in `needs_review` with an empty body until transcription succeeds or a user saves a manual transcript from the work-item detail panel.
 
 ### Report archive result
 

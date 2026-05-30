@@ -350,6 +350,19 @@ function matchProtectedRoute(
     return async () => services.exports.getBatch(decodeURIComponent(exportBatchMatch[1] ?? ""));
   }
 
+  const artifactDownloadMatch = /^\/api\/artifacts\/([^/]+)\/download$/.exec(pathname);
+  if (method === "GET" && artifactDownloadMatch !== null) {
+    return async (context) => {
+      const download = await services.artifacts.download(decodeURIComponent(artifactDownloadMatch[1] ?? ""));
+      sendBinary(context.response, 200, download.body, {
+        "content-type": download.contentType,
+        "content-disposition": `attachment; filename="${download.filename.replaceAll('"', "")}"`,
+        "cache-control": "no-store"
+      });
+      return undefined;
+    };
+  }
+
   if (method === "GET" && pathname === "/api/workflow/status") {
     return async () => services.workflows.getStatus();
   }
@@ -394,6 +407,18 @@ function matchProtectedRoute(
     return async (context, session) => ({
       workItem: await services.workItems.update(
         decodeURIComponent(workItemDetailMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      )
+    });
+  }
+
+  const workItemManualTranscriptMatch = /^\/api\/work-items\/([^/]+)\/manual-transcript$/.exec(pathname);
+  if (method === "POST" && workItemManualTranscriptMatch !== null) {
+    return async (context, session) => ({
+      workItem: await services.workItems.recoverTranscript(
+        decodeURIComponent(workItemManualTranscriptMatch[1] ?? ""),
         await readJsonBody(context.request),
         session.user,
         context.requestId

@@ -9,6 +9,11 @@ import {
   WorkerHeartbeatRepository
 } from "@memo-capture/api/src/repositories/jobs.js";
 import { ExportService } from "@memo-capture/api/src/services/exports.js";
+import { ObjectStorageService } from "@memo-capture/api/src/services/object-storage.js";
+import {
+  TranscriptionJobError,
+  TranscriptionService
+} from "@memo-capture/api/src/services/transcription.js";
 
 const config = readApiConfig(process.env);
 const logger = createLogger(config.logLevel);
@@ -16,9 +21,10 @@ const workerId = `memo-capture-worker-${randomUUID()}`;
 const pollIntervalMs = 2_000;
 const leaseSeconds = 300;
 const heartbeatIntervalMs = 15_000;
-const supportedJobKinds = ["generate_export_batch"] satisfies ProcessingJobKind[];
+const supportedJobKinds = ["transcribe_audio", "generate_export_batch"] satisfies ProcessingJobKind[];
 const db = createPgDatabase(config.databaseUrl, logger);
 const exportsService = new ExportService(db, config);
+const transcriptionService = new TranscriptionService(db, new ObjectStorageService(config.objectStorage), config);
 let stopping = false;
 let lastHeartbeatAt = 0;
 
@@ -61,6 +67,8 @@ try {
 async function runClaimedJob(job: {
   id: string;
   jobKind: ProcessingJobKind;
+  sourceMemoId: string | null;
+  workItemId: string | null;
   exportBatchId: string | null;
 }): Promise<void> {
   const jobs = new ProcessingJobRepository(db);
@@ -70,11 +78,17 @@ async function runClaimedJob(job: {
 
   try {
     await assertNotCancelled(job.id);
-    if (job.jobKind !== "generate_export_batch" || job.exportBatchId === null) {
+    if (job.jobKind === "transcribe_audio" && job.sourceMemoId !== null) {
+      await transcriptionService.runTranscriptionJob({
+        jobId: job.id,
+        sourceMemoId: job.sourceMemoId,
+        workItemId: job.workItemId
+      });
+    } else if (job.jobKind === "generate_export_batch" && job.exportBatchId !== null) {
+      await exportsService.generateBatch(job.exportBatchId, job.id);
+    } else {
       throw new NonRetryableJobError("unsupported_job", `Unsupported or malformed job ${job.jobKind}.`);
     }
-
-    await exportsService.generateBatch(job.exportBatchId, job.id);
     await assertNotCancelled(job.id);
     await jobs.markSucceeded(job.id);
     logger.info("job_succeeded", { workerId, jobId: job.id, jobKind: job.jobKind });
@@ -173,6 +187,15 @@ function classifyFailure(error: unknown): {
       userSafeErrorMessage: "The job cannot run because its input or job type is not supported.",
       retryable: false,
       retryDelaySeconds: 0
+    };
+  }
+
+  if (error instanceof TranscriptionJobError) {
+    return {
+      errorCode: error.code,
+      userSafeErrorMessage: error.message,
+      retryable: error.retryable,
+      retryDelaySeconds: error.retryable ? 30 : 0
     };
   }
 

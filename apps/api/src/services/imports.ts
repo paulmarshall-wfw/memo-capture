@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  ACTIVE_AUDIO_FILE_EXTENSIONS,
   ACTIVE_TEXT_FILE_EXTENSIONS,
   INGESTION_REVIEW_WORK_ITEM_STATE,
   type ArtifactKind,
@@ -79,7 +80,7 @@ export class ImportService {
     _requestId: string
   ): Promise<UploadSessionResponse> {
     const input = parseCreateUploadSessionRequest(requestBody);
-    assertSupportedTextImport(input);
+    assertSupportedWatchedImport(input);
 
     return this.db.transaction(async (client) => {
       const sourceMemos = new SourceMemoRepository(client);
@@ -209,7 +210,11 @@ export class ImportService {
         throw new HttpError(409, "upload_session_not_finalizable", "Upload session is not ready to finalize.");
       }
 
-      return finalizeWatchedTextImport({
+      const finalize = session.sourceType === "watched_audio_file"
+        ? finalizeWatchedAudioImport
+        : finalizeWatchedTextImport;
+
+      return finalize({
         client,
         objectStorage: this.objectStorage,
         session,
@@ -271,6 +276,125 @@ export class ImportService {
       };
     });
   }
+}
+
+async function finalizeWatchedAudioImport(input: {
+  client: Queryable;
+  objectStorage: ObjectStorageService;
+  session: ImportUploadSessionRecord;
+  actor: AppUserRecord;
+  requestId: string;
+  archivePlanned: boolean;
+}): Promise<FinalizeUploadSessionResponse> {
+  const session = input.session;
+  if (
+    session === null ||
+    session.objectKey === null ||
+    session.bucket === null ||
+    session.artifactId === null ||
+    session.reservedSourceMemoId === null
+  ) {
+    throw new Error("Invalid upload session state.");
+  }
+
+  const artifacts = new ArtifactRepository(input.client);
+  const sourceMemos = new SourceMemoRepository(input.client);
+  const sourceMemoArtifacts = new SourceMemoArtifactRepository(input.client);
+  const importEvents = new ImportEventRepository(input.client);
+  const workItems = new WorkItemRepository(input.client);
+  const jobs = new ProcessingJobRepository(input.client);
+  const audit = new AuditRepository(input.client);
+  const title = deriveTitle("", session.originalFilename);
+
+  await artifacts.create({
+    id: session.artifactId,
+    artifactKind: "original_audio_file",
+    objectKey: session.objectKey,
+    bucket: session.bucket,
+    originalFilename: session.originalFilename,
+    mimeType: session.mimeType,
+    byteSize: session.byteSize,
+    contentHash: session.contentHash,
+    layoutVersion: "v1",
+    createdBy: input.actor.id
+  });
+
+  const sourceMemo = await sourceMemos.create({
+    id: session.reservedSourceMemoId,
+    sourceType: session.sourceType,
+    primaryArtifactId: session.artifactId,
+    contentHash: session.contentHash,
+    originalPath: session.originalPath,
+    createdBy: input.actor.id
+  });
+  await sourceMemoArtifacts.link({
+    sourceMemoId: sourceMemo.id,
+    artifactId: session.artifactId,
+    relationship: "primary_original"
+  });
+
+  const workItem = await workItems.create({
+    sourceMemoId: sourceMemo.id,
+    projectId: null,
+    featureGroupId: null,
+    contributorText: null,
+    contributorId: null,
+    title,
+    body: "",
+    bodyFormat: "markdown",
+    workflowState: INGESTION_REVIEW_WORK_ITEM_STATE,
+    actorUserId: input.actor.id
+  });
+
+  const importEvent = await importEvents.create({
+    sourceMemoId: sourceMemo.id,
+    artifactId: session.artifactId,
+    machineId: session.machineId,
+    watchFolderId: session.watchFolderId,
+    originalPath: session.originalPath,
+    contentHash: session.contentHash,
+    status: "imported"
+  });
+  const transcriptionJob = await jobs.create({
+    jobKind: "transcribe_audio",
+    sourceMemoId: sourceMemo.id,
+    workItemId: workItem.id,
+    maxAttempts: await readTranscriptionMaxAttempts(input.client),
+    initiatedBy: input.actor.id
+  });
+  await new ImportUploadSessionRepository(input.client).markFinalized(session.id);
+  await audit.record({
+    eventName: "source_memo.created",
+    actor: input.actor,
+    subjectType: "source_memo",
+    subjectId: sourceMemo.id,
+    requestId: input.requestId,
+    sourceMemoId: sourceMemo.id,
+    metadata: {
+      sourceType: session.sourceType,
+      archivePlanned: input.archivePlanned,
+      importEventId: importEvent.id
+    }
+  });
+  await audit.record({
+    eventName: "work_item.created",
+    actor: input.actor,
+    subjectType: "work_item",
+    subjectId: workItem.id,
+    requestId: input.requestId,
+    sourceMemoId: sourceMemo.id,
+    workItemId: workItem.id,
+    metadata: { workflowState: workItem.workflowState }
+  });
+
+  return {
+    sourceMemoId: sourceMemo.id,
+    workItemId: workItem.id,
+    artifactId: session.artifactId,
+    importEventId: importEvent.id,
+    initialWorkflowState: workItem.workflowState,
+    processingJobs: [transcriptionJob.id]
+  };
 }
 
 async function finalizeWatchedTextImport(input: {
@@ -465,15 +589,13 @@ function assertContentHash(value: unknown): string {
   return contentHash;
 }
 
-function assertSupportedTextImport(input: CreateUploadSessionRequest): void {
-  if (input.sourceType !== "watched_text_file") {
-    throw new HttpError(501, "source_type_not_supported_yet", "Only watched text file ingestion is implemented.");
-  }
-
+function assertSupportedWatchedImport(input: CreateUploadSessionRequest): void {
   const filename = input.originalFilename.toLowerCase();
-  const supported = ACTIVE_TEXT_FILE_EXTENSIONS.some((extension) => filename.endsWith(extension));
+  const supportedExtensions =
+    input.sourceType === "watched_audio_file" ? ACTIVE_AUDIO_FILE_EXTENSIONS : ACTIVE_TEXT_FILE_EXTENSIONS;
+  const supported = supportedExtensions.some((extension) => filename.endsWith(extension));
   if (!supported) {
-    throw new HttpError(400, "unsupported_file_type", "Watched text import does not support this file extension.");
+    throw new HttpError(400, "unsupported_file_type", "Watched import does not support this file extension.");
   }
 }
 
@@ -511,4 +633,15 @@ function deriveTitle(text: string, filename: string): string {
     return firstContentLine.slice(0, 120);
   }
   return filename.replace(/\.[^.]+$/, "").slice(0, 120);
+}
+
+async function readTranscriptionMaxAttempts(client: Queryable): Promise<number> {
+  const result = await client.query<{ max_retry_attempts: number }>(
+    `select max_retry_attempts
+     from transcription_settings
+     where singleton_id = true
+     limit 1`
+  );
+  const value = result.rows[0]?.max_retry_attempts;
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 3;
 }

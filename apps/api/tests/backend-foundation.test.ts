@@ -233,6 +233,23 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(itemDiagnostics.response.status, 200);
     assert.equal(itemDiagnostics.body.workItemId, "work-item-1");
 
+    const artifactDownload = await fetch(`${baseUrl}/api/artifacts/artifact-audio/download`, {
+      headers: { authorization: "Bearer test-token" }
+    });
+    assert.equal(artifactDownload.status, 200);
+    assert.equal(await artifactDownload.text(), "audio");
+
+    const manualTranscript = await authedJson(baseUrl, "/api/work-items/work-item-1/manual-transcript", {
+      method: "POST",
+      body: JSON.stringify({
+        expectedVersion: 2,
+        title: "Captured memo updated",
+        transcriptText: "Recovered from audio playback."
+      })
+    });
+    assert.equal(manualTranscript.response.status, 200);
+    assert.equal(manualTranscript.body.workItem.body, "Recovered from audio playback.");
+
     const missingWorkItem = await authedJson(baseUrl, "/api/work-items/missing");
     assert.equal(missingWorkItem.response.status, 404);
     assert.equal(missingWorkItem.body.error.code, "not_found");
@@ -283,6 +300,22 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(finalizedImport.response.status, 200);
     assert.equal(finalizedImport.body.initialWorkflowState, "needs_review");
 
+    const audioUploadSession = await authedJson(baseUrl, "/api/imports/upload-sessions", {
+      method: "POST",
+      body: JSON.stringify({
+        machineId: "machine-1",
+        watchFolderId: "watch-1",
+        sourceType: "watched_audio_file",
+        originalFilename: "memo.m4a",
+        originalPath: "/watched/memo.m4a",
+        mimeType: "audio/mp4",
+        byteSize: 5,
+        contentHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      })
+    });
+    assert.equal(audioUploadSession.response.status, 200);
+    assert.equal(audioUploadSession.body.status, "upload_required");
+
     const archiveResult = await authedJson(baseUrl, "/api/imports/import-event-1/archive-result", {
       method: "POST",
       body: JSON.stringify({
@@ -302,6 +335,11 @@ test("basic protected capture routes expose session, catalog, work items, and fo
 
 function stubServices(): AppServices {
   return {
+    artifacts: {
+      download: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["artifacts"],
     auth: {
       authenticateAuthorizationHeader: async () => {
         throw new HttpError(401, "unauthorized", "Missing bearer token.");
@@ -377,7 +415,10 @@ function stubServices(): AppServices {
     } as AppServices["workflows"],
     workItems: {
       list: async () => [],
-      findById: async () => null
+      findById: async () => null,
+      recoverTranscript: async () => {
+        throw new Error("not used");
+      }
     } as AppServices["workItems"],
     close: async () => undefined
   };
@@ -442,6 +483,13 @@ function captureRouteServices(): AppServices {
   };
 
   return {
+    artifacts: {
+      download: async () => ({
+        filename: "memo.m4a",
+        contentType: "audio/mp4",
+        body: Buffer.from("audio")
+      })
+    } as AppServices["artifacts"],
     auth: {
       authenticateAuthorizationHeader: async (header: string | undefined) => {
         if (header !== "Bearer test-token") {
@@ -696,6 +744,16 @@ function captureRouteServices(): AppServices {
           body: "Updated memo body",
           workflowItemVersion: 2,
           updatedAt: "2026-05-29T00:01:00.000Z"
+        };
+        return workItem;
+      },
+      recoverTranscript: async (_workItemId: string, body: unknown) => {
+        const record = body as { transcriptText?: string };
+        workItem = {
+          ...workItem,
+          body: record.transcriptText ?? workItem.body,
+          workflowItemVersion: workItem.workflowItemVersion + 1,
+          updatedAt: "2026-05-29T00:05:00.000Z"
         };
         return workItem;
       }

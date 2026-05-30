@@ -1,15 +1,22 @@
+import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
+import { ArtifactRepository } from "../repositories/artifacts.js";
 import type { AppUserRecord } from "../repositories/rows.js";
+import { SourceMemoArtifactRepository, SourceMemoRepository } from "../repositories/source-memos.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { WorkflowRepository } from "../repositories/workflows.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
+import type { ObjectStorageService } from "./object-storage.js";
 import { WorkflowRuntimeAdapter } from "./workflow-runtime.js";
 
 export class WorkItemService {
   private readonly runtime = new WorkflowRuntimeAdapter();
 
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly objectStorage: ObjectStorageService
+  ) {}
 
   async list(input: { bucketId?: string | null } = {}): Promise<WorkItemRecord[]> {
     const bucketId = input.bucketId?.trim() ?? "";
@@ -96,6 +103,103 @@ export class WorkItemService {
       return finalWorkItem;
     });
   }
+
+  async recoverTranscript(
+    workItemId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<WorkItemRecord> {
+    const input = parseManualTranscriptBody(body);
+
+    return this.db.transaction(async (client) => {
+      const workItems = new WorkItemRepository(client);
+      const sourceMemos = new SourceMemoRepository(client);
+      const sourceMemoArtifacts = new SourceMemoArtifactRepository(client);
+      const artifacts = new ArtifactRepository(client);
+      const audit = new AuditRepository(client);
+      const current = await workItems.findById(workItemId);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "work_item was not found.");
+      }
+
+      const sourceMemo = await sourceMemos.findById(current.sourceMemoId);
+      if (sourceMemo === null) {
+        throw new HttpError(404, "not_found", "source_memo was not found.");
+      }
+      if (sourceMemo.sourceType !== "watched_audio_file") {
+        throw new HttpError(409, "manual_transcript_not_allowed", "Manual transcript recovery is only available for audio source memos.");
+      }
+      if (current.workflowItemVersion !== input.expectedVersion) {
+        throw new HttpError(409, "stale_work_item_version", "Work item version is stale.", {
+          currentVersion: current.workflowItemVersion,
+          workItem: current
+        });
+      }
+
+      const transcriptArtifactId = randomUUID();
+      const objectKey = `artifacts/v1/source-memos/${current.sourceMemoId}/derived/transcript/${transcriptArtifactId}.txt`;
+      const stored = await this.objectStorage.putObject({ objectKey, body: input.transcriptText });
+      await artifacts.create({
+        id: transcriptArtifactId,
+        artifactKind: "derived_transcript",
+        objectKey,
+        bucket: stored.bucket,
+        originalFilename: "manual-transcript.txt",
+        mimeType: "text/plain; charset=utf-8",
+        byteSize: stored.byteSize,
+        contentHash: stored.contentHash,
+        layoutVersion: "v1",
+        createdBy: actor.id
+      });
+      await sourceMemoArtifacts.link({
+        sourceMemoId: current.sourceMemoId,
+        artifactId: transcriptArtifactId,
+        relationship: "derived_transcript"
+      });
+      await sourceMemos.updateTranscript({
+        sourceMemoId: current.sourceMemoId,
+        transcriptText: input.transcriptText
+      });
+
+      const updated = await workItems.updateContent({
+        workItemId,
+        expectedVersion: input.expectedVersion,
+        title: input.title ?? current.title,
+        body: input.transcriptText,
+        projectId: current.projectId,
+        featureGroupId: current.featureGroupId,
+        contributorId: current.contributorId,
+        contributorText: current.contributorText,
+        actorUserId: actor.id
+      });
+
+      if (updated === null) {
+        const latest = await workItems.findById(workItemId);
+        throw new HttpError(409, "stale_work_item_version", "Work item version is stale.", {
+          currentVersion: latest?.workflowItemVersion ?? current.workflowItemVersion,
+          workItem: latest ?? current
+        });
+      }
+
+      await audit.record({
+        eventName: "work_item.updated",
+        actor,
+        subjectType: "work_item",
+        subjectId: updated.id,
+        requestId,
+        sourceMemoId: updated.sourceMemoId,
+        workItemId: updated.id,
+        metadata: {
+          recovery: "manual_transcript",
+          transcriptArtifactId,
+          transcriptContentHash: createHash("sha256").update(input.transcriptText).digest("hex")
+        },
+        redactionApplied: true
+      });
+      return updated;
+    });
+  }
 }
 
 async function createSnapshotForAcceptedEdit(input: {
@@ -150,6 +254,24 @@ function parseUpdateBody(body: unknown): {
     featureGroupId: optionalString(record.featureGroupId, "featureGroupId"),
     contributorId: optionalString(record.contributorId, "contributorId"),
     contributorText: optionalString(record.contributorText, "contributorText")
+  };
+}
+
+function parseManualTranscriptBody(body: unknown): {
+  expectedVersion: number;
+  title: string | null;
+  transcriptText: string;
+} {
+  const record = parseObject(body);
+  const expectedVersion = record.expectedVersion;
+  if (typeof expectedVersion !== "number" || !Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    throw new HttpError(400, "invalid_request", "expectedVersion must be a positive integer.");
+  }
+
+  return {
+    expectedVersion,
+    title: optionalString(record.title, "title"),
+    transcriptText: assertNonEmptyString(record.transcriptText, "transcriptText")
   };
 }
 

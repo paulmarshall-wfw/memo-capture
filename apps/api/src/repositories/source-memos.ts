@@ -19,7 +19,18 @@ export interface SourceMemoCreateInput {
 
 export interface SourceMemoRecord {
   id: string;
+  sourceType?: SourceMemoType;
+  primaryArtifactId?: string | null;
   contentHash: string | null;
+  currentTranscriptText?: string | null;
+}
+
+interface SourceMemoRow extends Record<string, unknown> {
+  id: string;
+  source_type: SourceMemoType;
+  primary_artifact_id: string | null;
+  content_hash: string | null;
+  current_transcript_text: string | null;
 }
 
 export class SourceMemoRepository {
@@ -64,6 +75,26 @@ export class SourceMemoRepository {
     return { id, contentHash: input.contentHash ?? null };
   }
 
+  async findById(sourceMemoId: string): Promise<SourceMemoRecord | null> {
+    const result = await this.db.query<SourceMemoRow>(
+      `select id, source_type, primary_artifact_id, content_hash, current_transcript_text
+       from source_memos
+       where id = $1`,
+      [sourceMemoId]
+    );
+
+    const row = result.rows[0];
+    return row === undefined
+      ? null
+      : {
+          id: row.id,
+          sourceType: row.source_type,
+          primaryArtifactId: row.primary_artifact_id,
+          contentHash: row.content_hash,
+          currentTranscriptText: row.current_transcript_text
+        };
+  }
+
   async findByContentHash(contentHash: string): Promise<SourceMemoRecord | null> {
     const result = await this.db.query<{ id: string; content_hash: string | null }>(
       `select id, content_hash
@@ -84,6 +115,22 @@ export class SourceMemoRepository {
        set archive_path = $2, updated_at = now()
        where id = $1`,
       [input.sourceMemoId, input.archivePath]
+    );
+  }
+
+  async updateTranscript(input: {
+    sourceMemoId: string;
+    transcriptText: string;
+    extractedText?: string | null;
+  }): Promise<void> {
+    await this.db.query(
+      `update source_memos
+       set
+         current_transcript_text = $2,
+         extracted_text = coalesce($3, extracted_text),
+         updated_at = now()
+       where id = $1`,
+      [input.sourceMemoId, input.transcriptText, input.extractedText ?? input.transcriptText]
     );
   }
 }

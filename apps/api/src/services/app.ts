@@ -4,6 +4,7 @@ import { createPgDatabase } from "../db/postgres.js";
 import type { Logger } from "../logger.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { UserRepository } from "../repositories/users.js";
+import { ArtifactService } from "./artifacts.js";
 import type { WorkItemRecord } from "../repositories/work-items.js";
 import { AuthService } from "./auth.js";
 import { CatalogService } from "./catalog.js";
@@ -17,6 +18,7 @@ import { WorkItemService } from "./work-items.js";
 import { WorkflowService } from "./workflows.js";
 
 export interface AppServices {
+  artifacts: ArtifactOperations;
   auth: AuthService;
   catalog: CatalogService;
   diagnostics: DiagnosticsOperations;
@@ -27,6 +29,10 @@ export interface AppServices {
   workflows: WorkflowService;
   workItems: WorkItemOperations;
   close(): Promise<void>;
+}
+
+export interface ArtifactOperations {
+  download(artifactId: string): Promise<{ filename: string; contentType: string; body: Buffer }>;
 }
 
 export interface ExportOperations {
@@ -89,6 +95,12 @@ export interface WorkItemOperations {
     actor: AppUserRecord,
     requestId: string
   ): Promise<WorkItemRecord>;
+  recoverTranscript(
+    workItemId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<WorkItemRecord>;
 }
 
 export function createAppServices(config: ApiConfig, logger: Logger): AppServices {
@@ -100,6 +112,7 @@ export function createAppServicesFromDatabase(config: ApiConfig, db: Database): 
   const objectStorage = new ObjectStorageService(config.objectStorage);
   return {
     auth: new AuthService(config, new UserRepository(db)),
+    artifacts: new ArtifactService(db, objectStorage),
     catalog: new CatalogService(db),
     diagnostics: new DiagnosticsService(db, config),
     exports: new ExportService(db, config),
@@ -107,7 +120,7 @@ export function createAppServicesFromDatabase(config: ApiConfig, db: Database): 
     imports: new ImportService(db, objectStorage),
     jobs: new JobService(db),
     workflows: new WorkflowService(db, config.authMode),
-    workItems: new WorkItemService(db),
+    workItems: new WorkItemService(db, objectStorage),
     close: () => db.close()
   };
 }

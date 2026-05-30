@@ -90,6 +90,22 @@ export class ArtifactRepository {
     const row = result.rows[0];
     return row === undefined ? null : mapArtifact(row);
   }
+
+  async findPrimaryForSourceMemo(sourceMemoId: string): Promise<ArtifactRecord | null> {
+    const result = await this.db.query<ArtifactRow>(
+      `select artifacts.*
+       from source_memo_artifacts
+       join artifacts on artifacts.id = source_memo_artifacts.artifact_id
+       where source_memo_artifacts.source_memo_id = $1
+         and source_memo_artifacts.relationship = 'primary_original'
+       order by artifacts.created_at asc
+       limit 1`,
+      [sourceMemoId]
+    );
+
+    const row = result.rows[0];
+    return row === undefined ? null : mapArtifact(row);
+  }
 }
 
 function mapArtifact(row: ArtifactRow): ArtifactRecord {

@@ -27,6 +27,7 @@ export interface ApiConfig {
   databaseUrl: string;
   migrationsDirectory: string | null;
   objectStorage: ObjectStorageConfig;
+  transcription: TranscriptionProviderConfig;
   authMode: AuthMode;
   oidc: OidcConfig;
   localDevAuth: LocalDevAuthConfig;
@@ -35,6 +36,13 @@ export interface ApiConfig {
 export interface ObjectStorageConfig {
   bucket: string;
   localRoot: string;
+}
+
+export type TranscriptionProviderMode = "disabled" | "local-dev";
+
+export interface TranscriptionProviderConfig {
+  provider: TranscriptionProviderMode;
+  modelName: string;
 }
 
 export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -57,6 +65,10 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       bucket: readStringEnv(env, "OBJECT_STORAGE_BUCKET", "memo-capture"),
       localRoot: resolveLocalRoot(readStringEnv(env, "OBJECT_STORAGE_LOCAL_ROOT", ".memo-capture/object-storage"))
     },
+    transcription: {
+      provider: readTranscriptionProvider(env),
+      modelName: readStringEnv(env, "TRANSCRIPTION_MODEL", "memo-capture-local-dev-transcriber-v1")
+    },
     authMode,
     oidc: {
       issuerUrl: readStringEnv(env, "OIDC_ISSUER_URL", ""),
@@ -74,6 +86,15 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       displayName: readStringEnv(env, "MEMO_CAPTURE_LOCAL_DEV_AUTH_DISPLAY_NAME", "Local Dev User")
     }
   };
+}
+
+function readTranscriptionProvider(env: NodeJS.ProcessEnv): TranscriptionProviderMode {
+  const value = readStringEnv(env, "TRANSCRIPTION_PROVIDER", "disabled");
+  if (value === "disabled" || value === "local-dev") {
+    return value;
+  }
+
+  throw new Error("TRANSCRIPTION_PROVIDER must be disabled or local-dev.");
 }
 
 function resolveLocalRoot(value: string): string {

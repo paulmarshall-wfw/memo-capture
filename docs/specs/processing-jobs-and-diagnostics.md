@@ -158,6 +158,8 @@ Manual retry:
 - Uses current configured provider unless the job has a fixed provider snapshot.
 - Is audited.
 
+The work-item detail panel exposes retry for failed or exhausted `transcribe_audio` jobs and posts to the existing `POST /api/jobs/{jobId}/retry` endpoint.
+
 ## Job Kind Behavior
 
 ### transcribe_audio
@@ -172,6 +174,8 @@ Behavior:
 - store current transcript text
 - store versioned derived transcript artifact
 - enqueue extraction/classification from transcript
+
+Current implementation note: `TRANSCRIPTION_PROVIDER=disabled` records a user-visible failure that leaves the item in `needs_review`; `TRANSCRIPTION_PROVIDER=local-dev` returns a deterministic development transcript and records provider/model metadata on the job.
 
 Failure:
 
