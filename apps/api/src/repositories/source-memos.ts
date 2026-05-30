@@ -211,6 +211,35 @@ export class ImportEventRepository {
     return { id };
   }
 
+  async findById(importEventId: string): Promise<{
+    id: string;
+    sourceMemoId: string | null;
+    machineId: string | null;
+    status: string;
+  } | null> {
+    const result = await this.db.query<{
+      id: string;
+      source_memo_id: string | null;
+      machine_id: string | null;
+      status: string;
+    }>(
+      `select id, source_memo_id, machine_id, status
+       from import_events
+       where id = $1`,
+      [importEventId]
+    );
+
+    const row = result.rows[0];
+    return row === undefined
+      ? null
+      : {
+          id: row.id,
+          sourceMemoId: row.source_memo_id,
+          machineId: row.machine_id,
+          status: row.status
+        };
+  }
+
   async updateArchiveResult(input: {
     importEventId: string;
     archivePath: string | null;

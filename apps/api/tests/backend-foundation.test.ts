@@ -58,6 +58,41 @@ test("form memo service creates source memo, work item, import event, and audit 
   assert.equal(result.workItem.title, "Capture this");
 });
 
+test("archive result rejects mismatched machine ids", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  db.importEvents.push({
+    id: "import-event-1",
+    source_memo_id: "source-memo-1",
+    machine_id: "machine-1",
+    status: "imported"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  await assert.rejects(
+    () =>
+      services.imports.reportArchiveResult(
+        "import-event-1",
+        {
+          machineId: "machine-2",
+          archivePath: "/archive/memo.md",
+          status: "archived",
+          warning: null
+        },
+        session.user,
+        "request-1"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "machine_id_mismatch"
+  );
+});
+
 test("protected routes require authorization and include a request id", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -1079,7 +1114,34 @@ class FakeDatabase implements Database {
     }
 
     if (text.includes("insert into import_events")) {
-      this.importEvents.push({ id: values[0], source_memo_id: values[1], status: values[9] });
+      this.importEvents.push({
+        id: values[0],
+        source_memo_id: values[1],
+        machine_id: values[3],
+        status: values[9]
+      });
+      return rows([]);
+    }
+
+    if (text.includes("select id, source_memo_id, machine_id, status") && text.includes("from import_events")) {
+      const event = this.importEvents.find((row) => row.id === values[0]);
+      return rows(event === undefined ? [] : [event as Row]);
+    }
+
+    if (text.includes("update import_events")) {
+      const event = this.importEvents.find((row) => row.id === values[0]);
+      if (event !== undefined) {
+        event.archive_path = values[1];
+        event.status = values[2] ?? event.status;
+        event.warning_code = values[3];
+        event.warning_message = values[4];
+      }
+      return rows(
+        event === undefined ? [] : ([{ source_memo_id: event.source_memo_id, status: event.status }] as unknown as Row[])
+      );
+    }
+
+    if (text.includes("update source_memos")) {
       return rows([]);
     }
 

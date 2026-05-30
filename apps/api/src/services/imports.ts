@@ -236,6 +236,13 @@ export class ImportService {
       const importEvents = new ImportEventRepository(client);
       const sourceMemos = new SourceMemoRepository(client);
       const audit = new AuditRepository(client);
+      const importEvent = await importEvents.findById(importEventId);
+      if (importEvent === null) {
+        throw new HttpError(404, "import_event_not_found", "Import event was not found.");
+      }
+      if (importEvent.machineId !== null && importEvent.machineId !== input.machineId) {
+        throw new HttpError(409, "machine_id_mismatch", "Import event belongs to a different machine.");
+      }
       const nextStatus = input.status === "archived" ? null : "archived_with_warning";
       const updated = await importEvents.updateArchiveResult({
         importEventId,
@@ -244,7 +251,6 @@ export class ImportService {
         warningCode: input.status === "archived" ? null : "archive_move_failed",
         warningMessage: input.warning
       });
-
       if (updated === null) {
         throw new HttpError(404, "import_event_not_found", "Import event was not found.");
       }
