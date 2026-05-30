@@ -4,8 +4,11 @@ import {
   Check,
   CheckCircle2,
   CircleSlash,
+  Download,
   FileText,
   FolderInput,
+  PackageCheck,
+  PackagePlus,
   RefreshCcw,
   Save,
   Search,
@@ -20,6 +23,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
+type ActiveView = "work-items" | "exports";
 
 interface SessionResponse {
   accessToken?: string;
@@ -101,6 +105,41 @@ interface DraftState {
   contributorText: string;
 }
 
+interface ExportableSnapshot {
+  acceptedSnapshotId: string;
+  workItemId: string;
+  title: string;
+  project: {
+    id: string;
+    slug: string;
+    name: string;
+  };
+  featureGroup: {
+    id: string;
+    name: string;
+  } | null;
+  contributor: {
+    id: string | null;
+    text: string;
+  } | null;
+  alreadyExported: boolean;
+  defaultChecked: boolean;
+  currentForWorkItem: boolean;
+  snapshotCreatedAt: string;
+}
+
+interface ExportBatch {
+  id: string;
+  schemaVersion: string;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+  failedAt: string | null;
+  errorMessage: string | null;
+  bundleArtifactId: string | null;
+  itemCount: number;
+}
+
 class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -128,6 +167,7 @@ function createDraft(item: WorkItem): DraftState {
 
 export function App() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [activeView, setActiveView] = useState<ActiveView>("work-items");
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [buckets, setBuckets] = useState<WorkflowBucket[]>([]);
@@ -144,6 +184,11 @@ export function App() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [actionIdInFlight, setActionIdInFlight] = useState<string | null>(null);
+  const [exportSnapshots, setExportSnapshots] = useState<ExportableSnapshot[]>([]);
+  const [selectedExportSnapshotIds, setSelectedExportSnapshotIds] = useState<Set<string>>(new Set());
+  const [exportBatches, setExportBatches] = useState<ExportBatch[]>([]);
+  const [exportSearch, setExportSearch] = useState("");
+  const [exportCreating, setExportCreating] = useState(false);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -176,6 +221,28 @@ export function App() {
         .includes(query)
     );
   }, [contributorById, featureGroupById, projectById, search, workItems]);
+  const filteredExportSnapshots = useMemo(() => {
+    const query = exportSearch.trim().toLowerCase();
+    if (query === "") {
+      return exportSnapshots;
+    }
+
+    return exportSnapshots.filter((snapshot) =>
+      [
+        snapshot.title,
+        snapshot.project.name,
+        snapshot.project.slug,
+        snapshot.featureGroup?.name ?? "",
+        snapshot.contributor?.text ?? ""
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [exportSearch, exportSnapshots]);
+  const selectedExportCount = filteredExportSnapshots.filter((snapshot) =>
+    selectedExportSnapshotIds.has(snapshot.acceptedSnapshotId)
+  ).length;
   const hasDraftChanges =
     draft !== null &&
     selectedItem !== null &&
@@ -257,6 +324,16 @@ export function App() {
     };
   }, [accessToken, selectedItemId]);
 
+  useEffect(() => {
+    if (accessToken === null || activeView !== "exports") {
+      return;
+    }
+
+    void loadExports(accessToken).catch((error) => {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load exports.");
+    });
+  }, [accessToken, activeView]);
+
   async function loadWorkspace(token: string, requestedBucketId: string | null): Promise<void> {
     const [bucketResponse, projectsResponse, featureGroupsResponse, contributorsResponse] = await Promise.all([
       authedJson<{ buckets: WorkflowBucket[] }>(token, "/api/workflow/buckets"),
@@ -307,6 +384,104 @@ export function App() {
         ? current
         : itemResponse.workItems[0]?.id ?? null
     );
+  }
+
+  async function loadExports(token = accessToken): Promise<void> {
+    if (token === null) {
+      return;
+    }
+
+    setStatusMessage(null);
+    const [snapshotResponse, batchResponse] = await Promise.all([
+      authedJson<{ snapshots: ExportableSnapshot[] }>(token, "/api/exports/accepted-snapshots"),
+      authedJson<{ batches: ExportBatch[] }>(token, "/api/exports/batches")
+    ]);
+    setExportSnapshots(snapshotResponse.snapshots);
+    setExportBatches(batchResponse.batches);
+    setSelectedExportSnapshotIds(
+      new Set(
+        snapshotResponse.snapshots
+          .filter((snapshot) => snapshot.defaultChecked)
+          .map((snapshot) => snapshot.acceptedSnapshotId)
+      )
+    );
+  }
+
+  function toggleExportSnapshot(snapshotId: string, checked: boolean) {
+    setSelectedExportSnapshotIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(snapshotId);
+      } else {
+        next.delete(snapshotId);
+      }
+      return next;
+    });
+  }
+
+  function selectAllFilteredExports(checked: boolean) {
+    setSelectedExportSnapshotIds((current) => {
+      const next = new Set(current);
+      for (const snapshot of filteredExportSnapshots) {
+        if (checked) {
+          next.add(snapshot.acceptedSnapshotId);
+        } else {
+          next.delete(snapshot.acceptedSnapshotId);
+        }
+      }
+      return next;
+    });
+  }
+
+  async function createExportBatch() {
+    if (accessToken === null || selectedExportSnapshotIds.size === 0) {
+      return;
+    }
+
+    setExportCreating(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/exports/batches", {
+        method: "POST",
+        body: JSON.stringify({
+          acceptedSnapshotIds: [...selectedExportSnapshotIds],
+          filterContext: {
+            q: exportSearch.trim()
+          },
+          options: {
+            includeContributor: true,
+            includeSourceProvenance: true
+          }
+        })
+      });
+      await loadExports(accessToken);
+      setStatusMessage("Export batch created. The worker will attach download artifacts when generation completes.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to create export batch.");
+    } finally {
+      setExportCreating(false);
+    }
+  }
+
+  async function downloadExportBatch(batchId: string) {
+    if (accessToken === null) {
+      return;
+    }
+
+    try {
+      const response = await authedFetch(accessToken, `/api/exports/batches/${encodeURIComponent(batchId)}/download`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = readDownloadFilename(response.headers.get("content-disposition")) ?? `export-${batchId}.zip`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to download export batch.");
+    }
   }
 
   async function selectBucket(bucketId: string): Promise<void> {
@@ -443,13 +618,33 @@ export function App() {
           </div>
         </div>
 
+        <nav className="view-switcher" aria-label="Primary views">
+          <button
+            className={`bucket-button ${activeView === "work-items" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("work-items")}
+          >
+            <span>Work queue</span>
+          </button>
+          <button
+            className={`bucket-button ${activeView === "exports" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("exports")}
+          >
+            <span>Exports</span>
+          </button>
+        </nav>
+
         <nav className="bucket-list" aria-label="Workflow buckets">
           {buckets.map((bucket) => (
             <button
               className={`bucket-button ${bucket.id === activeBucketId ? "active" : ""}`}
               type="button"
               key={bucket.id}
-              onClick={() => void selectBucket(bucket.id)}
+              onClick={() => {
+                setActiveView("work-items");
+                void selectBucket(bucket.id);
+              }}
             >
               <span>{bucket.label}</span>
               <span className="bucket-count">{bucket.count ?? 0}</span>
@@ -472,14 +667,20 @@ export function App() {
       <section className="workspace" aria-label="Work items">
         <header className="workspace-header">
           <div>
-            <h1>{selectedBucket?.label ?? "Work queue"}</h1>
+            <h1>{activeView === "exports" ? "Exports" : selectedBucket?.label ?? "Work queue"}</h1>
             <p>
-              {selectedBucket === null
+              {activeView === "exports"
+                ? `${MEMO_CAPTURE_EXPORT_SCHEMA_VERSION} accepted snapshot batches`
+                : selectedBucket === null
                 ? "No active workflow bucket is selected."
                 : `${selectedBucket.states.join(", ")} workflow states`}
             </p>
           </div>
-          <button className="primary-button" type="button" onClick={() => void refreshBucket()}>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => void (activeView === "exports" ? loadExports() : refreshBucket())}
+          >
             <RefreshCcw size={18} />
             Refresh
           </button>
@@ -492,16 +693,46 @@ export function App() {
           </div>
         ) : null}
 
-        <div className="toolbar" role="search">
-          <Search size={18} />
-          <input
-            aria-label="Search work items"
-            placeholder="Search title, body, project, feature group, or contributor"
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-          />
-        </div>
+        {activeView === "work-items" ? (
+          <div className="toolbar" role="search">
+            <Search size={18} />
+            <input
+              aria-label="Search work items"
+              placeholder="Search title, body, project, feature group, or contributor"
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+            />
+          </div>
+        ) : (
+          <div className="toolbar export-toolbar" role="search">
+            <Search size={18} />
+            <input
+              aria-label="Search accepted snapshots"
+              placeholder="Search accepted snapshots by title, project, feature group, or contributor"
+              value={exportSearch}
+              onChange={(event) => setExportSearch(event.currentTarget.value)}
+            />
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => selectAllFilteredExports(selectedExportCount !== filteredExportSnapshots.length)}
+            >
+              <Check size={18} />
+              {selectedExportCount === filteredExportSnapshots.length ? "Clear filtered" : "Select filtered"}
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={selectedExportSnapshotIds.size === 0 || exportCreating}
+              onClick={() => void createExportBatch()}
+            >
+              {exportCreating ? <RefreshCcw className="spin" size={18} /> : <PackagePlus size={18} />}
+              Create batch
+            </button>
+          </div>
+        )}
 
+        {activeView === "work-items" ? (
         <div className="content-grid">
           <section className="item-list" aria-label="Filtered work items">
             {filteredItems.length === 0 ? (
@@ -718,6 +949,94 @@ export function App() {
             )}
           </aside>
         </div>
+        ) : (
+          <div className="export-grid">
+            <section className="export-list" aria-label="Accepted snapshots">
+              <div className="export-summary">
+                <div>
+                  <strong>{selectedExportSnapshotIds.size} selected</strong>
+                  <span>{filteredExportSnapshots.length} snapshots in view</span>
+                </div>
+                <span>{exportSnapshots.filter((snapshot) => !snapshot.alreadyExported).length} unexported</span>
+              </div>
+
+              {filteredExportSnapshots.length === 0 ? (
+                <div className="empty-state">
+                  <CircleSlash size={20} />
+                  <span>No accepted snapshots match this filter</span>
+                </div>
+              ) : null}
+
+              {filteredExportSnapshots.map((snapshot) => (
+                <label className="export-row" key={snapshot.acceptedSnapshotId}>
+                  <input
+                    type="checkbox"
+                    checked={selectedExportSnapshotIds.has(snapshot.acceptedSnapshotId)}
+                    onChange={(event) =>
+                      toggleExportSnapshot(snapshot.acceptedSnapshotId, event.currentTarget.checked)
+                    }
+                  />
+                  <div className="item-row-main">
+                    <div className="item-title-line">
+                      <FileText size={18} />
+                      <h2>{snapshot.title}</h2>
+                    </div>
+                    <div className="item-meta">
+                      <span>{snapshot.project.name}</span>
+                      {snapshot.featureGroup === null ? null : <span>{snapshot.featureGroup.name}</span>}
+                      {snapshot.contributor === null ? null : <span>{snapshot.contributor.text}</span>}
+                    </div>
+                    <p>Snapshot {formatDate(snapshot.snapshotCreatedAt)}</p>
+                  </div>
+                  <span className={`export-status ${snapshot.alreadyExported ? "exported" : "new"}`}>
+                    {snapshot.alreadyExported ? "Exported" : "New"}
+                  </span>
+                </label>
+              ))}
+            </section>
+
+            <aside className="detail-panel" aria-label="Export batches">
+              <div className="detail-header">
+                <div>
+                  <p className="eyebrow">Generated artifacts</p>
+                  <h2>Export batches</h2>
+                </div>
+                <PackageCheck size={22} />
+              </div>
+
+              {exportBatches.length === 0 ? (
+                <div className="empty-detail">
+                  <PackagePlus size={22} />
+                  <span>No export batches yet</span>
+                </div>
+              ) : null}
+
+              <div className="batch-list">
+                {exportBatches.map((batch) => (
+                  <article className="batch-row" key={batch.id}>
+                    <div>
+                      <div className="batch-title">
+                        <strong>{batchStatusLabel(batch.status)}</strong>
+                        <span>{batch.itemCount} items</span>
+                      </div>
+                      <p>{formatDate(batch.createdAt)}</p>
+                      {batch.errorMessage === null ? null : <p className="error-text">{batch.errorMessage}</p>}
+                    </div>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={batch.status !== "succeeded" || batch.bundleArtifactId === null}
+                      onClick={() => void downloadExportBatch(batch.id)}
+                    >
+                      <Download size={18} />
+                      Download
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </aside>
+          </div>
+        )}
 
         <footer className="workspace-footer">
           <span>Export schema: {MEMO_CAPTURE_EXPORT_SCHEMA_VERSION}</span>
@@ -741,6 +1060,27 @@ async function authedJson<Result>(token: string, path: string, init: RequestInit
   return requestJson<Result>(path, { ...init, headers });
 }
 
+async function authedFetch(token: string, path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
+  if (!response.ok) {
+    let errorBody: ApiErrorBody = {};
+    try {
+      errorBody = (await response.json()) as ApiErrorBody;
+    } catch {
+      errorBody = {
+        error: {
+          code: "request_failed",
+          message: `Request failed with status ${response.status}`
+        }
+      };
+    }
+    throw new ApiError(response.status, errorBody);
+  }
+  return response;
+}
+
 async function requestJson<Result>(path: string, init: RequestInit = {}): Promise<Result> {
   const response = await fetch(`${apiBaseUrl}${path}`, init);
   const body = (await response.json()) as unknown;
@@ -752,6 +1092,19 @@ async function requestJson<Result>(path: string, init: RequestInit = {}): Promis
 
 function stateLabel(state: string): string {
   return state.replaceAll("_", " ");
+}
+
+function batchStatusLabel(status: string): string {
+  return status.replaceAll("_", " ");
+}
+
+function readDownloadFilename(contentDisposition: string | null): string | null {
+  if (contentDisposition === null) {
+    return null;
+  }
+
+  const match = /filename="([^"]+)"/.exec(contentDisposition);
+  return match?.[1] ?? null;
 }
 
 function formatDate(value: string): string {

@@ -14,6 +14,34 @@ export interface ArtifactInput {
   createdBy: string | null;
 }
 
+export interface ArtifactRecord {
+  id: string;
+  artifactKind: ArtifactKind;
+  objectKey: string;
+  bucket: string;
+  originalFilename: string | null;
+  mimeType: string;
+  byteSize: number;
+  contentHash: string;
+  layoutVersion: string;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+interface ArtifactRow extends Record<string, unknown> {
+  id: string;
+  artifact_kind: ArtifactKind;
+  object_key: string;
+  bucket: string;
+  original_filename: string | null;
+  mime_type: string;
+  byte_size: string | number;
+  content_hash: string;
+  layout_version: string;
+  created_by: string | null;
+  created_at: Date | string;
+}
+
 export class ArtifactRepository {
   constructor(private readonly db: Queryable) {}
 
@@ -49,4 +77,32 @@ export class ArtifactRepository {
     );
     return { id };
   }
+
+  async findById(artifactId: string): Promise<ArtifactRecord | null> {
+    const result = await this.db.query<ArtifactRow>(
+      `select *
+       from artifacts
+       where id = $1`,
+      [artifactId]
+    );
+
+    const row = result.rows[0];
+    return row === undefined ? null : mapArtifact(row);
+  }
+}
+
+function mapArtifact(row: ArtifactRow): ArtifactRecord {
+  return {
+    id: row.id,
+    artifactKind: row.artifact_kind,
+    objectKey: row.object_key,
+    bucket: row.bucket,
+    originalFilename: row.original_filename,
+    mimeType: row.mime_type,
+    byteSize: typeof row.byte_size === "number" ? row.byte_size : Number.parseInt(row.byte_size, 10),
+    contentHash: row.content_hash,
+    layoutVersion: row.layout_version,
+    createdBy: row.created_by,
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
+  };
 }

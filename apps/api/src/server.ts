@@ -68,6 +68,9 @@ async function handleRequest(input: {
       normalizeHeader(input.request.headers.authorization)
     );
     const payload = await protectedHandler(context, session);
+    if (input.response.writableEnded) {
+      return;
+    }
     sendJson(input.response, 200, payload);
   } catch (error) {
     input.logger.warn("request_failed", {
@@ -273,6 +276,41 @@ function matchProtectedRoute(
     });
   }
 
+  if (method === "GET" && pathname === "/api/exports/accepted-snapshots") {
+    return async (context) => services.exports.listAcceptedSnapshots(context.url.searchParams);
+  }
+
+  if (method === "GET" && pathname === "/api/exports/batches") {
+    return async () => services.exports.listBatches();
+  }
+
+  if (method === "POST" && pathname === "/api/exports/batches") {
+    return async (context, session) =>
+      services.exports.createBatch(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const exportBatchDownloadMatch = /^\/api\/exports\/batches\/([^/]+)\/download$/.exec(pathname);
+  if (method === "GET" && exportBatchDownloadMatch !== null) {
+    return async (context, session) => {
+      const download = await services.exports.downloadBundle(
+        decodeURIComponent(exportBatchDownloadMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+      sendBinary(context.response, 200, download.body, {
+        "content-type": download.contentType,
+        "content-disposition": `attachment; filename="${download.filename.replaceAll('"', "")}"`,
+        "cache-control": "no-store"
+      });
+      return undefined;
+    };
+  }
+
+  const exportBatchMatch = /^\/api\/exports\/batches\/([^/]+)$/.exec(pathname);
+  if (method === "GET" && exportBatchMatch !== null) {
+    return async () => services.exports.getBatch(decodeURIComponent(exportBatchMatch[1] ?? ""));
+  }
+
   if (method === "GET" && pathname === "/api/workflow/status") {
     return async () => services.workflows.getStatus();
   }
@@ -376,6 +414,19 @@ function sendNoContent(response: ServerResponse): void {
   response.end();
 }
 
+function sendBinary(
+  response: ServerResponse,
+  statusCode: number,
+  body: Buffer,
+  headers: Record<string, string>
+): void {
+  response.writeHead(statusCode, {
+    ...headers,
+    ...corsHeaders()
+  });
+  response.end(body);
+}
+
 function sendNotFound(response: ServerResponse): void {
   sendJson(response, 404, {
     error: {
@@ -441,7 +492,8 @@ function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
-    "access-control-allow-headers": "authorization,content-type,x-request-id"
+    "access-control-allow-headers": "authorization,content-type,x-request-id",
+    "access-control-expose-headers": "content-disposition,x-request-id"
   };
 }
 

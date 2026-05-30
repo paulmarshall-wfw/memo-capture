@@ -1,7 +1,7 @@
 import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import type { AppUserRecord } from "../repositories/rows.js";
-import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
+import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { WorkflowRepository } from "../repositories/workflows.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
 import { WorkflowRuntimeAdapter } from "./workflow-runtime.js";
@@ -44,6 +44,7 @@ export class WorkItemService {
 
     return this.db.transaction(async (client) => {
       const workItems = new WorkItemRepository(client);
+      const snapshots = new AcceptedSnapshotRepository(client);
       const audit = new AuditRepository(client);
       const updated = await workItems.updateContent({
         workItemId,
@@ -69,24 +70,61 @@ export class WorkItemService {
         });
       }
 
+      const finalWorkItem = await createSnapshotForAcceptedEdit({
+        updated,
+        workItems,
+        snapshots,
+        actorUserId: actor.id
+      });
+
       await audit.record({
         eventName: "work_item.updated",
         actor,
         subjectType: "work_item",
-        subjectId: updated.id,
+        subjectId: finalWorkItem.id,
         requestId,
-        sourceMemoId: updated.sourceMemoId,
-        workItemId: updated.id,
+        sourceMemoId: finalWorkItem.sourceMemoId,
+        workItemId: finalWorkItem.id,
         metadata: {
-          workflowState: updated.workflowState,
-          newVersion: updated.workflowItemVersion,
-          acceptedUnexportedChanges: updated.acceptedUnexportedChanges
+          workflowState: finalWorkItem.workflowState,
+          newVersion: finalWorkItem.workflowItemVersion,
+          acceptedUnexportedChanges: finalWorkItem.acceptedUnexportedChanges,
+          acceptedSnapshotId: finalWorkItem.acceptedSnapshotId
         }
       });
 
-      return updated;
+      return finalWorkItem;
     });
   }
+}
+
+async function createSnapshotForAcceptedEdit(input: {
+  updated: WorkItemRecord;
+  workItems: WorkItemRepository;
+  snapshots: AcceptedSnapshotRepository;
+  actorUserId: string;
+}): Promise<WorkItemRecord> {
+  if (input.updated.workflowState !== "accepted") {
+    return input.updated;
+  }
+
+  const snapshot = await input.snapshots.createFromWorkItem({
+    workItemId: input.updated.id,
+    actorUserId: input.actorUserId
+  });
+  if (snapshot === null) {
+    throw new HttpError(
+      422,
+      "accepted_snapshot_requires_project",
+      "Accepted work item edits require a project-backed work item."
+    );
+  }
+
+  return input.workItems.setAcceptedSnapshot({
+    workItemId: input.updated.id,
+    acceptedSnapshotId: snapshot.id,
+    actorUserId: input.actorUserId
+  });
 }
 
 function parseUpdateBody(body: unknown): {

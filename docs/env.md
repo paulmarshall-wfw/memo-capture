@@ -37,6 +37,7 @@ See `.env.example` for the current non-secret template.
 - `OBJECT_STORAGE_ENDPOINT`
 - `OBJECT_STORAGE_REGION`
 - `OBJECT_STORAGE_BUCKET`
+- `OBJECT_STORAGE_LOCAL_ROOT`: local development object-storage root used by the current backend storage adapter. Relative paths resolve from the original npm invocation directory when available.
 - `OBJECT_STORAGE_ACCESS_KEY_ID`
 - `OBJECT_STORAGE_SECRET_ACCESS_KEY`
 

@@ -184,6 +184,21 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(workflowAction.response.status, 200);
     assert.equal(workflowAction.body.newState, "accepted");
 
+    const exportableSnapshots = await authedJson(baseUrl, "/api/exports/accepted-snapshots");
+    assert.equal(exportableSnapshots.response.status, 200);
+    assert.equal(exportableSnapshots.body.snapshots[0].acceptedSnapshotId, "snapshot-1");
+
+    const exportBatch = await authedJson(baseUrl, "/api/exports/batches", {
+      method: "POST",
+      body: JSON.stringify({ acceptedSnapshotIds: ["snapshot-1"], filterContext: {}, options: {} })
+    });
+    assert.equal(exportBatch.response.status, 200);
+    assert.equal(exportBatch.body.exportBatchId, "export-batch-1");
+
+    const exportBatchDetail = await authedJson(baseUrl, "/api/exports/batches/export-batch-1");
+    assert.equal(exportBatchDetail.response.status, 200);
+    assert.equal(exportBatchDetail.body.batch.status, "pending");
+
     const missingWorkItem = await authedJson(baseUrl, "/api/work-items/missing");
     assert.equal(missingWorkItem.response.status, 404);
     assert.equal(missingWorkItem.body.error.code, "not_found");
@@ -218,6 +233,22 @@ function stubServices(): AppServices {
     catalog: {
       listProjects: async () => []
     } as AppServices["catalog"],
+    exports: {
+      listAcceptedSnapshots: async () => ({ snapshots: [] }),
+      listBatches: async () => ({ batches: [] }),
+      createBatch: async () => {
+        throw new Error("not used");
+      },
+      getBatch: async () => {
+        throw new Error("not used");
+      },
+      downloadBundle: async () => {
+        throw new Error("not used");
+      },
+      generateBatch: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["exports"],
     formMemos: {} as AppServices["formMemos"],
     workflows: {
       getStatus: async () => ({ active: null, supportedHookHandlers: [] }),
@@ -333,6 +364,60 @@ function captureRouteServices(): AppServices {
       updateContributor: async () => contributor,
       deactivateContributor: async () => ({ ...contributor, isActive: false })
     } as AppServices["catalog"],
+    exports: {
+      listAcceptedSnapshots: async () => ({
+        snapshots: [
+          {
+            acceptedSnapshotId: "snapshot-1",
+            workItemId: "work-item-1",
+            title: "Captured memo",
+            project: { id: "project-1", slug: "memo-capture", name: "Memo Capture" },
+            featureGroup: { id: "feature-1", name: "Capture API" },
+            contributor: { id: "contributor-1", text: "Paul" },
+            alreadyExported: false,
+            defaultChecked: true,
+            currentForWorkItem: true,
+            snapshotCreatedAt: "2026-05-29T00:02:00.000Z"
+          }
+        ]
+      }),
+      listBatches: async () => ({ batches: [] }),
+      createBatch: async () => ({
+        exportBatchId: "export-batch-1",
+        schemaVersion: "memo-capture-export.v1",
+        status: "pending",
+        jobId: "job-1"
+      }),
+      getBatch: async (exportBatchId: string) => ({
+        batch: {
+          id: exportBatchId,
+          schemaVersion: "memo-capture-export.v1",
+          status: "pending",
+          createdBy: "user-1",
+          filterContext: {},
+          options: {},
+          manifestArtifactId: null,
+          jsonlArtifactId: null,
+          combinedMarkdownArtifactId: null,
+          bundleArtifactId: null,
+          createdAt: "2026-05-29T00:03:00.000Z",
+          completedAt: null,
+          failedAt: null,
+          errorCode: null,
+          errorMessage: null,
+          itemCount: 1
+        },
+        items: []
+      }),
+      downloadBundle: async () => ({
+        filename: "export-export-batch-1.zip",
+        contentType: "application/zip",
+        body: Buffer.from("zip")
+      }),
+      generateBatch: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["exports"],
     formMemos: {
       createFromRequest: async () => ({
         sourceMemoId: "source-memo-1",

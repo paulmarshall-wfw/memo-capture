@@ -12,6 +12,17 @@ export interface UserIdentityInput {
 export class UserRepository {
   constructor(private readonly db: Queryable) {}
 
+  async findById(userId: string): Promise<AppUserRecord | null> {
+    const result = await this.db.query<AppUserRow>(
+      `select *
+       from app_users
+       where id = $1`,
+      [userId]
+    );
+
+    return result.rows[0] === undefined ? null : mapUser(result.rows[0]);
+  }
+
   async findByOidcIdentity(oidcIssuer: string, oidcSubject: string): Promise<AppUserRecord | null> {
     const result = await this.db.query<AppUserRow>(
       `select *

@@ -1,4 +1,5 @@
 import { readNumberEnv, readRuntimeConfig, readStringEnv } from "@memo-capture/config";
+import path from "node:path";
 
 export type AuthMode = "oidc" | "local-dev";
 
@@ -25,9 +26,15 @@ export interface ApiConfig {
   logLevel: "debug" | "info" | "warn" | "error";
   databaseUrl: string;
   migrationsDirectory: string | null;
+  objectStorage: ObjectStorageConfig;
   authMode: AuthMode;
   oidc: OidcConfig;
   localDevAuth: LocalDevAuthConfig;
+}
+
+export interface ObjectStorageConfig {
+  bucket: string;
+  localRoot: string;
 }
 
 export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -46,6 +53,10 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       "postgres://memo_capture:memo_capture@localhost:5432/memo_capture"
     ),
     migrationsDirectory: readNullableStringEnv(env, "MEMO_CAPTURE_MIGRATIONS_DIR"),
+    objectStorage: {
+      bucket: readStringEnv(env, "OBJECT_STORAGE_BUCKET", "memo-capture"),
+      localRoot: resolveLocalRoot(readStringEnv(env, "OBJECT_STORAGE_LOCAL_ROOT", ".memo-capture/object-storage"))
+    },
     authMode,
     oidc: {
       issuerUrl: readStringEnv(env, "OIDC_ISSUER_URL", ""),
@@ -63,6 +74,14 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       displayName: readStringEnv(env, "MEMO_CAPTURE_LOCAL_DEV_AUTH_DISPLAY_NAME", "Local Dev User")
     }
   };
+}
+
+function resolveLocalRoot(value: string): string {
+  if (path.isAbsolute(value)) {
+    return value;
+  }
+
+  return path.resolve(process.env.INIT_CWD ?? process.cwd(), value);
 }
 
 function readAuthMode(env: NodeJS.ProcessEnv): AuthMode {

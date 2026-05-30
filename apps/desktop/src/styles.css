@@ -104,6 +104,7 @@ button:disabled {
 }
 
 .bucket-list,
+.view-switcher,
 .sidebar-actions {
   display: grid;
   gap: 8px;
@@ -249,11 +250,23 @@ button:disabled {
   color: #17202c;
 }
 
+.export-toolbar {
+  grid-template-columns: auto minmax(220px, 1fr) auto auto;
+}
+
 .content-grid {
   display: grid;
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(360px, 1fr) minmax(390px, 480px);
+  gap: 14px;
+}
+
+.export-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(420px, 1fr) minmax(360px, 440px);
   gap: 14px;
 }
 
@@ -266,7 +279,18 @@ button:disabled {
   padding: 2px;
 }
 
+.export-list {
+  display: grid;
+  min-height: 0;
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+  padding: 2px;
+}
+
 .item-row,
+.export-row,
+.batch-row,
 .detail-panel,
 .empty-state {
   border: 1px solid #d8e1ea;
@@ -283,6 +307,46 @@ button:disabled {
   padding: 14px;
   color: inherit;
   text-align: left;
+}
+
+.export-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.export-row input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+}
+
+.export-row p,
+.batch-row p {
+  margin: 7px 0 0;
+  color: #647386;
+  font-size: 13px;
+}
+
+.export-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d8e1ea;
+  border-radius: 8px;
+  color: #35445a;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.export-summary div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .item-row:hover {
@@ -346,6 +410,24 @@ button:disabled {
   font-size: 12px;
   font-weight: 760;
   text-transform: capitalize;
+}
+
+.export-status {
+  flex: none;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.export-status.new {
+  color: #0d5f53;
+  background: #def4ee;
+}
+
+.export-status.exported {
+  color: #4c5b6f;
+  background: #e8edf2;
 }
 
 .state-memo,
@@ -506,6 +588,35 @@ button:disabled {
   margin: 0;
 }
 
+.batch-list {
+  display: grid;
+  gap: 10px;
+}
+
+.batch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+}
+
+.batch-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #243246;
+  font-size: 14px;
+}
+
+.batch-title span {
+  color: #647386;
+}
+
+.error-text {
+  color: #8a2534 !important;
+}
+
 .source-list div {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr);
@@ -571,8 +682,13 @@ button:disabled {
   }
 
   .content-grid,
+  .export-grid,
   .field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .export-toolbar {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .workspace {

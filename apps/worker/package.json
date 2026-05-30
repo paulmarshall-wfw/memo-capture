@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@memo-capture/api": "0.1.0",
     "@memo-capture/config": "0.1.0",
     "@memo-capture/domain": "0.1.0"
   },
