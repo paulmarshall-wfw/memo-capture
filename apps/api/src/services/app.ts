@@ -7,6 +7,7 @@ import { UserRepository } from "../repositories/users.js";
 import { ArtifactService } from "./artifacts.js";
 import type { WorkItemRecord } from "../repositories/work-items.js";
 import { AuthService } from "./auth.js";
+import { AiExpansionService } from "./ai-expansion.js";
 import { CatalogService } from "./catalog.js";
 import { DiagnosticsService } from "./diagnostics.js";
 import { ExportService } from "./exports.js";
@@ -14,10 +15,14 @@ import { FormMemoService } from "./form-memos.js";
 import { ImportService, type FinalizeUploadSessionResponse, type UploadSessionResponse } from "./imports.js";
 import { JobService } from "./jobs.js";
 import { ObjectStorageService } from "./object-storage.js";
+import { SettingsService } from "./settings.js";
 import { WorkItemService } from "./work-items.js";
 import { WorkflowService } from "./workflows.js";
+import { AuditRepository } from "../repositories/audit.js";
 
 export interface AppServices {
+  ai: AiOperations;
+  audit: AuditOperations;
   artifacts: ArtifactOperations;
   auth: AuthService;
   catalog: CatalogService;
@@ -26,9 +31,21 @@ export interface AppServices {
   formMemos: FormMemoService;
   imports: ImportOperations;
   jobs: JobOperations;
+  settings: SettingsOperations;
   workflows: WorkflowService;
   workItems: WorkItemOperations;
   close(): Promise<void>;
+}
+
+export interface AiOperations {
+  listSuggestions(workItemId: string): Promise<unknown>;
+  expandWorkItem(workItemId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  acceptSuggestion(suggestionId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  dismissSuggestion(suggestionId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
+}
+
+export interface AuditOperations {
+  list(query: URLSearchParams): Promise<unknown>;
 }
 
 export interface ArtifactOperations {
@@ -57,6 +74,14 @@ export interface JobOperations {
   get(jobId: string): Promise<unknown>;
   retry(jobId: string, requestBody: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   cancel(jobId: string, requestBody: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+}
+
+export interface SettingsOperations {
+  getSummary(): Promise<unknown>;
+  updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  createPromptVersion(promptDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
 }
 
 export interface ImportOperations {
@@ -111,6 +136,20 @@ export function createAppServices(config: ApiConfig, logger: Logger): AppService
 export function createAppServicesFromDatabase(config: ApiConfig, db: Database): AppServices {
   const objectStorage = new ObjectStorageService(config.objectStorage);
   return {
+    ai: new AiExpansionService(db, config),
+    audit: {
+      list: (query) =>
+        new AuditRepository(db).list({
+          eventName: query.get("event_name"),
+          actorUserId: query.get("actor_user_id"),
+          subjectType: query.get("subject_type"),
+          subjectId: query.get("subject_id"),
+          workItemId: query.get("work_item_id"),
+          jobId: query.get("job_id"),
+          createdFrom: query.get("created_from"),
+          createdTo: query.get("created_to")
+        })
+    },
     auth: new AuthService(config, new UserRepository(db)),
     artifacts: new ArtifactService(db, objectStorage),
     catalog: new CatalogService(db),
@@ -119,6 +158,7 @@ export function createAppServicesFromDatabase(config: ApiConfig, db: Database): 
     formMemos: new FormMemoService(db),
     imports: new ImportService(db, objectStorage),
     jobs: new JobService(db),
+    settings: new SettingsService(db, config),
     workflows: new WorkflowService(db, config.authMode),
     workItems: new WorkItemService(db, objectStorage),
     close: () => db.close()

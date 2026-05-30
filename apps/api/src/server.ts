@@ -280,6 +280,48 @@ function matchProtectedRoute(
     return async (context) => services.jobs.list(context.url.searchParams);
   }
 
+  if (method === "GET" && pathname === "/api/settings") {
+    return async () => services.settings.getSummary();
+  }
+
+  if (method === "PATCH" && pathname === "/api/settings/extraction") {
+    return async (context, session) =>
+      services.settings.updateExtraction(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  if (method === "PATCH" && pathname === "/api/settings/transcription") {
+    return async (context, session) =>
+      services.settings.updateTranscription(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const providerPatchMatch = /^\/api\/settings\/providers\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && providerPatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateProvider(
+        decodeURIComponent(providerPatchMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const promptVersionMatch = /^\/api\/settings\/prompts\/([^/]+)\/versions$/.exec(pathname);
+  if (method === "POST" && promptVersionMatch !== null) {
+    return async (context, session) =>
+      services.settings.createPromptVersion(
+        decodeURIComponent(promptVersionMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  if (method === "GET" && pathname === "/api/audit-events") {
+    return async (context) => ({
+      auditEvents: await services.audit.list(context.url.searchParams)
+    });
+  }
+
   const jobRetryMatch = /^\/api\/jobs\/([^/]+)\/retry$/.exec(pathname);
   if (method === "POST" && jobRetryMatch !== null) {
     return async (context, session) =>
@@ -424,6 +466,41 @@ function matchProtectedRoute(
         context.requestId
       )
     });
+  }
+
+  const workItemAiSuggestionsMatch = /^\/api\/work-items\/([^/]+)\/ai-suggestions$/.exec(pathname);
+  if (method === "GET" && workItemAiSuggestionsMatch !== null) {
+    return async () => services.ai.listSuggestions(decodeURIComponent(workItemAiSuggestionsMatch[1] ?? ""));
+  }
+
+  const workItemAiExpandMatch = /^\/api\/work-items\/([^/]+)\/ai-expansions$/.exec(pathname);
+  if (method === "POST" && workItemAiExpandMatch !== null) {
+    return async (context, session) =>
+      services.ai.expandWorkItem(
+        decodeURIComponent(workItemAiExpandMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const aiSuggestionAcceptMatch = /^\/api\/ai-suggestions\/([^/]+)\/accept$/.exec(pathname);
+  if (method === "POST" && aiSuggestionAcceptMatch !== null) {
+    return async (context, session) =>
+      services.ai.acceptSuggestion(
+        decodeURIComponent(aiSuggestionAcceptMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const aiSuggestionDismissMatch = /^\/api\/ai-suggestions\/([^/]+)\/dismiss$/.exec(pathname);
+  if (method === "POST" && aiSuggestionDismissMatch !== null) {
+    return async (context, session) =>
+      services.ai.dismissSuggestion(
+        decodeURIComponent(aiSuggestionDismissMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
   }
 
   const workItemActionsMatch = /^\/api\/work-items\/([^/]+)\/actions$/.exec(pathname);

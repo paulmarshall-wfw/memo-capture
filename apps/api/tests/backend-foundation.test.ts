@@ -229,6 +229,21 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(providerDiagnostics.response.status, 200);
     assert.deepEqual(providerDiagnostics.body.providers, []);
 
+    const settings = await authedJson(baseUrl, "/api/settings");
+    assert.equal(settings.response.status, 200);
+    assert.equal(settings.body.providers[0].providerName, "local-dev");
+
+    const providerPatch = await authedJson(baseUrl, "/api/settings/providers/provider-1", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: true, modelName: "memo-capture-local-dev-expander-v1" })
+    });
+    assert.equal(providerPatch.response.status, 200);
+    assert.equal(providerPatch.body.provider.enabled, true);
+
+    const auditEvents = await authedJson(baseUrl, "/api/audit-events?event_name=provider_config.updated");
+    assert.equal(auditEvents.response.status, 200);
+    assert.equal(auditEvents.body.auditEvents[0].eventName, "provider_config.updated");
+
     const itemDiagnostics = await authedJson(baseUrl, "/api/work-items/work-item-1/diagnostics");
     assert.equal(itemDiagnostics.response.status, 200);
     assert.equal(itemDiagnostics.body.workItemId, "work-item-1");
@@ -249,6 +264,32 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     });
     assert.equal(manualTranscript.response.status, 200);
     assert.equal(manualTranscript.body.workItem.body, "Recovered from audio playback.");
+
+    const aiExpansion = await authedJson(baseUrl, "/api/work-items/work-item-1/ai-expansions", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(aiExpansion.response.status, 200);
+    assert.equal(aiExpansion.body.expandedWorkItem.title, "Captured memo updated expanded");
+    assert.equal(aiExpansion.body.suggestions[0].status, "pending");
+
+    const aiSuggestions = await authedJson(baseUrl, "/api/work-items/work-item-1/ai-suggestions");
+    assert.equal(aiSuggestions.response.status, 200);
+    assert.equal(aiSuggestions.body.suggestions[0].id, "suggestion-1");
+
+    const acceptedSuggestion = await authedJson(baseUrl, "/api/ai-suggestions/suggestion-1/accept", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(acceptedSuggestion.response.status, 200);
+    assert.equal(acceptedSuggestion.body.workItem.workflowState, "memo");
+
+    const dismissedSuggestion = await authedJson(baseUrl, "/api/ai-suggestions/suggestion-2/dismiss", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    assert.equal(dismissedSuggestion.response.status, 200);
+    assert.equal(dismissedSuggestion.body.suggestion.status, "dismissed");
 
     const missingWorkItem = await authedJson(baseUrl, "/api/work-items/missing");
     assert.equal(missingWorkItem.response.status, 404);
@@ -335,6 +376,21 @@ test("basic protected capture routes expose session, catalog, work items, and fo
 
 function stubServices(): AppServices {
   return {
+    ai: {
+      listSuggestions: async () => ({ suggestions: [] }),
+      expandWorkItem: async () => {
+        throw new Error("not used");
+      },
+      acceptSuggestion: async () => {
+        throw new Error("not used");
+      },
+      dismissSuggestion: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["ai"],
+    audit: {
+      list: async () => []
+    } as AppServices["audit"],
     artifacts: {
       download: async () => {
         throw new Error("not used");
@@ -399,6 +455,21 @@ function stubServices(): AppServices {
         throw new Error("not used");
       }
     } as AppServices["jobs"],
+    settings: {
+      getSummary: async () => ({ providers: [] }),
+      updateExtraction: async () => {
+        throw new Error("not used");
+      },
+      updateTranscription: async () => {
+        throw new Error("not used");
+      },
+      updateProvider: async () => {
+        throw new Error("not used");
+      },
+      createPromptVersion: async () => {
+        throw new Error("not used");
+      }
+    } as AppServices["settings"],
     workflows: {
       getStatus: async () => ({ active: null, supportedHookHandlers: [] }),
       getBuckets: async () => ({ buckets: [] }),
@@ -481,8 +552,92 @@ function captureRouteServices(): AppServices {
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
   };
+  let suggestionOne = {
+    id: "suggestion-1",
+    parentWorkItemId: "work-item-1",
+    status: "pending",
+    title: "Captured memo updated acceptance criteria",
+    body: "Define acceptance criteria.",
+    tags: ["acceptance-criteria"],
+    featureGroup: null,
+    featureGroupId: null,
+    rationale: "Acceptance criteria make the idea easier to review.",
+    promptVersionId: "prompt-version-1",
+    providerName: "local-dev",
+    modelName: "memo-capture-local-dev-expander-v1",
+    validationResult: { ok: true },
+    appliedWorkItemId: null,
+    createdAt: "2026-05-29T00:06:00.000Z",
+    appliedAt: null,
+    dismissedAt: null
+  };
+  let suggestionTwo = {
+    ...suggestionOne,
+    id: "suggestion-2",
+    title: "Captured memo updated rollout notes"
+  };
 
   return {
+    ai: {
+      listSuggestions: async () => ({ suggestions: [suggestionOne, suggestionTwo] }),
+      expandWorkItem: async () => ({
+        expandedWorkItem: {
+          title: `${workItem.title} expanded`,
+          body: `${workItem.body}\n\nExpansion focus: clarify value.`,
+          tags: ["ai-expanded"],
+          featureGroup: null
+        },
+        suggestions: [suggestionOne],
+        providerName: "local-dev",
+        modelName: "memo-capture-local-dev-expander-v1",
+        validation: { ok: true, strictJson: true }
+      }),
+      acceptSuggestion: async () => {
+        const createdWorkItem = {
+          ...workItem,
+          id: "work-item-ai-1",
+          sourceMemoId: "source-memo-ai-1",
+          title: suggestionOne.title,
+          body: suggestionOne.body,
+          workflowItemVersion: 1
+        };
+        suggestionOne = {
+          ...suggestionOne,
+          status: "applied",
+          appliedWorkItemId: createdWorkItem.id,
+          appliedAt: "2026-05-29T00:07:00.000Z"
+        };
+        return { suggestion: suggestionOne, workItem: createdWorkItem };
+      },
+      dismissSuggestion: async () => {
+        suggestionTwo = {
+          ...suggestionTwo,
+          status: "dismissed",
+          dismissedAt: "2026-05-29T00:08:00.000Z"
+        };
+        return { suggestion: suggestionTwo };
+      }
+    } as AppServices["ai"],
+    audit: {
+      list: async () => [
+        {
+          id: "audit-1",
+          eventName: "provider_config.updated",
+          actorUserId: "user-1",
+          actorEmailSnapshot: "dev@example.test",
+          actorDisplayNameSnapshot: "Dev User",
+          subjectType: "provider_config",
+          subjectId: "provider-1",
+          requestId: "request-1",
+          jobId: null,
+          sourceMemoId: null,
+          workItemId: null,
+          metadata: { providerName: "local-dev" },
+          redactionApplied: true,
+          createdAt: "2026-05-29T00:06:00.000Z"
+        }
+      ]
+    } as AppServices["audit"],
     artifacts: {
       download: async () => ({
         filename: "memo.m4a",
@@ -677,6 +832,75 @@ function captureRouteServices(): AppServices {
         }
       })
     } as AppServices["jobs"],
+    settings: {
+      getSummary: async () => ({
+        fileTypes: [],
+        extraction: {
+          projectConfidenceThreshold: 0.7,
+          featureGroupConfidenceThreshold: 0.7,
+          contributorConfidenceThreshold: 0.7,
+          tagConfidenceThreshold: 0.7,
+          updatedAt: "2026-05-29T00:00:00.000Z"
+        },
+        transcription: {
+          maxRetryAttempts: 3,
+          runtimeProvider: "disabled",
+          runtimeModelName: "memo-capture-local-dev-transcriber-v1",
+          updatedAt: "2026-05-29T00:00:00.000Z"
+        },
+        providers: [
+          {
+            id: "provider-1",
+            providerKind: "llm",
+            providerName: "local-dev",
+            enabled: false,
+            endpointConfigured: false,
+            modelName: "memo-capture-local-dev-expander-v1",
+            secretSource: "environment",
+            secretConfigured: true,
+            healthStatus: "unknown",
+            runtimeProvider: "local-dev",
+            runtimeModelName: "memo-capture-local-dev-expander-v1",
+            lastHealthCheckAt: null,
+            updatedAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
+        prompts: [
+          {
+            id: "prompt-1",
+            name: "work_item_expansion",
+            purpose: "Expand work items.",
+            activeVersion: 1,
+            activePromptVersionId: "prompt-version-1",
+            body: "Return strict JSON.",
+            outputSchema: {},
+            retentionPolicy: "retain_active_and_referenced",
+            updatedAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
+        auth: { mode: "local-dev", oidcConfigured: false }
+      }),
+      updateExtraction: async () => ({ extraction: { projectConfidenceThreshold: 0.8 } }),
+      updateTranscription: async () => ({ transcription: { maxRetryAttempts: 4 } }),
+      updateProvider: async () => ({
+        provider: {
+          id: "provider-1",
+          providerKind: "llm",
+          providerName: "local-dev",
+          enabled: true,
+          endpointConfigured: false,
+          modelName: "memo-capture-local-dev-expander-v1",
+          secretSource: "environment",
+          secretConfigured: true,
+          healthStatus: "unknown",
+          runtimeProvider: "local-dev",
+          runtimeModelName: "memo-capture-local-dev-expander-v1",
+          lastHealthCheckAt: null,
+          updatedAt: "2026-05-29T00:06:00.000Z"
+        }
+      }),
+      createPromptVersion: async () => ({ prompt: { id: "prompt-1", activeVersion: 2 } })
+    } as AppServices["settings"],
     workflows: {
       getStatus: async () => ({
         active: {

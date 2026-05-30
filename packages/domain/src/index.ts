@@ -203,7 +203,12 @@ export const AUDIT_EVENT_NAMES = [
   "export_batch.created",
   "export_batch.generation_succeeded",
   "export_batch.generation_failed",
-  "export_batch.downloaded"
+  "export_batch.downloaded",
+  "ai_expansion.requested",
+  "ai_expansion.validation_failed",
+  "ai_suggestion.created",
+  "ai_suggestion.applied",
+  "ai_suggestion.dismissed"
 ] as const;
 
 export type AuditEventName = (typeof AUDIT_EVENT_NAMES)[number];

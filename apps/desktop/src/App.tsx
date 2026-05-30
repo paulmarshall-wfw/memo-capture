@@ -29,7 +29,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
-type ActiveView = "work-items" | "exports" | "watched-folders";
+type ActiveView = "work-items" | "exports" | "watched-folders" | "settings";
 
 interface SessionResponse {
   accessToken?: string;
@@ -225,6 +225,84 @@ interface FinalizeUploadSessionResponse {
   processingJobs: string[];
 }
 
+interface AiSuggestion {
+  id: string;
+  parentWorkItemId: string;
+  status: "pending" | "applied" | "dismissed";
+  title: string;
+  body: string;
+  tags: string[];
+  featureGroup: string | null;
+  rationale: string | null;
+  providerName: string | null;
+  modelName: string | null;
+  appliedWorkItemId: string | null;
+  createdAt: string;
+}
+
+interface SettingsSummary {
+  fileTypes: {
+    id: string;
+    extension: string;
+    mediaKind: string;
+    capabilityState: string;
+    parserKey: string | null;
+    updatedAt: string;
+  }[];
+  extraction: {
+    projectConfidenceThreshold: number;
+    featureGroupConfidenceThreshold: number;
+    contributorConfidenceThreshold: number;
+    tagConfidenceThreshold: number;
+    updatedAt: string;
+  } | null;
+  transcription: {
+    maxRetryAttempts: number;
+    runtimeProvider: string;
+    runtimeModelName: string;
+    updatedAt: string;
+  } | null;
+  providers: {
+    id: string;
+    providerKind: string;
+    providerName: string;
+    enabled: boolean;
+    endpointConfigured: boolean;
+    modelName: string | null;
+    secretSource: string;
+    secretConfigured: boolean;
+    healthStatus: string;
+    runtimeProvider: string;
+    runtimeModelName: string;
+    updatedAt: string;
+  }[];
+  prompts: {
+    id: string;
+    name: string;
+    purpose: string;
+    activeVersion: number;
+    body: string | null;
+    updatedAt: string;
+  }[];
+  auth: {
+    mode: string;
+    oidcConfigured: boolean;
+  };
+}
+
+interface AuditEvent {
+  id: string;
+  eventName: string;
+  actorEmailSnapshot: string | null;
+  subjectType: string;
+  subjectId: string | null;
+  workItemId: string | null;
+  jobId: string | null;
+  metadata: Record<string, unknown>;
+  redactionApplied: boolean;
+  createdAt: string;
+}
+
 class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -286,6 +364,13 @@ export function App() {
   const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null);
   const [audioLoadState, setAudioLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [transcriptSaving, setTranscriptSaving] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([]);
+  const [aiExpanding, setAiExpanding] = useState(false);
+  const [suggestionIdInFlight, setSuggestionIdInFlight] = useState<string | null>(null);
+  const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditFilter, setAuditFilter] = useState("");
+  const [settingsLoading, setSettingsLoading] = useState(false);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -423,7 +508,7 @@ export function App() {
     let cancelled = false;
     async function loadSelectedItem() {
       try {
-        const [detailResponse, actionsResponse, diagnosticsResponse] = await Promise.all([
+        const [detailResponse, actionsResponse, diagnosticsResponse, suggestionsResponse] = await Promise.all([
           authedJson<{ workItem: WorkItem }>(accessToken, `/api/work-items/${encodeURIComponent(selectedItemId)}`),
           authedJson<{ actions: AllowedWorkflowAction[] }>(
             accessToken,
@@ -432,6 +517,10 @@ export function App() {
           authedJson<WorkItemDiagnostics>(
             accessToken,
             `/api/work-items/${encodeURIComponent(selectedItemId)}/diagnostics`
+          ),
+          authedJson<{ suggestions: AiSuggestion[] }>(
+            accessToken,
+            `/api/work-items/${encodeURIComponent(selectedItemId)}/ai-suggestions`
           )
         ]);
         if (cancelled) {
@@ -441,6 +530,7 @@ export function App() {
         setDraft(createDraft(detailResponse.workItem));
         setActions(actionsResponse.actions);
         setSelectedDiagnostics(diagnosticsResponse);
+        setAiSuggestions(suggestionsResponse.suggestions);
         setAudioObjectUrl((current) => {
           if (current !== null) {
             URL.revokeObjectURL(current);
@@ -469,6 +559,16 @@ export function App() {
 
     void loadExports(accessToken).catch((error) => {
       setStatusMessage(error instanceof Error ? error.message : "Unable to load exports.");
+    });
+  }, [accessToken, activeView]);
+
+  useEffect(() => {
+    if (accessToken === null || activeView !== "settings") {
+      return;
+    }
+
+    void loadSettingsAndAudit(accessToken).catch((error) => {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
     });
   }, [accessToken, activeView]);
 
@@ -543,6 +643,25 @@ export function App() {
           .map((snapshot) => snapshot.acceptedSnapshotId)
       )
     );
+  }
+
+  async function loadSettingsAndAudit(token = accessToken): Promise<void> {
+    if (token === null) {
+      return;
+    }
+    setSettingsLoading(true);
+    setStatusMessage(null);
+    try {
+      const query = auditFilter.trim() === "" ? "" : `?event_name=${encodeURIComponent(auditFilter.trim())}`;
+      const [settingsResponse, auditResponse] = await Promise.all([
+        authedJson<SettingsSummary>(token, "/api/settings"),
+        authedJson<{ auditEvents: AuditEvent[] }>(token, `/api/audit-events${query}`)
+      ]);
+      setSettingsSummary(settingsResponse);
+      setAuditEvents(auditResponse.auditEvents);
+    } finally {
+      setSettingsLoading(false);
+    }
   }
 
   function toggleExportSnapshot(snapshotId: string, checked: boolean) {
@@ -906,6 +1025,108 @@ export function App() {
     }
   }
 
+  async function requestAiExpansion() {
+    if (accessToken === null || selectedItem === null) {
+      return;
+    }
+    setAiExpanding(true);
+    setStatusMessage(null);
+    try {
+      const response = await authedJson<{
+        expandedWorkItem: { title: string; body: string; tags: string[]; featureGroup: string | null };
+        suggestions: AiSuggestion[];
+        providerName: string;
+        modelName: string;
+      }>(accessToken, `/api/work-items/${encodeURIComponent(selectedItem.id)}/ai-expansions`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      setDraft((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              title: response.expandedWorkItem.title,
+              body: response.expandedWorkItem.body
+            }
+      );
+      setAiSuggestions((current) => [...response.suggestions, ...current]);
+      setStatusMessage(`AI expansion generated with ${response.providerName}/${response.modelName}. Save applies the expanded draft.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to generate AI expansion.");
+    } finally {
+      setAiExpanding(false);
+    }
+  }
+
+  async function acceptAiSuggestion(suggestionId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    setSuggestionIdInFlight(suggestionId);
+    setStatusMessage(null);
+    try {
+      const response = await authedJson<{ suggestion: AiSuggestion; workItem: WorkItem }>(
+        accessToken,
+        `/api/ai-suggestions/${encodeURIComponent(suggestionId)}/accept`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      setAiSuggestions((current) =>
+        current.map((suggestion) => (suggestion.id === response.suggestion.id ? response.suggestion : suggestion))
+      );
+      await refreshBucket();
+      setSelectedItemId(response.workItem.id);
+      setStatusMessage("AI suggestion accepted as a new memo.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to accept AI suggestion.");
+    } finally {
+      setSuggestionIdInFlight(null);
+    }
+  }
+
+  async function dismissAiSuggestion(suggestionId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    setSuggestionIdInFlight(suggestionId);
+    setStatusMessage(null);
+    try {
+      const response = await authedJson<{ suggestion: AiSuggestion }>(
+        accessToken,
+        `/api/ai-suggestions/${encodeURIComponent(suggestionId)}/dismiss`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      setAiSuggestions((current) =>
+        current.map((suggestion) => (suggestion.id === response.suggestion.id ? response.suggestion : suggestion))
+      );
+      setStatusMessage("AI suggestion dismissed.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to dismiss AI suggestion.");
+    } finally {
+      setSuggestionIdInFlight(null);
+    }
+  }
+
+  async function toggleProvider(providerId: string, enabled: boolean) {
+    if (accessToken === null) {
+      return;
+    }
+    setSettingsLoading(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/providers/${encodeURIComponent(providerId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled })
+      });
+      await loadSettingsAndAudit(accessToken);
+      setStatusMessage(enabled ? "Provider enabled." : "Provider disabled.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to update provider.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
   async function saveManualTranscript() {
     if (accessToken === null || selectedItem === null || draft === null || draft.body.trim() === "") {
       return;
@@ -1005,6 +1226,13 @@ export function App() {
           >
             <span>Watched folders</span>
           </button>
+          <button
+            className={`bucket-button ${activeView === "settings" ? "active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("settings")}
+          >
+            <span>Settings</span>
+          </button>
         </nav>
 
         <nav className="bucket-list" aria-label="Workflow buckets">
@@ -1029,7 +1257,7 @@ export function App() {
             <FolderInput size={18} />
             Watched folders
           </button>
-          <button className="icon-text-button" type="button">
+          <button className="icon-text-button" type="button" onClick={() => setActiveView("settings")}>
             <Settings size={18} />
             Settings
           </button>
@@ -1044,6 +1272,8 @@ export function App() {
                 ? "Exports"
                 : activeView === "watched-folders"
                 ? "Watched folders"
+                : activeView === "settings"
+                ? "Settings"
                 : selectedBucket?.label ?? "Work queue"}
             </h1>
             <p>
@@ -1051,6 +1281,8 @@ export function App() {
                 ? `${MEMO_CAPTURE_EXPORT_SCHEMA_VERSION} accepted snapshot batches`
                 : activeView === "watched-folders"
                 ? `${[...ACTIVE_TEXT_FILE_EXTENSIONS, ...ACTIVE_AUDIO_FILE_EXTENSIONS].join(", ")} imports with archive-after-finalize`
+                : activeView === "settings"
+                ? "Provider, prompt, settings, and audit controls"
                 : selectedBucket === null
                 ? "No active workflow bucket is selected."
                 : `${selectedBucket.states.join(", ")} workflow states`}
@@ -1064,13 +1296,19 @@ export function App() {
                 ? loadExports()
                 : activeView === "watched-folders"
                 ? scanWatchedFolders()
+                : activeView === "settings"
+                ? loadSettingsAndAudit()
                 : refreshBucket())
             }
           >
-            {activeView === "watched-folders" && watchScanInFlight ? (
+            {activeView === "settings" && settingsLoading ? (
+              <RefreshCcw className="spin" size={18} />
+            ) : activeView === "watched-folders" && watchScanInFlight ? (
               <RefreshCcw className="spin" size={18} />
             ) : activeView === "watched-folders" ? (
               <FolderSearch size={18} />
+            ) : activeView === "settings" ? (
+              <Settings size={18} />
             ) : (
               <RefreshCcw size={18} />
             )}
@@ -1122,7 +1360,7 @@ export function App() {
               Create batch
             </button>
           </div>
-        ) : (
+        ) : activeView === "watched-folders" ? (
           <div className="toolbar watched-toolbar">
             <FolderInput size={18} />
             <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled folders</span>
@@ -1133,6 +1371,20 @@ export function App() {
             <button className="primary-button" type="button" onClick={saveWatchedFolders}>
               <Save size={18} />
               Save settings
+            </button>
+          </div>
+        ) : (
+          <div className="toolbar settings-toolbar" role="search">
+            <Search size={18} />
+            <input
+              aria-label="Filter audit events by event name"
+              placeholder="Filter audit events by exact event name"
+              value={auditFilter}
+              onChange={(event) => setAuditFilter(event.currentTarget.value)}
+            />
+            <button className="secondary-button" type="button" onClick={() => void loadSettingsAndAudit()}>
+              <RefreshCcw size={18} />
+              Apply filter
             </button>
           </div>
         )}
@@ -1308,6 +1560,72 @@ export function App() {
                     </span>
                   ) : null}
                 </div>
+
+                <section className="detail-section" aria-label="AI expansion">
+                  <div className="section-title">
+                    <Settings size={18} />
+                    <h3>AI expansion</h3>
+                  </div>
+                  <div className="detail-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={aiExpanding || hasDraftChanges}
+                      onClick={() => void requestAiExpansion()}
+                    >
+                      {aiExpanding ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
+                      Generate
+                    </button>
+                    {hasDraftChanges ? <span className="muted-text">Save or reset edits before generating</span> : null}
+                  </div>
+                  <div className="suggestion-list">
+                    {aiSuggestions.length === 0 ? <span className="muted-text">No AI suggestions</span> : null}
+                    {aiSuggestions.map((suggestion) => (
+                      <article className="suggestion-row" key={suggestion.id}>
+                        <div>
+                          <div className="batch-title">
+                            <strong>{suggestion.title}</strong>
+                            <span>{statusLabel(suggestion.status)}</span>
+                          </div>
+                          <p>{suggestion.body}</p>
+                          <div className="item-meta">
+                            {suggestion.tags.map((tag) => (
+                              <span key={tag}>{tag}</span>
+                            ))}
+                            {suggestion.providerName === null ? null : <span>{suggestion.providerName}</span>}
+                          </div>
+                          {suggestion.rationale === null ? null : (
+                            <p className="candidate-message">{suggestion.rationale}</p>
+                          )}
+                        </div>
+                        <div className="suggestion-actions">
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            disabled={suggestion.status !== "pending" || suggestionIdInFlight !== null}
+                            onClick={() => void acceptAiSuggestion(suggestion.id)}
+                          >
+                            {suggestionIdInFlight === suggestion.id ? (
+                              <RefreshCcw className="spin" size={18} />
+                            ) : (
+                              <Check size={18} />
+                            )}
+                            Accept
+                          </button>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            disabled={suggestion.status !== "pending" || suggestionIdInFlight !== null}
+                            onClick={() => void dismissAiSuggestion(suggestion.id)}
+                          >
+                            <CircleSlash size={18} />
+                            Dismiss
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
 
                 {audioArtifact !== null ? (
                   <section className="detail-section" aria-label="Audio and transcription recovery">
@@ -1510,7 +1828,7 @@ export function App() {
               </div>
             </aside>
           </div>
-        ) : (
+        ) : activeView === "watched-folders" ? (
           <div className="watched-grid">
             <section className="detail-panel" aria-label="Watched-folder settings">
               <div className="detail-header">
@@ -1636,6 +1954,130 @@ export function App() {
                   </article>
                 );
               })}
+            </section>
+          </div>
+        ) : (
+          <div className="settings-grid">
+            <section className="detail-panel" aria-label="Backend settings">
+              <div className="detail-header">
+                <div>
+                  <p className="eyebrow">Backend canonical</p>
+                  <h2>Settings</h2>
+                </div>
+                <Settings size={22} />
+              </div>
+
+              {settingsSummary === null ? (
+                <div className="empty-detail">
+                  <RefreshCcw size={22} />
+                  <span>Settings not loaded</span>
+                </div>
+              ) : (
+                <>
+                  <section className="detail-section">
+                    <div className="section-title">
+                      <Settings size={18} />
+                      <h3>Providers</h3>
+                    </div>
+                    <div className="settings-list">
+                      {settingsSummary.providers.map((provider) => (
+                        <article className="settings-row" key={provider.id}>
+                          <div>
+                            <div className="batch-title">
+                              <strong>{provider.providerKind}: {provider.providerName}</strong>
+                              <span>{provider.enabled ? "Enabled" : "Disabled"}</span>
+                            </div>
+                            <p>
+                              Runtime {provider.runtimeProvider}; model {provider.modelName ?? provider.runtimeModelName};
+                              secret {provider.secretConfigured ? "configured" : "not configured"}
+                            </p>
+                          </div>
+                          <label className="toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={provider.enabled}
+                              disabled={settingsLoading}
+                              onChange={(event) => void toggleProvider(provider.id, event.currentTarget.checked)}
+                            />
+                            Enabled
+                          </label>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="detail-section">
+                    <div className="section-title">
+                      <FileText size={18} />
+                      <h3>Prompts</h3>
+                    </div>
+                    <div className="settings-list">
+                      {settingsSummary.prompts.map((prompt) => (
+                        <article className="settings-row" key={prompt.id}>
+                          <div>
+                            <div className="batch-title">
+                              <strong>{prompt.name}</strong>
+                              <span>v{prompt.activeVersion}</span>
+                            </div>
+                            <p>{prompt.purpose}</p>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="detail-section">
+                    <div className="section-title">
+                      <FolderInput size={18} />
+                      <h3>File types</h3>
+                    </div>
+                    <div className="item-meta">
+                      {settingsSummary.fileTypes.map((fileType) => (
+                        <span key={fileType.id}>
+                          {fileType.extension} {fileType.capabilityState}
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+                </>
+              )}
+            </section>
+
+            <section className="detail-panel" aria-label="Audit events">
+              <div className="detail-header">
+                <div>
+                  <p className="eyebrow">Diagnostics</p>
+                  <h2>Audit events</h2>
+                </div>
+                <FileText size={22} />
+              </div>
+              {auditEvents.length === 0 ? (
+                <div className="empty-detail">
+                  <CircleSlash size={22} />
+                  <span>No audit events match this filter</span>
+                </div>
+              ) : null}
+              <div className="settings-list">
+                {auditEvents.map((event) => (
+                  <article className="settings-row" key={event.id}>
+                    <div>
+                      <div className="batch-title">
+                        <strong>{event.eventName}</strong>
+                        <span>{formatDate(event.createdAt)}</span>
+                      </div>
+                      <p>
+                        {event.actorEmailSnapshot ?? "System"} changed {event.subjectType}
+                        {event.subjectId === null ? "" : ` ${event.subjectId}`}
+                      </p>
+                      <div className="item-meta">
+                        {event.workItemId === null ? null : <span>Work item {event.workItemId}</span>}
+                        {event.jobId === null ? null : <span>Job {event.jobId}</span>}
+                        {event.redactionApplied ? <span>Redacted</span> : null}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
             </section>
           </div>
         )}
@@ -1813,7 +2255,7 @@ function requireValue<Value>(value: Value | null | undefined, message: string): 
   return value;
 }
 
-function statusLabel(state: ImportCandidateState): string {
+function statusLabel(state: string): string {
   return state.replaceAll("_", " ");
 }
 

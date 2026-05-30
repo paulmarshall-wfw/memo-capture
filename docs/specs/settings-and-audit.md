@@ -303,7 +303,7 @@ Use structured redaction:
 
 `GET /api/settings`
 
-Response includes backend settings and redacted provider/auth status, not secrets.
+Response includes backend settings, prompt metadata, file type settings, redacted provider/auth status, and runtime provider availability. It never returns provider secrets.
 
 ### Update extraction settings
 
@@ -324,6 +324,8 @@ Response includes backend settings and redacted provider/auth status, not secret
 ### List provider configs
 
 `GET /api/settings/providers`
+
+The implemented V1 settings summary currently returns provider configs through `GET /api/settings`; a dedicated provider list route can be added when the UI needs it.
 
 ### Update provider config
 
@@ -354,6 +356,24 @@ Filters:
 - `created_from`
 - `created_to`
 
+### AI expansion suggestions
+
+`POST /api/work-items/{workItemId}/ai-expansions`
+
+Creates an AI expansion run for a work item using the active prompt and an enabled LLM provider config. The provider response must be strict JSON matching the configured output schema shape. Invalid output creates a failed `expand_work_item` processing job and an `ai_expansion.validation_failed` audit event, and does not create suggestions.
+
+`GET /api/work-items/{workItemId}/ai-suggestions`
+
+Lists pending, applied, and dismissed AI suggestions for a work item.
+
+`POST /api/ai-suggestions/{suggestionId}/accept`
+
+Accepts one pending suggestion by creating a `source_memo` with `source_type = ai_generated` and a normal `work_item` in `memo`. The parent work item's lifecycle state is not changed.
+
+`POST /api/ai-suggestions/{suggestionId}/dismiss`
+
+Dismisses one pending suggestion without creating a work item or changing workflow state.
+
 ## Settings UI Inventory
 
 Settings sections:
@@ -379,6 +399,8 @@ Operations section:
 - Updating backend settings writes audit events.
 - Provider config response redacts secret presence and never returns secret values.
 - Disabled providers never receive new jobs.
+- AI expansion with invalid structured JSON creates a failed diagnostics job and no suggestion records.
+- Accepting an AI suggestion creates a normal memo work item without changing the parent lifecycle state.
 - File type marked `not_supported_yet` is ignored by watched-folder ingestion.
 - Prompt edit creates a new version and does not mutate old version.
 - Contributor merge does not rewrite existing work items.

@@ -489,6 +489,9 @@ Create request:
 - `PATCH /api/work-items/{workItemId}`
 - `POST /api/work-items/{workItemId}/actions/{actionId}`
 - `POST /api/work-items/{workItemId}/ai-expansions`
+- `GET /api/work-items/{workItemId}/ai-suggestions`
+- `POST /api/ai-suggestions/{suggestionId}/accept`
+- `POST /api/ai-suggestions/{suggestionId}/dismiss`
 - `GET /api/work-items/{workItemId}/diagnostics`
 
 List filters:

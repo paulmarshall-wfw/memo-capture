@@ -258,6 +258,10 @@ button:disabled {
   grid-template-columns: auto minmax(180px, 1fr) auto auto;
 }
 
+.settings-toolbar {
+  grid-template-columns: auto minmax(220px, 1fr) auto;
+}
+
 .content-grid {
   display: grid;
   min-height: 0;
@@ -279,6 +283,14 @@ button:disabled {
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(420px, 520px) minmax(420px, 1fr);
+  gap: 14px;
+}
+
+.settings-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(420px, 0.9fr) minmax(420px, 1.1fr);
   gap: 14px;
 }
 
@@ -657,6 +669,44 @@ button:disabled {
   padding: 12px;
 }
 
+.suggestion-list,
+.settings-list {
+  display: grid;
+  gap: 10px;
+}
+
+.suggestion-row,
+.settings-row {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e0e7ef;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.suggestion-row p,
+.settings-row p {
+  margin: 6px 0 0;
+  color: #647386;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.suggestion-actions,
+.toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-row {
+  color: #35445a;
+  font-size: 13px;
+  font-weight: 680;
+}
+
 .watch-folder-list {
   display: grid;
   gap: 12px;
@@ -790,12 +840,14 @@ button:disabled {
   .content-grid,
   .export-grid,
   .watched-grid,
+  .settings-grid,
   .field-grid {
     grid-template-columns: 1fr;
   }
 
   .export-toolbar,
-  .watched-toolbar {
+  .watched-toolbar,
+  .settings-toolbar {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
