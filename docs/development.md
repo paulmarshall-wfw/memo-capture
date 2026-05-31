@@ -45,6 +45,14 @@ npm run dev:desktop
 
 The API defaults to `http://127.0.0.1:4788`.
 
+For the native Tauri shell, run:
+
+```bash
+npm run tauri:dev -w @memo-capture/desktop
+```
+
+Tauri dev uses the strict webview URL `http://127.0.0.1:5178` so it does not attach to another local app running on Vite's default port.
+
 ## Verify
 
 ```bash

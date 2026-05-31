@@ -38,6 +38,12 @@ Run the desktop app:
 npm run dev:desktop
 ```
 
+Run the native Tauri shell:
+
+```bash
+npm run tauri:dev -w @memo-capture/desktop
+```
+
 Run the API:
 
 ```bash

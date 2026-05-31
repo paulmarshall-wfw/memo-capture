@@ -37,7 +37,8 @@ Dependencies may not be installed yet in a fresh checkout. Run `npm install` bef
 ## Runtime Notes
 
 - Product shape: Tauri desktop app with a web UI, backed by a TypeScript API and worker.
-- Desktop dev URL: Vite default `http://localhost:5173` unless Vite prints another port.
+- Browser-only desktop dev URL: Vite default `http://localhost:5173` unless Vite prints another port.
+- Tauri desktop dev URL: strict `http://127.0.0.1:5178` from `apps/desktop/src-tauri/tauri.conf.json`.
 - API port: `MEMO_CAPTURE_API_PORT`, default `4788`.
 - API base URL for desktop: `VITE_MEMO_CAPTURE_API_URL`.
 - Data store: Postgres via `DATABASE_URL`.
