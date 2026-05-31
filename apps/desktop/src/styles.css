@@ -452,6 +452,14 @@ button:disabled {
   gap: 14px;
 }
 
+.projects-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(320px, 420px) minmax(560px, 1fr);
+  gap: 14px;
+}
+
 .settings-grid {
   display: grid;
   min-height: 0;
@@ -464,7 +472,7 @@ button:disabled {
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-columns: minmax(560px, 0.82fr);
+  grid-template-columns: minmax(560px, 1fr);
   gap: 14px;
 }
 
@@ -1092,6 +1100,42 @@ button:disabled {
   gap: 12px;
 }
 
+.project-create-panel {
+  align-content: start;
+}
+
+.projects-list-panel {
+  overflow: hidden;
+}
+
+.project-page-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 2px;
+}
+
+.project-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.project-summary-row span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--metadata);
+  background: var(--metadata-soft);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.project-row-compact {
+  gap: 10px;
+  padding: 10px;
+}
+
 .project-editor {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1104,6 +1148,22 @@ button:disabled {
 
 .project-editor textarea {
   min-height: 92px;
+}
+
+.compact-project-editor textarea {
+  min-height: 78px;
+}
+
+.watched-settings-section {
+  gap: 12px;
+}
+
+.watched-candidate-list {
+  gap: 8px;
+}
+
+.compact-empty {
+  min-height: 68px;
 }
 
 .runtime-debugger-panel {
@@ -1444,6 +1504,7 @@ button:disabled {
 
   .content-grid,
   .export-grid,
+  .projects-grid,
   .watched-grid,
   .settings-grid,
   .settings-single-grid,

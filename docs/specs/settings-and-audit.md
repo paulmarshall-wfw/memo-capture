@@ -376,16 +376,25 @@ Dismisses one pending suggestion without creating a work item or changing workfl
 
 ## Settings UI Inventory
 
+Primary navigation pages:
+
+- Work queue
+- Projects
+- Exports
+- Settings
+- Audit
+
+The Projects page owns project create/edit/deactivate controls. Each project exposes name, slug, Synopsis, context, active state, and updated timestamp. Synopsis is stored on the existing project description field.
+
 Settings sections:
 
-- Projects
 - Feature groups
 - Contributors
 - File types
 - Providers
 - Prompts
 - Exports
-- Desktop local paths
+- Watched folders and desktop-local paths
 - System diagnostics
 
 Operations section:

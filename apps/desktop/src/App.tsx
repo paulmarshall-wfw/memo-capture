@@ -49,7 +49,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
-type ActiveView = "work-items" | "audit" | "exports" | "watched-folders" | "settings";
+type ActiveView = "work-items" | "projects" | "exports" | "settings" | "audit";
 type ThemeMode = "light" | "dark";
 type WorkflowRuntimeEventFilter = "journal" | keyof WorkflowEventViews;
 
@@ -387,10 +387,10 @@ const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const primaryNavigation: { id: ActiveView; label: string }[] = [
   { id: "work-items", label: "Work queue" },
-  { id: "audit", label: "Audit" },
+  { id: "projects", label: "Projects" },
   { id: "exports", label: "Exports" },
-  { id: "watched-folders", label: "Watched folders" },
-  { id: "settings", label: "Settings" }
+  { id: "settings", label: "Settings" },
+  { id: "audit", label: "Audit" }
 ];
 
 function createDraft(item: WorkItem): DraftState {
@@ -1064,6 +1064,7 @@ export function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditFilter, setAuditFilter] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectDrafts, setProjectDrafts] = useState<Record<string, ProjectFormState>>({});
   const [newProjectDraft, setNewProjectDraft] = useState<ProjectFormState>(() => createEmptyProjectForm());
   const [projectIdInFlight, setProjectIdInFlight] = useState<string | null>(null);
@@ -1128,6 +1129,8 @@ export function App() {
   const selectedExportCount = filteredExportSnapshots.filter((snapshot) =>
     selectedExportSnapshotIds.has(snapshot.acceptedSnapshotId)
   ).length;
+  const activeProjectCount = projects.filter((project) => project.isActive).length;
+  const inactiveProjectCount = projects.length - activeProjectCount;
   const hasDraftChanges =
     draft !== null &&
     selectedItem !== null &&
@@ -1148,22 +1151,22 @@ export function App() {
   const pageTitle =
     activeView === "exports"
       ? "Exports"
+      : activeView === "projects"
+      ? "Projects"
       : activeView === "audit"
       ? "Audit"
-      : activeView === "watched-folders"
-      ? "Watched folders"
       : activeView === "settings"
       ? "Settings"
       : "Work queue";
   const pageDescription =
     activeView === "exports"
       ? "Accepted snapshots and generated export batches."
+      : activeView === "projects"
+      ? "Project catalog, synopsis, slug, and context."
       : activeView === "audit"
       ? "Application audit history and workflow runtime event-journal debugging."
-      : activeView === "watched-folders"
-      ? "Desktop-local watched folders and import candidates."
       : activeView === "settings"
-      ? "Provider, prompt, settings, and export contract details."
+      ? "Provider, prompt, watched-folder, and export contract details."
       : selectedBucket === null
       ? "No workflow scope is selected."
       : `${selectedBucket.label} scope selected.`;
@@ -1294,6 +1297,16 @@ export function App() {
   }, [accessToken, activeView]);
 
   useEffect(() => {
+    if (accessToken === null || activeView !== "projects") {
+      return;
+    }
+
+    void loadProjects(accessToken).catch((error) => {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load projects.");
+    });
+  }, [accessToken, activeView]);
+
+  useEffect(() => {
     if (accessToken === null || activeView !== "settings") {
       return;
     }
@@ -1327,10 +1340,7 @@ export function App() {
     const itemResponse = await loadWorkItems(token, nextBucketId);
 
     setBuckets(orderedBuckets);
-    setProjects(projectsResponse.projects);
-    setProjectDrafts(
-      Object.fromEntries(projectsResponse.projects.map((project) => [project.id, createProjectForm(project)]))
-    );
+    applyProjects(projectsResponse.projects);
     setFeatureGroups(featureGroupsResponse.featureGroups);
     setContributors(contributorsResponse.contributors);
     setActiveBucketId(nextBucketId);
@@ -1345,6 +1355,25 @@ export function App() {
         ? current
         : itemResponse.workItems[0]?.id ?? null
     );
+  }
+
+  function applyProjects(nextProjects: Project[]) {
+    setProjects(nextProjects);
+    setProjectDrafts(Object.fromEntries(nextProjects.map((project) => [project.id, createProjectForm(project)])));
+  }
+
+  async function loadProjects(token = accessToken): Promise<void> {
+    if (token === null) {
+      return;
+    }
+    setProjectsLoading(true);
+    setStatusMessage(null);
+    try {
+      const projectsResponse = await authedJson<{ projects: Project[] }>(token, "/api/projects");
+      applyProjects(projectsResponse.projects);
+    } finally {
+      setProjectsLoading(false);
+    }
   }
 
   async function refreshBucket(bucketId = activeBucketId): Promise<void> {
@@ -1398,15 +1427,8 @@ export function App() {
     setSettingsLoading(true);
     setStatusMessage(null);
     try {
-      const [settingsResponse, projectsResponse] = await Promise.all([
-        authedJson<SettingsSummary>(token, "/api/settings"),
-        authedJson<{ projects: Project[] }>(token, "/api/projects")
-      ]);
+      const settingsResponse = await authedJson<SettingsSummary>(token, "/api/settings");
       setSettingsSummary(settingsResponse);
-      setProjects(projectsResponse.projects);
-      setProjectDrafts(
-        Object.fromEntries(projectsResponse.projects.map((project) => [project.id, createProjectForm(project)]))
-      );
     } finally {
       setSettingsLoading(false);
     }
@@ -1957,7 +1979,7 @@ export function App() {
         })
       });
       setNewProjectDraft(createEmptyProjectForm());
-      await loadSettings(accessToken);
+      await loadProjects(accessToken);
       setStatusMessage("Project created.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to create project.");
@@ -1991,7 +2013,7 @@ export function App() {
           context: projectDraft.context
         })
       });
-      await loadSettings(accessToken);
+      await loadProjects(accessToken);
       setStatusMessage("Project saved.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to save project.");
@@ -2011,7 +2033,7 @@ export function App() {
       await authedJson(accessToken, `/api/projects/${encodeURIComponent(projectId)}/deactivate`, {
         method: "POST"
       });
-      await loadSettings(accessToken);
+      await loadProjects(accessToken);
       setStatusMessage("Project deactivated.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to deactivate project.");
@@ -2023,8 +2045,8 @@ export function App() {
   function refreshCurrentView() {
     void (activeView === "exports"
       ? loadExports()
-      : activeView === "watched-folders"
-      ? scanWatchedFolders()
+      : activeView === "projects"
+      ? loadProjects()
       : activeView === "settings"
       ? loadSettings()
       : activeView === "audit"
@@ -2174,24 +2196,21 @@ export function App() {
             <p>{pageDescription}</p>
           </div>
           <button
-            className={activeView === "watched-folders" ? "secondary-button" : "icon-button"}
+            className="icon-button"
             type="button"
-            title={activeView === "watched-folders" ? "Scan watched folders" : "Refresh current view"}
-            aria-label={activeView === "watched-folders" ? "Scan watched folders" : "Refresh current view"}
+            title="Refresh current view"
+            aria-label="Refresh current view"
             onClick={refreshCurrentView}
           >
             {activeView === "settings" && settingsLoading ? (
               <RefreshCcw className="spin" size={18} />
+            ) : activeView === "projects" && projectsLoading ? (
+              <RefreshCcw className="spin" size={18} />
             ) : activeView === "audit" && auditLoading ? (
               <RefreshCcw className="spin" size={18} />
-            ) : activeView === "watched-folders" && watchScanInFlight ? (
-              <RefreshCcw className="spin" size={18} />
-            ) : activeView === "watched-folders" ? (
-              <FolderSearch size={18} />
             ) : (
               <RefreshCcw size={18} />
             )}
-            {activeView === "watched-folders" ? "Scan" : null}
           </button>
         </header>
 
@@ -2243,19 +2262,6 @@ export function App() {
             >
               {exportCreating ? <RefreshCcw className="spin" size={18} /> : <PackagePlus size={18} />}
               Create batch
-            </button>
-          </div>
-        ) : activeView === "watched-folders" ? (
-          <div className="toolbar watched-toolbar">
-            <FolderInput size={18} />
-            <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled folders</span>
-            <button className="secondary-button" type="button" onClick={addWatchedFolder}>
-              <Plus size={18} />
-              Add folder
-            </button>
-            <button className="primary-button" type="button" onClick={saveWatchedFolders}>
-              <Save size={18} />
-              Save settings
             </button>
           </div>
         ) : activeView === "audit" ? (
@@ -2780,154 +2786,172 @@ export function App() {
               </div>
             </aside>
           </div>
-        ) : activeView === "watched-folders" ? (
-          <div className="watched-grid">
-            <section className="detail-panel" aria-label="Watched-folder settings">
+        ) : activeView === "projects" ? (
+          <div className="projects-grid">
+            <section className="detail-panel project-create-panel" aria-label="Create project">
               <div className="detail-header">
                 <div>
-                  <p className="eyebrow">Desktop local</p>
-                  <h2>Watched import settings</h2>
+                  <p className="eyebrow">Project catalog</p>
+                  <h2>New project</h2>
                 </div>
-                <FolderInput size={22} />
-              </div>
-              <div className="detail-meta">
-                <span>Machine {machineId ?? "not loaded"}</span>
-                <span>{watchedSettingsSaved ? "Settings saved" : "Unsaved settings allowed"}</span>
+                <FolderOpen size={22} />
               </div>
 
-              {watchedFolders.length === 0 ? (
-                <div className="empty-detail">
-                  <FolderInput size={22} />
-                  <span>No watched folders configured</span>
+              <div className="project-editor compact-project-editor">
+                <div className="field-group">
+                  <label htmlFor="new-project-name">Name</label>
+                  <input
+                    id="new-project-name"
+                    value={newProjectDraft.name}
+                    onChange={(event) => updateNewProjectDraft("name", event.currentTarget.value)}
+                  />
                 </div>
-              ) : null}
+                <div className="field-group">
+                  <label htmlFor="new-project-slug">Slug</label>
+                  <input
+                    id="new-project-slug"
+                    placeholder="Generated from name"
+                    value={newProjectDraft.slug}
+                    onChange={(event) => updateNewProjectDraft("slug", event.currentTarget.value)}
+                  />
+                </div>
+                <div className="field-group project-editor-wide">
+                  <label htmlFor="new-project-description">Synopsis</label>
+                  <textarea
+                    id="new-project-description"
+                    value={newProjectDraft.description}
+                    onChange={(event) => updateNewProjectDraft("description", event.currentTarget.value)}
+                    rows={3}
+                  />
+                </div>
+                <div className="field-group project-editor-wide">
+                  <label htmlFor="new-project-context">Context</label>
+                  <textarea
+                    id="new-project-context"
+                    value={newProjectDraft.context}
+                    onChange={(event) => updateNewProjectDraft("context", event.currentTarget.value)}
+                    rows={4}
+                  />
+                </div>
+              </div>
 
-              <div className="watch-folder-list">
-                {watchedFolders.map((folder) => (
-                  <article className="watch-folder-row" key={folder.id}>
-                    <div className="field-grid">
-                      <div className="field-group">
-                        <label htmlFor={`${folder.id}-path`}>Watched path</label>
-                        <div className="path-picker-field">
-                          <input
-                            id={`${folder.id}-path`}
-                            value={folder.path}
-                            onChange={(event) => updateWatchedFolder(folder.id, "path", event.currentTarget.value)}
-                          />
-                          <button
-                            className="secondary-button icon-only"
-                            type="button"
-                            title="Choose watched folder"
-                            aria-label="Choose watched folder"
-                            onClick={() => void pickWatchedFolderPath(folder.id, "path")}
-                          >
-                            <FolderOpen size={18} />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="field-group">
-                        <label htmlFor={`${folder.id}-archive`}>Archive path</label>
-                        <div className="path-picker-field">
-                          <input
-                            id={`${folder.id}-archive`}
-                            value={folder.archivePath}
-                            onChange={(event) =>
-                              updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
-                            }
-                          />
-                          <button
-                            className="secondary-button icon-only"
-                            type="button"
-                            title="Choose archive folder"
-                            aria-label="Choose archive folder"
-                            onClick={() => void pickWatchedFolderPath(folder.id, "archivePath")}
-                          >
-                            <FolderOpen size={18} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="watch-folder-controls">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={folder.enabled}
-                          onChange={(event) => updateWatchedFolder(folder.id, "enabled", event.currentTarget.checked)}
-                        />
-                        Enabled
-                      </label>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={folder.recursive}
-                          onChange={(event) =>
-                            updateWatchedFolder(folder.id, "recursive", event.currentTarget.checked)
-                          }
-                        />
-                        Recursive
-                      </label>
-                      <div className="field-group compact">
-                        <label htmlFor={`${folder.id}-stability`}>Stability ms</label>
-                        <input
-                          id={`${folder.id}-stability`}
-                          type="number"
-                          min={1000}
-                          step={500}
-                          value={folder.stabilityMs}
-                          onChange={(event) =>
-                            updateWatchedFolder(
-                              folder.id,
-                              "stabilityMs",
-                              Number.parseInt(event.currentTarget.value, 10) || 3000
-                            )
-                          }
-                        />
-                      </div>
-                      <button className="secondary-button icon-only" type="button" onClick={() => removeWatchedFolder(folder.id)}>
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  </article>
-                ))}
+              <div className="detail-actions">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={projectIdInFlight !== null}
+                  onClick={() => void createProject()}
+                >
+                  {projectIdInFlight === "new" ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
+                  Create
+                </button>
               </div>
             </section>
 
-            <section className="item-list" aria-label="Stable watched files">
-              {watchedCandidates.length === 0 ? (
-                <div className="empty-state">
-                  <FolderSearch size={20} />
-                  <span>No stable watched files found</span>
+            <section className="detail-panel projects-list-panel" aria-label="Projects">
+              <div className="project-summary-row">
+                <span>{projects.length} total</span>
+                <span>{activeProjectCount} active</span>
+                <span>{inactiveProjectCount} inactive</span>
+              </div>
+
+              {projects.length === 0 ? (
+                <div className="empty-detail">
+                  <FolderOpen size={22} />
+                  <span>No projects configured</span>
                 </div>
               ) : null}
-              {watchedCandidates.map((candidate) => {
-                const status = candidateStatuses[candidate.path] ?? { state: "idle", message: null };
-                return (
-                  <article className="item-row watched-candidate-row" key={candidate.path}>
-                    <div className="item-row-main">
-                      <div className="item-title-line">
-                        {isAudioExtension(candidate.extension) ? <Headphones size={18} /> : <FileText size={18} />}
-                        <h2>{candidate.filename}</h2>
+
+              <div className="settings-list project-page-list">
+                {projects.map((project) => {
+                  const projectDraft = projectDrafts[project.id] ?? createProjectForm(project);
+                  return (
+                    <article className="settings-row project-settings-row project-row-compact" key={project.id}>
+                      <div className="settings-row-header">
+                        <div>
+                          <div className="batch-title">
+                            <strong>{project.name}</strong>
+                            <span>{project.isActive ? "Active" : "Inactive"}</span>
+                            <span>{project.slug}</span>
+                          </div>
+                          <p>Updated {formatDate(project.updatedAt)}</p>
+                        </div>
+                        <div className="suggestion-actions">
+                          <button
+                            className="row-action-button"
+                            type="button"
+                            disabled={projectIdInFlight !== null}
+                            onClick={() => void saveProject(project.id)}
+                          >
+                            {projectIdInFlight === project.id ? (
+                              <RefreshCcw className="spin" size={16} />
+                            ) : (
+                              <Save size={16} />
+                            )}
+                            Save
+                          </button>
+                          {project.isActive ? (
+                            <button
+                              className="row-action-button warning"
+                              type="button"
+                              disabled={projectIdInFlight !== null}
+                              onClick={() => void deactivateProject(project.id)}
+                            >
+                              <CircleSlash size={16} />
+                              Deactivate
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
-                      <p>{candidate.path}</p>
-                      <div className="item-meta">
-                        <span>{formatBytes(candidate.byteSize)}</span>
-                        <span>Modified {formatDate(candidate.modifiedAt)}</span>
-                        <span>{statusLabel(status.state)}</span>
+
+                      <div className="project-editor">
+                        <div className="field-group">
+                          <label htmlFor={`project-${project.id}-name`}>Name</label>
+                          <input
+                            id={`project-${project.id}-name`}
+                            value={projectDraft.name}
+                            onChange={(event) =>
+                              updateProjectDraft(project.id, "name", event.currentTarget.value)
+                            }
+                          />
+                        </div>
+                        <div className="field-group">
+                          <label htmlFor={`project-${project.id}-slug`}>Slug</label>
+                          <input
+                            id={`project-${project.id}-slug`}
+                            value={projectDraft.slug}
+                            onChange={(event) =>
+                              updateProjectDraft(project.id, "slug", event.currentTarget.value)
+                            }
+                          />
+                        </div>
+                        <div className="field-group project-editor-wide">
+                          <label htmlFor={`project-${project.id}-description`}>Synopsis</label>
+                          <textarea
+                            id={`project-${project.id}-description`}
+                            value={projectDraft.description}
+                            onChange={(event) =>
+                              updateProjectDraft(project.id, "description", event.currentTarget.value)
+                            }
+                            rows={3}
+                          />
+                        </div>
+                        <div className="field-group project-editor-wide">
+                          <label htmlFor={`project-${project.id}-context`}>Context</label>
+                          <textarea
+                            id={`project-${project.id}-context`}
+                            value={projectDraft.context}
+                            onChange={(event) =>
+                              updateProjectDraft(project.id, "context", event.currentTarget.value)
+                            }
+                            rows={4}
+                          />
+                        </div>
                       </div>
-                      {status.message === null ? null : <p className="candidate-message">{status.message}</p>}
-                    </div>
-                    <button
-                      className="primary-button"
-                      type="button"
-                      disabled={status.state === "importing" || status.state === "imported" || status.state === "duplicate"}
-                      onClick={() => void importWatchedCandidate(candidate)}
-                    >
-                      {status.state === "importing" ? <RefreshCcw className="spin" size={18} /> : <Upload size={18} />}
-                      Import
-                    </button>
-                  </article>
-                );
-              })}
+                    </article>
+                  );
+                })}
+              </div>
             </section>
           </div>
         ) : activeView === "settings" ? (
@@ -2948,145 +2972,184 @@ export function App() {
                 </div>
               ) : (
                 <>
-                  <section className="detail-section">
-                    <div className="section-title">
-                      <FolderOpen size={18} />
-                      <h3>Projects</h3>
+                  <section className="detail-section watched-settings-section" aria-label="Watched folders">
+                    <div className="settings-row-header">
+                      <div className="section-title">
+                        <FolderInput size={18} />
+                        <h3>Watched folders</h3>
+                      </div>
+                      <div className="suggestion-actions">
+                        <button className="secondary-button" type="button" onClick={addWatchedFolder}>
+                          <Plus size={18} />
+                          Add folder
+                        </button>
+                        <button className="secondary-button" type="button" onClick={() => void scanWatchedFolders()}>
+                          {watchScanInFlight ? <RefreshCcw className="spin" size={18} /> : <FolderSearch size={18} />}
+                          Scan
+                        </button>
+                        <button className="primary-button" type="button" onClick={saveWatchedFolders}>
+                          <Save size={18} />
+                          Save
+                        </button>
+                      </div>
                     </div>
-                    <div className="settings-list">
-                      <article className="settings-row project-settings-row">
-                        <div className="settings-row-header">
-                          <div>
-                            <div className="batch-title">
-                              <strong>New project</strong>
-                              <span>Controlled list</span>
-                            </div>
-                          </div>
-                          <button
-                            className="row-action-button primary"
-                            type="button"
-                            disabled={projectIdInFlight !== null}
-                            onClick={() => void createProject()}
-                          >
-                            {projectIdInFlight === "new" ? <RefreshCcw className="spin" size={16} /> : <Plus size={16} />}
-                            Create
-                          </button>
-                        </div>
-                        <div className="project-editor">
-                          <div className="field-group">
-                            <label htmlFor="new-project-name">Name</label>
-                            <input
-                              id="new-project-name"
-                              value={newProjectDraft.name}
-                              onChange={(event) => updateNewProjectDraft("name", event.currentTarget.value)}
-                            />
-                          </div>
-                          <div className="field-group">
-                            <label htmlFor="new-project-slug">Slug</label>
-                            <input
-                              id="new-project-slug"
-                              placeholder="Generated from name"
-                              value={newProjectDraft.slug}
-                              onChange={(event) => updateNewProjectDraft("slug", event.currentTarget.value)}
-                            />
-                          </div>
-                          <div className="field-group project-editor-wide">
-                            <label htmlFor="new-project-description">Description</label>
-                            <input
-                              id="new-project-description"
-                              value={newProjectDraft.description}
-                              onChange={(event) => updateNewProjectDraft("description", event.currentTarget.value)}
-                            />
-                          </div>
-                          <div className="field-group project-editor-wide">
-                            <label htmlFor="new-project-context">Context</label>
-                            <textarea
-                              id="new-project-context"
-                              value={newProjectDraft.context}
-                              onChange={(event) => updateNewProjectDraft("context", event.currentTarget.value)}
-                            />
-                          </div>
-                        </div>
-                      </article>
+                    <div className="detail-meta">
+                      <span>Machine {machineId ?? "not loaded"}</span>
+                      <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled</span>
+                      <span>{watchedSettingsSaved ? "Settings saved" : "Unsaved settings allowed"}</span>
+                    </div>
 
-                      {projects.map((project) => {
-                        const projectDraft = projectDrafts[project.id] ?? createProjectForm(project);
-                        return (
-                          <article className="settings-row project-settings-row" key={project.id}>
-                            <div className="settings-row-header">
-                              <div>
-                                <div className="batch-title">
-                                  <strong>{project.name}</strong>
-                                  <span>{project.isActive ? "Active" : "Inactive"}</span>
-                                  <span>{project.slug}</span>
-                                </div>
-                                <p>Updated {formatDate(project.updatedAt)}</p>
-                              </div>
-                              <div className="suggestion-actions">
+                    {watchedFolders.length === 0 ? (
+                      <div className="empty-detail compact-empty">
+                        <FolderInput size={22} />
+                        <span>No watched folders configured</span>
+                      </div>
+                    ) : null}
+
+                    <div className="watch-folder-list">
+                      {watchedFolders.map((folder) => (
+                        <article className="watch-folder-row" key={folder.id}>
+                          <div className="field-grid">
+                            <div className="field-group">
+                              <label htmlFor={`${folder.id}-path`}>Watched path</label>
+                              <div className="path-picker-field">
+                                <input
+                                  id={`${folder.id}-path`}
+                                  value={folder.path}
+                                  onChange={(event) =>
+                                    updateWatchedFolder(folder.id, "path", event.currentTarget.value)
+                                  }
+                                />
                                 <button
-                                  className="row-action-button"
+                                  className="secondary-button icon-only"
                                   type="button"
-                                  disabled={projectIdInFlight !== null}
-                                  onClick={() => void saveProject(project.id)}
+                                  title="Choose watched folder"
+                                  aria-label="Choose watched folder"
+                                  onClick={() => void pickWatchedFolderPath(folder.id, "path")}
                                 >
-                                  {projectIdInFlight === project.id ? (
-                                    <RefreshCcw className="spin" size={16} />
-                                  ) : (
-                                    <Save size={16} />
-                                  )}
-                                  Save
+                                  <FolderOpen size={18} />
                                 </button>
-                                {project.isActive ? (
-                                  <button
-                                    className="row-action-button warning"
-                                    type="button"
-                                    disabled={projectIdInFlight !== null}
-                                    onClick={() => void deactivateProject(project.id)}
-                                  >
-                                    <CircleSlash size={16} />
-                                    Deactivate
-                                  </button>
-                                ) : null}
                               </div>
                             </div>
-                            <div className="project-editor">
-                              <div className="field-group">
-                                <label htmlFor={`project-${project.id}-name`}>Name</label>
+                            <div className="field-group">
+                              <label htmlFor={`${folder.id}-archive`}>Archive path</label>
+                              <div className="path-picker-field">
                                 <input
-                                  id={`project-${project.id}-name`}
-                                  value={projectDraft.name}
-                                  onChange={(event) => updateProjectDraft(project.id, "name", event.currentTarget.value)}
-                                />
-                              </div>
-                              <div className="field-group">
-                                <label htmlFor={`project-${project.id}-slug`}>Slug</label>
-                                <input
-                                  id={`project-${project.id}-slug`}
-                                  value={projectDraft.slug}
-                                  onChange={(event) => updateProjectDraft(project.id, "slug", event.currentTarget.value)}
-                                />
-                              </div>
-                              <div className="field-group project-editor-wide">
-                                <label htmlFor={`project-${project.id}-description`}>Description</label>
-                                <input
-                                  id={`project-${project.id}-description`}
-                                  value={projectDraft.description}
+                                  id={`${folder.id}-archive`}
+                                  value={folder.archivePath}
                                   onChange={(event) =>
-                                    updateProjectDraft(project.id, "description", event.currentTarget.value)
+                                    updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
                                   }
                                 />
-                              </div>
-                              <div className="field-group project-editor-wide">
-                                <label htmlFor={`project-${project.id}-context`}>Context</label>
-                                <textarea
-                                  id={`project-${project.id}-context`}
-                                  value={projectDraft.context}
-                                  onChange={(event) =>
-                                    updateProjectDraft(project.id, "context", event.currentTarget.value)
-                                  }
-                                />
+                                <button
+                                  className="secondary-button icon-only"
+                                  type="button"
+                                  title="Choose archive folder"
+                                  aria-label="Choose archive folder"
+                                  onClick={() => void pickWatchedFolderPath(folder.id, "archivePath")}
+                                >
+                                  <FolderOpen size={18} />
+                                </button>
                               </div>
                             </div>
+                          </div>
+                          <div className="watch-folder-controls">
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={folder.enabled}
+                                onChange={(event) =>
+                                  updateWatchedFolder(folder.id, "enabled", event.currentTarget.checked)
+                                }
+                              />
+                              Enabled
+                            </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={folder.recursive}
+                                onChange={(event) =>
+                                  updateWatchedFolder(folder.id, "recursive", event.currentTarget.checked)
+                                }
+                              />
+                              Recursive
+                            </label>
+                            <div className="field-group compact">
+                              <label htmlFor={`${folder.id}-stability`}>Stability ms</label>
+                              <input
+                                id={`${folder.id}-stability`}
+                                type="number"
+                                min={1000}
+                                step={500}
+                                value={folder.stabilityMs}
+                                onChange={(event) =>
+                                  updateWatchedFolder(
+                                    folder.id,
+                                    "stabilityMs",
+                                    Number.parseInt(event.currentTarget.value, 10) || 3000
+                                  )
+                                }
+                              />
+                            </div>
+                            <button
+                              className="secondary-button icon-only"
+                              type="button"
+                              title="Remove watched folder"
+                              aria-label="Remove watched folder"
+                              onClick={() => removeWatchedFolder(folder.id)}
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+
+                    <div className="settings-list watched-candidate-list">
+                      {watchedCandidates.length === 0 ? (
+                        <div className="empty-state compact-empty">
+                          <FolderSearch size={20} />
+                          <span>No stable watched files found</span>
+                        </div>
+                      ) : null}
+                      {watchedCandidates.map((candidate) => {
+                        const status = candidateStatuses[candidate.path] ?? { state: "idle", message: null };
+                        return (
+                          <article className="item-row watched-candidate-row" key={candidate.path}>
+                            <div className="item-row-main">
+                              <div className="item-title-line">
+                                {isAudioExtension(candidate.extension) ? (
+                                  <Headphones size={18} />
+                                ) : (
+                                  <FileText size={18} />
+                                )}
+                                <h2>{candidate.filename}</h2>
+                              </div>
+                              <p>{candidate.path}</p>
+                              <div className="item-meta">
+                                <span>{formatBytes(candidate.byteSize)}</span>
+                                <span>Modified {formatDate(candidate.modifiedAt)}</span>
+                                <span>{statusLabel(status.state)}</span>
+                              </div>
+                              {status.message === null ? null : <p className="candidate-message">{status.message}</p>}
+                            </div>
+                            <button
+                              className="primary-button"
+                              type="button"
+                              disabled={
+                                status.state === "importing" ||
+                                status.state === "imported" ||
+                                status.state === "duplicate"
+                              }
+                              onClick={() => void importWatchedCandidate(candidate)}
+                            >
+                              {status.state === "importing" ? (
+                                <RefreshCcw className="spin" size={18} />
+                              ) : (
+                                <Upload size={18} />
+                              )}
+                              Import
+                            </button>
                           </article>
                         );
                       })}
