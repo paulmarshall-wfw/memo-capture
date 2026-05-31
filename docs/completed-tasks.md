@@ -97,3 +97,8 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Split debugger control history from workflow runtime events, restored workflow-event filters, made control rows compact with date/time and event name only, expanded the workflow runtime event area, and renamed the step filter to `Checkpoints`.
   Verification: `npm run typecheck -w @memo-capture/desktop` passed; `git diff --check` passed; Chrome verification at `http://127.0.0.1:5175/` confirmed the Audit debugger layout and filters render.
   Traceability: branch `main`, HEAD `9190f57`; changed files include `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, and `docs/completed-tasks.md`.
+
+- Task: Refine Audit events list
+  Outcome: Replaced raw audit event rows with compact single-line user-facing summaries, enriched audit responses with display-safe project/group/file context, and made the Audit events list independently scrollable inside its panel.
+  Verification: `npm run typecheck` passed; `npm test` passed outside the sandbox after allowing local API route tests to bind `127.0.0.1`; `npm run build` passed; `git diff --check` passed; Chrome verification at `http://127.0.0.1:5175/` confirmed single-line rows without UUID/email text and list-level `overflow: auto`.
+  Traceability: branch `main`, HEAD `e794a2a`; changed files include `apps/api/src/repositories/audit.ts`, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, and `docs/completed-tasks.md`.

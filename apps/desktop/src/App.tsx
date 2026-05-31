@@ -337,6 +337,13 @@ interface AuditEvent {
   metadata: Record<string, unknown>;
   redactionApplied: boolean;
   createdAt: string;
+  display?: {
+    title: string | null;
+    originalFilename: string | null;
+    originalPath: string | null;
+    projectName: string | null;
+    featureGroupName: string | null;
+  };
 }
 
 interface WorkflowEventJournalRecordResponse
@@ -616,6 +623,223 @@ function projectWorkflowRuntimeEvents(
   return source.filter((event) => !event.eventType.startsWith("debug_"));
 }
 
+interface AuditSummaryContext {
+  workItemById: Map<string, WorkItem>;
+  projectById: Map<string, Project>;
+  featureGroupById: Map<string, FeatureGroup>;
+}
+
+interface AuditEventSummary {
+  label: string;
+  details: string[];
+  title: string;
+}
+
+function summarizeAuditEvent(event: AuditEvent, context: AuditSummaryContext): AuditEventSummary {
+  const label = auditEventLabel(event);
+  const details = uniqueCompact([
+    auditEventPrimaryObject(event, context),
+    auditEventProjectName(event, context),
+    auditEventFeatureGroupName(event, context),
+    auditEventCountDetail(event)
+  ]);
+
+  return {
+    label,
+    details,
+    title: [label, formatDate(event.createdAt), ...details].join(" | ")
+  };
+}
+
+function auditEventLabel(event: AuditEvent): string {
+  switch (event.eventName) {
+    case "source_memo.created":
+      return "Memo imported";
+    case "source_memo.archive_result_recorded":
+      return "Archive updated";
+    case "work_item.created":
+      return "Memo created";
+    case "work_item.updated":
+      return "Memo updated";
+    case "work_item.workflow_action_executed":
+      return typeof event.metadata.newState === "string"
+        ? `Moved to ${humanizeWorkflowState(event.metadata.newState)}`
+        : "Workflow action";
+    case "work_item.workflow_action_rejected":
+      return "Action unavailable";
+    case "project.created":
+      return "Project created";
+    case "project.updated":
+      return "Project updated";
+    case "project.deactivated":
+      return "Project deactivated";
+    case "feature_group.created":
+      return "Group created";
+    case "feature_group.updated":
+      return "Group updated";
+    case "feature_group.deactivated":
+      return "Group deactivated";
+    case "workflow.imported":
+      return "Workflow imported";
+    case "workflow.import_failed":
+      return "Workflow import failed";
+    case "workflow.activated":
+      return "Workflow activated";
+    case "workflow.activation_blocked":
+      return "Workflow activation blocked";
+    case "workflow.staged_import_discarded":
+      return "Workflow import discarded";
+    case "processing_job.retry_requested":
+      return "Retry requested";
+    case "processing_job.cancel_requested":
+      return "Job cancelled";
+    case "processing_job.failed":
+      return "Job failed";
+    case "processing_job.exhausted":
+      return "Job exhausted";
+    case "export_batch.created":
+      return "Export created";
+    case "export_batch.generation_succeeded":
+      return "Export ready";
+    case "export_batch.generation_failed":
+      return "Export failed";
+    case "export_batch.downloaded":
+      return "Export downloaded";
+    case "ai_expansion.requested":
+      return "AI expansion requested";
+    case "ai_expansion.validation_failed":
+      return "AI output rejected";
+    case "ai_suggestion.created":
+      return "AI idea created";
+    case "ai_suggestion.applied":
+      return "AI idea applied";
+    case "ai_suggestion.dismissed":
+      return "AI idea dismissed";
+    case "provider_config.updated":
+      return "Provider updated";
+    case "prompt_version.created":
+      return "Prompt created";
+    case "prompt_definition.activated_version":
+      return "Prompt activated";
+    case "file_type_setting.updated":
+      return "File type updated";
+    case "extraction_settings.updated":
+      return "Extraction settings updated";
+    case "transcription_settings.updated":
+      return "Transcription settings updated";
+    default:
+      return humanizeAuditEventName(event.eventName);
+  }
+}
+
+function auditEventPrimaryObject(event: AuditEvent, context: AuditSummaryContext): string | null {
+  const filename =
+    trimDisplayValue(event.display?.originalFilename) ??
+    basename(trimDisplayValue(event.display?.originalPath)) ??
+    basename(readStringMetadata(event.metadata, "originalPath")) ??
+    basename(readStringMetadata(event.metadata, "archivePath"));
+  if (filename !== null) {
+    return filename;
+  }
+
+  if (event.subjectType === "project") {
+    return auditEventProjectName(event, context);
+  }
+  if (event.subjectType === "feature_group") {
+    return auditEventFeatureGroupName(event, context);
+  }
+
+  const title =
+    trimDisplayValue(event.display?.title) ??
+    auditEventWorkItem(event, context)?.title ??
+    readStringMetadata(event.metadata, "title");
+  return title;
+}
+
+function auditEventProjectName(event: AuditEvent, context: AuditSummaryContext): string | null {
+  const displayName = trimDisplayValue(event.display?.projectName);
+  if (displayName !== null) {
+    return `Project: ${displayName}`;
+  }
+  if (event.subjectType === "project" && event.subjectId !== null) {
+    const project = context.projectById.get(event.subjectId);
+    return project === undefined ? null : `Project: ${project.name}`;
+  }
+  const workItem = auditEventWorkItem(event, context);
+  if (workItem?.projectId === null || workItem?.projectId === undefined) {
+    return null;
+  }
+  const project = context.projectById.get(workItem.projectId);
+  return project === undefined ? null : `Project: ${project.name}`;
+}
+
+function auditEventFeatureGroupName(event: AuditEvent, context: AuditSummaryContext): string | null {
+  const displayName = trimDisplayValue(event.display?.featureGroupName);
+  if (displayName !== null) {
+    return `Group: ${displayName}`;
+  }
+  if (event.subjectType === "feature_group" && event.subjectId !== null) {
+    const featureGroup = context.featureGroupById.get(event.subjectId);
+    return featureGroup === undefined ? null : `Group: ${featureGroup.name}`;
+  }
+  const workItem = auditEventWorkItem(event, context);
+  if (workItem?.featureGroupId === null || workItem?.featureGroupId === undefined) {
+    return null;
+  }
+  const featureGroup = context.featureGroupById.get(workItem.featureGroupId);
+  return featureGroup === undefined ? null : `Group: ${featureGroup.name}`;
+}
+
+function auditEventWorkItem(event: AuditEvent, context: AuditSummaryContext): WorkItem | null {
+  if (event.workItemId !== null) {
+    return context.workItemById.get(event.workItemId) ?? null;
+  }
+  if (event.subjectType === "work_item" && event.subjectId !== null) {
+    return context.workItemById.get(event.subjectId) ?? null;
+  }
+  return null;
+}
+
+function auditEventCountDetail(event: AuditEvent): string | null {
+  const itemCount = event.metadata.itemCount;
+  if (typeof itemCount === "number") {
+    return `${itemCount} ${itemCount === 1 ? "item" : "items"}`;
+  }
+  return null;
+}
+
+function readStringMetadata(metadata: Record<string, unknown>, key: string): string | null {
+  return trimDisplayValue(typeof metadata[key] === "string" ? metadata[key] : null);
+}
+
+function trimDisplayValue(value: string | null | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed === "" ? null : trimmed;
+}
+
+function basename(value: string | null): string | null {
+  if (value === null) {
+    return null;
+  }
+  return value.split(/[\\/]/).filter(Boolean).at(-1) ?? value;
+}
+
+function uniqueCompact(values: (string | null)[]): string[] {
+  return [...new Set(values.filter((value): value is string => value !== null))];
+}
+
+function humanizeWorkflowState(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
+function humanizeAuditEventName(value: string): string {
+  return value
+    .split(".")
+    .at(-1)
+    ?.replaceAll("_", " ")
+    .replace(/^\w/, (character) => character.toUpperCase()) ?? value;
+}
+
 function MemoWorkflowDebuggerPanel(props: {
   runtime: WorkflowRuntime;
   classNames: Record<string, string>;
@@ -847,6 +1071,7 @@ export function App() {
   const [detailPanelWidth, setDetailPanelWidth] = useState(560);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
+  const workItemById = useMemo(() => new Map(workItems.map((item) => [item.id, item])), [workItems]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const featureGroupById = useMemo(
     () => new Map(featureGroups.map((featureGroup) => [featureGroup.id, featureGroup])),
@@ -2966,7 +3191,7 @@ export function App() {
           </div>
         ) : activeView === "audit" ? (
           <div className="audit-grid">
-            <section className="detail-panel" aria-label="Audit events">
+            <section className="detail-panel audit-events-panel" aria-label="Audit events">
               <div className="detail-header">
                 <div>
                   <p className="eyebrow">Diagnostics</p>
@@ -2980,26 +3205,29 @@ export function App() {
                   <span>No audit events match this filter</span>
                 </div>
               ) : null}
-              <div className="settings-list">
-                {auditEvents.map((event) => (
-                  <article className="settings-row" key={event.id}>
-                    <div>
-                      <div className="batch-title">
-                        <strong>{event.eventName}</strong>
-                        <span>{formatDate(event.createdAt)}</span>
+              <div className="audit-event-list">
+                {auditEvents.map((event) => {
+                  const summary = summarizeAuditEvent(event, {
+                    workItemById,
+                    projectById,
+                    featureGroupById
+                  });
+                  return (
+                    <article className="audit-event-row" key={event.id} title={summary.title}>
+                      <div className="audit-event-line">
+                        <strong>{summary.label}</strong>
+                        <time className="audit-event-time" dateTime={event.createdAt}>
+                          {formatDate(event.createdAt)}
+                        </time>
+                        {summary.details.map((detail) => (
+                          <span className="audit-event-detail" key={detail}>
+                            {detail}
+                          </span>
+                        ))}
                       </div>
-                      <p>
-                        {event.actorEmailSnapshot ?? "System"} changed {event.subjectType}
-                        {event.subjectId === null ? "" : ` ${event.subjectId}`}
-                      </p>
-                      <div className="item-meta">
-                        {event.workItemId === null ? null : <span>Work item {event.workItemId}</span>}
-                        {event.jobId === null ? null : <span>Job {event.jobId}</span>}
-                        {event.redactionApplied ? <span>Redacted</span> : null}
-                      </div>
-                    </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
             </section>
 

@@ -81,17 +81,48 @@ export class AuditRepository {
          work_item_id,
          metadata,
          redaction_applied,
-         created_at
+         audit_events.created_at,
+         coalesce(linked_work_items.title, subject_work_items.title) as display_title,
+         primary_artifacts.original_filename as display_original_filename,
+         linked_source_memos.original_path as display_original_path,
+         coalesce(linked_projects.name, subject_projects.name) as display_project_name,
+         coalesce(linked_feature_groups.name, subject_feature_groups.name) as display_feature_group_name
        from audit_events
-       where ($1::text is null or event_name = $1::text)
-         and ($2::uuid is null or actor_user_id = $2::uuid)
-         and ($3::text is null or subject_type = $3::text)
-         and ($4::text is null or subject_id = $4::text)
-         and ($5::uuid is null or work_item_id = $5::uuid)
-         and ($6::uuid is null or job_id = $6::uuid)
-         and ($7::timestamptz is null or created_at >= $7::timestamptz)
-         and ($8::timestamptz is null or created_at <= $8::timestamptz)
-       order by created_at desc
+       left join work_items linked_work_items
+         on linked_work_items.id = audit_events.work_item_id
+       left join work_items subject_work_items
+         on audit_events.subject_type = 'work_item'
+        and subject_work_items.id::text = audit_events.subject_id
+       left join source_memos linked_source_memos
+         on linked_source_memos.id = coalesce(
+           audit_events.source_memo_id,
+           linked_work_items.source_memo_id,
+           subject_work_items.source_memo_id
+         )
+       left join source_memo_artifacts primary_source_artifacts
+         on primary_source_artifacts.source_memo_id = linked_source_memos.id
+        and primary_source_artifacts.relationship = 'primary_original'
+       left join artifacts primary_artifacts
+         on primary_artifacts.id = primary_source_artifacts.artifact_id
+       left join projects linked_projects
+         on linked_projects.id = coalesce(linked_work_items.project_id, subject_work_items.project_id)
+       left join projects subject_projects
+         on audit_events.subject_type = 'project'
+        and subject_projects.id::text = audit_events.subject_id
+       left join feature_groups linked_feature_groups
+         on linked_feature_groups.id = coalesce(linked_work_items.feature_group_id, subject_work_items.feature_group_id)
+       left join feature_groups subject_feature_groups
+         on audit_events.subject_type = 'feature_group'
+        and subject_feature_groups.id::text = audit_events.subject_id
+       where ($1::text is null or audit_events.event_name = $1::text)
+         and ($2::uuid is null or audit_events.actor_user_id = $2::uuid)
+         and ($3::text is null or audit_events.subject_type = $3::text)
+         and ($4::text is null or audit_events.subject_id = $4::text)
+         and ($5::uuid is null or audit_events.work_item_id = $5::uuid)
+         and ($6::uuid is null or audit_events.job_id = $6::uuid)
+         and ($7::timestamptz is null or audit_events.created_at >= $7::timestamptz)
+         and ($8::timestamptz is null or audit_events.created_at <= $8::timestamptz)
+       order by audit_events.created_at desc
        limit $9`,
       [
         nullIfEmpty(filters.eventName),
@@ -124,6 +155,11 @@ interface AuditEventRow extends Record<string, unknown> {
   metadata: Record<string, unknown>;
   redaction_applied: boolean;
   created_at: Date | string;
+  display_title: string | null;
+  display_original_filename: string | null;
+  display_original_path: string | null;
+  display_project_name: string | null;
+  display_feature_group_name: string | null;
 }
 
 export interface AuditEventRecord {
@@ -141,6 +177,15 @@ export interface AuditEventRecord {
   metadata: Record<string, unknown>;
   redactionApplied: boolean;
   createdAt: string;
+  display: AuditEventDisplay;
+}
+
+export interface AuditEventDisplay {
+  title: string | null;
+  originalFilename: string | null;
+  originalPath: string | null;
+  projectName: string | null;
+  featureGroupName: string | null;
 }
 
 function mapAuditEvent(row: AuditEventRow): AuditEventRecord {
@@ -158,7 +203,14 @@ function mapAuditEvent(row: AuditEventRow): AuditEventRecord {
     workItemId: row.work_item_id,
     metadata: row.metadata,
     redactionApplied: row.redaction_applied,
-    createdAt: toIso(row.created_at)
+    createdAt: toIso(row.created_at),
+    display: {
+      title: row.display_title,
+      originalFilename: row.display_original_filename,
+      originalPath: row.display_original_path,
+      projectName: row.display_project_name,
+      featureGroupName: row.display_feature_group_name
+    }
   };
 }
 

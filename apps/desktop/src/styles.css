@@ -997,6 +997,20 @@ button:disabled {
   gap: 10px;
 }
 
+.audit-event-list {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  align-content: start;
+  gap: 6px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.audit-events-panel {
+  overflow: hidden;
+}
+
 .suggestion-row,
 .settings-row {
   display: grid;
@@ -1013,6 +1027,44 @@ button:disabled {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.audit-event-row {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.audit-event-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.audit-event-line strong {
+  flex: none;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.audit-event-time {
+  flex: none;
+  color: var(--text-subtle);
+  font-weight: 650;
+}
+
+.audit-event-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .suggestion-actions,
