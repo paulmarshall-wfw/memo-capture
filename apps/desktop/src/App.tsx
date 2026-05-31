@@ -38,7 +38,8 @@ import {
   Search,
   Settings,
   Sun,
-  Trash2
+  Trash2,
+  X
 } from "lucide-react";
 import { MEMO_CAPTURE_EXPORT_SCHEMA_VERSION } from "@memo-capture/domain";
 
@@ -166,7 +167,19 @@ interface DraftState {
   projectId: string;
   contributorId: string;
   contributorText: string;
-  tagsText: string;
+  tags: string[];
+  tagInput: string;
+}
+
+interface TagSuggestionRows {
+  strong: string[];
+  related: string[];
+  weak: string[];
+}
+
+interface TagSuggestionResponse {
+  workItemId: string;
+  suggestions: TagSuggestionRows;
 }
 
 interface ExportableSnapshot {
@@ -434,7 +447,8 @@ function createDraft(item: WorkItem): DraftState {
     projectId: item.projectId ?? "",
     contributorId: item.contributorId ?? "",
     contributorText: item.contributorText ?? "",
-    tagsText: item.tags.join(", ")
+    tags: normalizeTagList(item.tags),
+    tagInput: ""
   };
 }
 
@@ -453,8 +467,26 @@ function parseTagsText(value: string): string[] {
   return tags;
 }
 
-function normalizeTagsText(value: string): string {
-  return parseTagsText(value).join(", ");
+function normalizeTagList(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const tag of tags) {
+    const cleaned = tag.trim().replace(/\s+/g, " ");
+    const key = cleaned.toLowerCase();
+    if (cleaned === "" || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalized.push(cleaned);
+  }
+  return normalized.slice(0, 20);
+}
+
+function normalizeTagsForCompare(tags: string[]): string {
+  return normalizeTagList(tags)
+    .map((tag) => tag.toLowerCase())
+    .sort()
+    .join("|");
 }
 
 function createEmptyProjectForm(): ProjectFormState {
@@ -1046,6 +1078,26 @@ function DebuggerEventDetail(props: { event: WorkflowEventJournalRecord }): Reac
   );
 }
 
+function TagSuggestionRow(props: {
+  label: string;
+  tags: string[];
+  onSelect(tags: string[]): void;
+}): ReactElement {
+  return (
+    <div className="tag-suggestion-row">
+      <span className="tag-suggestion-label">{props.label}</span>
+      <div className="tag-suggestion-list">
+        {props.tags.length === 0 ? <span className="tag-empty">None</span> : null}
+        {props.tags.map((tag) => (
+          <button className="tag-chip" type="button" key={tag} onClick={() => props.onSelect([tag])}>
+            {tag}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [activeView, setActiveView] = useState<ActiveView>("work-items");
@@ -1081,6 +1133,7 @@ export function App() {
   const [audioLoadState, setAudioLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [transcriptSaving, setTranscriptSaving] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([]);
+  const [tagSuggestions, setTagSuggestions] = useState<TagSuggestionRows>({ strong: [], related: [], weak: [] });
   const [aiExpanding, setAiExpanding] = useState(false);
   const [suggestionIdInFlight, setSuggestionIdInFlight] = useState<string | null>(null);
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
@@ -1118,6 +1171,15 @@ export function App() {
     const fileTypes = settingsSummary?.fileTypes ?? [];
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
+  const visibleTagSuggestions = useMemo(() => {
+    const selectedNames = new Set((draft?.tags ?? []).map((tag) => tag.trim().toLowerCase()));
+    const filterRow = (tags: string[]) => tags.filter((tag) => !selectedNames.has(tag.trim().toLowerCase()));
+    return {
+      strong: filterRow(tagSuggestions.strong),
+      related: filterRow(tagSuggestions.related),
+      weak: filterRow(tagSuggestions.weak)
+    };
+  }, [draft?.tags, tagSuggestions]);
   const visibleActions = actions.filter((action) => action.visible && !action.requiresInput);
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1174,7 +1236,7 @@ export function App() {
       draft.projectId !== (selectedItem.projectId ?? "") ||
       draft.contributorId !== (selectedItem.contributorId ?? "") ||
       draft.contributorText !== (selectedItem.contributorText ?? "") ||
-      normalizeTagsText(draft.tagsText) !== selectedItem.tags.join(", "));
+      normalizeTagsForCompare(draft.tags) !== normalizeTagsForCompare(selectedItem.tags));
   const audioArtifact =
     selectedDiagnostics?.artifacts.find((artifact) => artifact.artifactKind === "original_audio_file") ?? null;
   const transcriptArtifacts =
@@ -1274,6 +1336,7 @@ export function App() {
 
   useEffect(() => {
     if (accessToken === null || selectedItemId === null) {
+      setTagSuggestions({ strong: [], related: [], weak: [] });
       return;
     }
 
@@ -1282,21 +1345,26 @@ export function App() {
     let cancelled = false;
     async function loadSelectedItem() {
       try {
-        const [detailResponse, actionsResponse, diagnosticsResponse, suggestionsResponse] = await Promise.all([
-          authedJson<{ workItem: WorkItem }>(token, `/api/work-items/${encodeURIComponent(workItemId)}`),
-          authedJson<{ actions: AllowedWorkflowAction[] }>(
-            token,
-            `/api/work-items/${encodeURIComponent(workItemId)}/actions`
-          ),
-          authedJson<WorkItemDiagnostics>(
-            token,
-            `/api/work-items/${encodeURIComponent(workItemId)}/diagnostics`
-          ),
-          authedJson<{ suggestions: AiSuggestion[] }>(
-            token,
-            `/api/work-items/${encodeURIComponent(workItemId)}/ai-suggestions`
-          )
-        ]);
+        const [detailResponse, actionsResponse, diagnosticsResponse, suggestionsResponse, tagSuggestionResponse] =
+          await Promise.all([
+            authedJson<{ workItem: WorkItem }>(token, `/api/work-items/${encodeURIComponent(workItemId)}`),
+            authedJson<{ actions: AllowedWorkflowAction[] }>(
+              token,
+              `/api/work-items/${encodeURIComponent(workItemId)}/actions`
+            ),
+            authedJson<WorkItemDiagnostics>(
+              token,
+              `/api/work-items/${encodeURIComponent(workItemId)}/diagnostics`
+            ),
+            authedJson<{ suggestions: AiSuggestion[] }>(
+              token,
+              `/api/work-items/${encodeURIComponent(workItemId)}/ai-suggestions`
+            ),
+            authedJson<TagSuggestionResponse>(
+              token,
+              `/api/work-items/${encodeURIComponent(workItemId)}/tag-suggestions`
+            )
+          ]);
         if (cancelled) {
           return;
         }
@@ -1305,6 +1373,7 @@ export function App() {
         setActions(actionsResponse.actions);
         setSelectedDiagnostics(diagnosticsResponse);
         setAiSuggestions(suggestionsResponse.suggestions);
+        setTagSuggestions(tagSuggestionResponse.suggestions);
         setAudioObjectUrl((current) => {
           if (current !== null) {
             URL.revokeObjectURL(current);
@@ -1594,6 +1663,7 @@ export function App() {
     setSelectedItem(null);
     setDraft(null);
     setActions([]);
+    setTagSuggestions({ strong: [], related: [], weak: [] });
     setStatusMessage(null);
     try {
       const itemResponse = await loadWorkItems(accessToken, bucketId);
@@ -1624,13 +1694,18 @@ export function App() {
             projectId: draft.projectId,
             contributorId: draft.contributorId,
             contributorText: draft.contributorText,
-            tags: parseTagsText(draft.tagsText)
+            tags: draft.tags
           })
         }
       );
       setSelectedItem(response.workItem);
       setDraft(createDraft(response.workItem));
       setWorkItems((items) => items.map((item) => (item.id === response.workItem.id ? response.workItem : item)));
+      const tagSuggestionResponse = await authedJson<TagSuggestionResponse>(
+        accessToken,
+        `/api/work-items/${encodeURIComponent(response.workItem.id)}/tag-suggestions`
+      );
+      setTagSuggestions(tagSuggestionResponse.suggestions);
       setSaveState("saved");
       await refreshBucket();
     } catch (error) {
@@ -1695,6 +1770,47 @@ export function App() {
     if (saveState === "saved" || saveState === "conflict") {
       setSaveState("idle");
     }
+  }
+
+  function addDraftTags(tags: string[]) {
+    const nextTags = normalizeTagList(tags);
+    if (nextTags.length === 0) {
+      return;
+    }
+    setDraft((current) =>
+      current === null ? current : { ...current, tags: normalizeTagList([...current.tags, ...nextTags]), tagInput: "" }
+    );
+    if (saveState === "saved" || saveState === "conflict") {
+      setSaveState("idle");
+    }
+  }
+
+  function removeDraftTag(tagToRemove: string) {
+    const normalizedToRemove = tagToRemove.trim().toLowerCase();
+    setDraft((current) =>
+      current === null
+        ? current
+        : { ...current, tags: current.tags.filter((tag) => tag.trim().toLowerCase() !== normalizedToRemove) }
+    );
+    if (saveState === "saved" || saveState === "conflict") {
+      setSaveState("idle");
+    }
+  }
+
+  function handleTagInputChange(value: string) {
+    if (value.includes(",")) {
+      addDraftTags(parseTagsText(value));
+      return;
+    }
+    updateDraft("tagInput", value);
+  }
+
+  function handleTagInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    addDraftTags(parseTagsText(event.currentTarget.value));
   }
 
   function addWatchedFolder() {
@@ -2522,7 +2638,9 @@ export function App() {
                     </div>
                     <div className="item-meta item-meta-column" aria-label="Project, tags, and contributor">
                       <span>{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
-                      {item.tags.length === 0 ? null : <span>{item.tags.slice(0, 3).join(", ")}</span>}
+                      {item.tags.slice(0, 3).map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
                       {item.contributorText !== null || item.contributorId !== null ? (
                         <span>
                           {item.contributorText ??
@@ -2621,13 +2739,59 @@ export function App() {
                   </div>
 
                   <div className="field-group">
-                    <label htmlFor="work-item-tags">Tags</label>
-                    <input
-                      id="work-item-tags"
-                      value={draft.tagsText}
-                      onChange={(event) => updateDraft("tagsText", event.currentTarget.value)}
-                      placeholder="keyword, grouping, topic"
-                    />
+                    <label htmlFor="work-item-tag-input">Tags</label>
+                    <div className="tag-editor">
+                      <div className="tag-chip-list" aria-label="Selected tags">
+                        {draft.tags.length === 0 ? <span className="tag-empty">No tags</span> : null}
+                        {draft.tags.map((tag) => (
+                          <button
+                            className="tag-chip selected"
+                            type="button"
+                            key={tag}
+                            onClick={() => removeDraftTag(tag)}
+                            title={`Remove ${tag}`}
+                          >
+                            <span>{tag}</span>
+                            <X size={14} />
+                          </button>
+                        ))}
+                      </div>
+                      <div className="tag-input-row">
+                        <input
+                          id="work-item-tag-input"
+                          value={draft.tagInput}
+                          onChange={(event) => handleTagInputChange(event.currentTarget.value)}
+                          onKeyDown={handleTagInputKeyDown}
+                          placeholder="Add tag"
+                        />
+                        <button
+                          className="icon-button"
+                          type="button"
+                          disabled={parseTagsText(draft.tagInput).length === 0}
+                          onClick={() => addDraftTags(parseTagsText(draft.tagInput))}
+                          title="Add tag"
+                        >
+                          <Plus size={17} />
+                        </button>
+                      </div>
+                      <div className="tag-suggestion-rows" aria-label="Tag suggestions">
+                        <TagSuggestionRow
+                          label="Strong grouping tags"
+                          tags={visibleTagSuggestions.strong}
+                          onSelect={addDraftTags}
+                        />
+                        <TagSuggestionRow
+                          label="Related tags"
+                          tags={visibleTagSuggestions.related}
+                          onSelect={addDraftTags}
+                        />
+                        <TagSuggestionRow
+                          label="Weak matches"
+                          tags={visibleTagSuggestions.weak}
+                          onSelect={addDraftTags}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 

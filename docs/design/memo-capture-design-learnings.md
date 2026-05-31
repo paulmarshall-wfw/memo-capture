@@ -40,6 +40,8 @@ Project names are controlled. Below project, the app uses tags/keywords and deri
 
 Contributor attribution is memo metadata, not authorization. Authenticated user identity is separate and is used for audit and backend access.
 
+Tag editing is flat in V1. The memo detail panel should show selected tags as removable chips and should offer three rows of tag suggestions: strongest grouping tags, related tags, and weak matches. These rows represent relative usefulness for the current memo, not a stored hierarchy. The UI should not distinguish generated tags from user-entered tags once they are available for selection or assigned to a memo.
+
 ## Ingestion Model
 
 Supported V1 ingestion channels:

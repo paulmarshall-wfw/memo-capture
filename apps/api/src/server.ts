@@ -448,6 +448,12 @@ function matchProtectedRoute(
       services.diagnostics.getWorkItemDiagnostics(decodeURIComponent(workItemDiagnosticsMatch[1] ?? ""));
   }
 
+  const workItemTagSuggestionsMatch = /^\/api\/work-items\/([^/]+)\/tag-suggestions$/.exec(pathname);
+  if (method === "GET" && workItemTagSuggestionsMatch !== null) {
+    return async () =>
+      services.workItems.getTagSuggestions(decodeURIComponent(workItemTagSuggestionsMatch[1] ?? ""));
+  }
+
   if (method === "PATCH" && workItemDetailMatch !== null) {
     return async (context, session) => ({
       workItem: await services.workItems.update(

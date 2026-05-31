@@ -315,6 +315,12 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(workItemDetail.response.status, 200);
     assert.equal(workItemDetail.body.workItem.title, "Captured memo");
 
+    const tagSuggestions = await authedJson(baseUrl, "/api/work-items/work-item-1/tag-suggestions");
+    assert.equal(tagSuggestions.response.status, 200);
+    assert.deepEqual(tagSuggestions.body.suggestions.strong, ["capture workflow"]);
+    assert.deepEqual(tagSuggestions.body.suggestions.related, ["review queue"]);
+    assert.deepEqual(tagSuggestions.body.suggestions.weak, ["local dev"]);
+
     const workItemPatch = await authedJson(baseUrl, "/api/work-items/work-item-1", {
       method: "PATCH",
       body: JSON.stringify({
@@ -724,6 +730,7 @@ function stubServices(): AppServices {
     workItems: {
       list: async () => [],
       findById: async () => null,
+      getTagSuggestions: async () => ({ workItemId: "missing", suggestions: { strong: [], related: [], weak: [] } }),
       recoverTranscript: async () => {
         throw new Error("not used");
       }
@@ -1347,6 +1354,14 @@ function captureRouteServices(): AppServices {
     workItems: {
       list: async () => [workItem],
       findById: async (workItemId: string) => (workItemId === workItem.id ? workItem : null),
+      getTagSuggestions: async () => ({
+        workItemId: workItem.id,
+        suggestions: {
+          strong: ["capture workflow"],
+          related: ["review queue"],
+          weak: ["local dev"]
+        }
+      }),
       update: async (_workItemId: string, body: unknown) => {
         const record = body as { expectedVersion?: number };
         if (record.expectedVersion !== workItem.workflowItemVersion) {

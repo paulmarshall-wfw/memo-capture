@@ -16,7 +16,7 @@ import { ImportService, type FinalizeUploadSessionResponse, type UploadSessionRe
 import { JobService } from "./jobs.js";
 import { ObjectStorageService } from "./object-storage.js";
 import { SettingsService } from "./settings.js";
-import { WorkItemService } from "./work-items.js";
+import { WorkItemService, type TagSuggestionResponse } from "./work-items.js";
 import { WorkflowService } from "./workflows.js";
 import { AuditRepository } from "../repositories/audit.js";
 
@@ -116,6 +116,7 @@ export interface DiagnosticsOperations {
 export interface WorkItemOperations {
   list(input?: { bucketId?: string | null }): Promise<WorkItemRecord[]>;
   findById(workItemId: string): Promise<WorkItemRecord | null>;
+  getTagSuggestions(workItemId: string): Promise<TagSuggestionResponse>;
   update(
     workItemId: string,
     body: unknown,

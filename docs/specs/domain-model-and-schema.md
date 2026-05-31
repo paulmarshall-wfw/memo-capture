@@ -311,6 +311,7 @@ Constraints:
 - unique normalized tag name
 - primary key `(work_item_id, tag_id)`
 - derived tag statistics and co-occurrence rows are recalculated metadata, not canonical hierarchy.
+- tag suggestion rows are UI ranking bands derived from memo text and tag statistics; they are not persisted as hierarchy.
 
 ### import_events
 

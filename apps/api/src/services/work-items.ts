@@ -4,7 +4,12 @@ import { AuditRepository } from "../repositories/audit.js";
 import { ArtifactRepository } from "../repositories/artifacts.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { SourceMemoArtifactRepository, SourceMemoRepository } from "../repositories/source-memos.js";
-import { TagRepository } from "../repositories/tags.js";
+import {
+  TagRepository,
+  normalizeTagName,
+  type TagSuggestionCandidate
+} from "../repositories/tags.js";
+import { extractKeywords } from "./keywords.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { WorkflowRepository } from "../repositories/workflows.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
@@ -40,6 +45,25 @@ export class WorkItemService {
 
   async findById(workItemId: string): Promise<WorkItemRecord | null> {
     return new WorkItemRepository(this.db).findById(workItemId);
+  }
+
+  async getTagSuggestions(workItemId: string): Promise<TagSuggestionResponse> {
+    const workItem = await new WorkItemRepository(this.db).findById(workItemId);
+    if (workItem === null) {
+      throw new HttpError(404, "not_found", "work_item was not found.");
+    }
+
+    const sourceMemo = await new SourceMemoRepository(this.db).findById(workItem.sourceMemoId);
+    const candidates = await new TagRepository(this.db).listSuggestionCandidates({
+      projectId: workItem.projectId,
+      selectedTagNames: workItem.tags
+    });
+
+    return buildTagSuggestionResponse({
+      workItem,
+      sourceText: [sourceMemo?.extractedText ?? "", sourceMemo?.currentTranscriptText ?? ""].join("\n"),
+      candidates
+    });
   }
 
   async update(
@@ -207,6 +231,125 @@ export class WorkItemService {
     });
   }
 }
+
+export interface TagSuggestionResponse {
+  workItemId: string;
+  suggestions: {
+    strong: string[];
+    related: string[];
+    weak: string[];
+  };
+}
+
+export function buildTagSuggestionResponse(input: {
+  workItem: Pick<WorkItemRecord, "id" | "title" | "body" | "tags">;
+  sourceText: string;
+  candidates: TagSuggestionCandidate[];
+}): TagSuggestionResponse {
+  const selectedNames = new Set(input.workItem.tags.map(normalizeTagName));
+  const rawText = [input.workItem.title, input.workItem.body, input.sourceText].join("\n");
+  const normalizedText = normalizeTagName(rawText);
+  const textKeywords = extractKeywords(rawText);
+  const keywordByName = new Map(textKeywords.map((keyword) => [normalizeTagName(keyword.name), keyword]));
+  const candidateByName = new Map<string, ScoredTagSuggestion>();
+
+  for (const candidate of input.candidates) {
+    if (selectedNames.has(candidate.normalizedName)) {
+      continue;
+    }
+    candidateByName.set(
+      candidate.normalizedName,
+      scoreTagSuggestion(
+        candidate,
+        keywordByName.get(candidate.normalizedName),
+        normalizedText.includes(candidate.normalizedName)
+      )
+    );
+  }
+
+  for (const keyword of textKeywords) {
+    const normalizedName = normalizeTagName(keyword.name);
+    if (selectedNames.has(normalizedName) || candidateByName.has(normalizedName)) {
+      continue;
+    }
+    candidateByName.set(
+      normalizedName,
+      scoreTagSuggestion(
+        {
+          name: keyword.name,
+          normalizedName,
+          documentCount: 0,
+          totalItemCount: 0,
+          projectDocumentCount: 0,
+          selectedCoDocumentCount: 0
+        },
+        keyword
+      )
+    );
+  }
+
+  const ranked = [...candidateByName.values()]
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+    .slice(0, 24);
+  const strongCount = Math.min(8, Math.ceil(ranked.length / 3));
+  const relatedCount = Math.min(8, Math.ceil((ranked.length - strongCount) / 2));
+
+  return {
+    workItemId: input.workItem.id,
+    suggestions: {
+      strong: ranked.slice(0, strongCount).map((candidate) => candidate.name),
+      related: ranked.slice(strongCount, strongCount + relatedCount).map((candidate) => candidate.name),
+      weak: ranked.slice(strongCount + relatedCount, strongCount + relatedCount + 8).map((candidate) => candidate.name)
+    }
+  };
+}
+
+interface ScoredTagSuggestion {
+  name: string;
+  score: number;
+}
+
+function scoreTagSuggestion(
+  candidate: TagSuggestionCandidate,
+  keyword: ReturnType<typeof extractKeywords>[number] | undefined,
+  exactTextMatch = false
+): ScoredTagSuggestion {
+  const genericPenalty = GENERIC_TAG_NAMES.has(candidate.normalizedName) ? 24 : 0;
+  const keywordScore =
+    keyword === undefined ? 0 : keyword.confidence * 54 + Math.min(keyword.itemCount, 5) * 5 + keyword.frequencyBand * 3;
+  const score =
+    keywordScore +
+    (exactTextMatch ? 48 : 0) +
+    Math.min(candidate.projectDocumentCount, 12) * 5 +
+    Math.min(candidate.selectedCoDocumentCount, 12) * 7 +
+    Math.min(candidate.documentCount, 24) * 1.5 +
+    Math.min(candidate.totalItemCount, 40) * 0.5 -
+    genericPenalty;
+
+  return {
+    name: candidate.name,
+    score
+  };
+}
+
+const GENERIC_TAG_NAMES = new Set([
+  "feature",
+  "features",
+  "general",
+  "idea",
+  "ideas",
+  "local",
+  "memo",
+  "misc",
+  "note",
+  "notes",
+  "other",
+  "test",
+  "tests",
+  "todo",
+  "user"
+]);
 
 async function createSnapshotForAcceptedEdit(input: {
   updated: WorkItemRecord;

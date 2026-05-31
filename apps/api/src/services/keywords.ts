@@ -98,7 +98,7 @@ interface ExtractedKeyword {
 
 export function extractKeywords(text: string): ExtractedKeyword[] {
   const counts = new Map<string, { name: string; count: number }>();
-  const phrases = text.match(/\b[A-Z][a-z0-9]+(?:\s+[A-Z][a-z0-9]+){0,3}\b/g) ?? [];
+  const phrases = text.match(/\b[A-Z][a-z0-9]+(?:[ \t]+[A-Z][a-z0-9]+){0,3}\b/g) ?? [];
   for (const phrase of phrases) {
     addCandidate(counts, phrase);
   }

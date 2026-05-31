@@ -16,5 +16,8 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /toggleFileType/);
   assert.match(appSource, /Add file type/);
   assert.match(appSource, /Needs parser support/);
+  assert.match(appSource, /Strong grouping tags/);
+  assert.match(appSource, /Related tags/);
+  assert.match(appSource, /Weak matches/);
   assert.doesNotMatch(appSource, />\s*Import\s*</);
 });
