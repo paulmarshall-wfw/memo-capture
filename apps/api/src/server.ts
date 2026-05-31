@@ -429,6 +429,36 @@ function matchProtectedRoute(
     return async () => services.workflows.getBuckets();
   }
 
+  if (method === "GET" && pathname === "/api/workflow/debugger/snapshot") {
+    return async (context) =>
+      services.workflows.getDebuggerSnapshot(readDebuggerItemRef(context.url.searchParams));
+  }
+
+  if (method === "POST" && pathname === "/api/workflow/debugger/start") {
+    return async (context, session) =>
+      services.workflows.startDebugger(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  if (method === "POST" && pathname === "/api/workflow/debugger/pause") {
+    return async (context, session) =>
+      services.workflows.pauseDebugger(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  if (method === "POST" && pathname === "/api/workflow/debugger/resume") {
+    return async (context, session) =>
+      services.workflows.resumeDebugger(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  if (method === "POST" && pathname === "/api/workflow/debugger/step") {
+    return async (context, session) =>
+      services.workflows.stepDebugger(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  if (method === "POST" && pathname === "/api/workflow/debugger/stop") {
+    return async (context, session) =>
+      services.workflows.stopDebugger(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
   const workItemDetailMatch = /^\/api\/work-items\/([^/]+)$/.exec(pathname);
   if (method === "GET" && workItemDetailMatch !== null) {
     return async () => ({
@@ -679,6 +709,17 @@ function readRequestId(request: IncomingMessage): string {
 
 function normalizeHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function readDebuggerItemRef(searchParams: URLSearchParams):
+  | { resourceType: string; resourceId: string }
+  | undefined {
+  const resourceType = searchParams.get("resourceType")?.trim();
+  const resourceId = searchParams.get("resourceId")?.trim();
+  if (resourceType === undefined || resourceId === undefined || resourceType === "" || resourceId === "") {
+    return undefined;
+  }
+  return { resourceType, resourceId };
 }
 
 function corsHeaders(): Record<string, string> {

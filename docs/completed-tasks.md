@@ -87,3 +87,13 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Added Settings project create/edit/deactivate controls, moved audit events to a new top-level Audit page, and mounted the generic `@state-workflow/debugger-react` event-journal debugger with a Memo Capture audit-event adapter.
   Verification: `npm run typecheck`, `npm run build`, and `npm run verify` passed; Chrome verification at `http://127.0.0.1:5176/` confirmed Audit events render in the left panel and the event-journal debugger renders in the right panel.
   Traceability: branch `main`, HEAD `fdfba67`; changed files include `apps/desktop/package.json`, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `apps/desktop/vite.config.ts`, `package-lock.json`, and `docs/completed-tasks.md`.
+
+- Task: Wire runtime debugger controls to backend execution
+  Outcome: Added a backend workflow debugger service, protected debugger snapshot/control endpoints, runtime journal events around workflow action execution, and step-mode wait points so Audit debugger controls command backend runtime execution instead of only changing frontend state.
+  Verification: `npm run typecheck -w @memo-capture/api` passed; `npm run typecheck -w @memo-capture/desktop` passed; `npm run test -w @memo-capture/api` passed outside the sandbox because route tests bind `127.0.0.1`.
+  Traceability: branch `main`, HEAD `9190f57`; changed files include `apps/api/src/services/workflow-debugger.ts`, `apps/api/src/services/workflows.ts`, `apps/api/src/server.ts`, `apps/api/tests/workflow-runtime.test.ts`, `apps/api/tests/backend-foundation.test.ts`, `apps/desktop/src/App.tsx`, `docs/specs/workflow-runtime-integration.md`, and `docs/completed-tasks.md`.
+
+- Task: Refine workflow debugger event layout
+  Outcome: Split debugger control history from workflow runtime events, restored workflow-event filters, made control rows compact with date/time and event name only, expanded the workflow runtime event area, and renamed the step filter to `Checkpoints`.
+  Verification: `npm run typecheck -w @memo-capture/desktop` passed; `git diff --check` passed; Chrome verification at `http://127.0.0.1:5175/` confirmed the Audit debugger layout and filters render.
+  Traceability: branch `main`, HEAD `9190f57`; changed files include `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, and `docs/completed-tasks.md`.

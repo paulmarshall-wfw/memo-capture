@@ -12,6 +12,7 @@ import {
   type WorkflowActionResult,
   type WorkflowValidationResult
 } from "./workflow-runtime.js";
+import { WorkflowDebuggerService, type WorkflowDebuggerItemRef, type WorkflowDebuggerSnapshot } from "./workflow-debugger.js";
 
 export interface WorkflowStatusResult {
   active: WorkflowActiveSummary | null;
@@ -29,7 +30,11 @@ export interface WorkflowActiveSummary {
 export class WorkflowService {
   private readonly runtime = new WorkflowRuntimeAdapter();
 
-  constructor(private readonly db: Database, private readonly authMode: AuthMode) {}
+  constructor(
+    private readonly db: Database,
+    private readonly authMode: AuthMode,
+    private readonly debuggerService = new WorkflowDebuggerService()
+  ) {}
 
   async getStatus(): Promise<WorkflowStatusResult> {
     const active = await new WorkflowRepository(this.db).getActive();
@@ -270,6 +275,18 @@ export class WorkflowService {
     allowedActions: AllowedWorkflowAction[];
   }> {
     const input = parseExecuteActionBody(requestBody);
+    const operationId = requestId;
+    const itemRef = workItemRef(workItemId);
+
+    await this.debuggerService.runtimeStep({
+      eventType: "runtime_step",
+      severity: "debug",
+      message: `Workflow action ${actionId} requested.`,
+      itemRef,
+      operationId,
+      actorId: actor.id,
+      actionId
+    });
 
     return this.db.transaction(async (client) => {
       const workflows = new WorkflowRepository(client);
@@ -287,8 +304,35 @@ export class WorkflowService {
         });
       }
 
+      await this.debuggerService.runtimeStep({
+        eventType: "runtime_step",
+        severity: "debug",
+        message: "Workflow action validation started.",
+        itemRef,
+        operationId,
+        actorId: actor.id,
+        actionId,
+        metadata: {
+          workflowId: active.workflow_id,
+          workflowVersion: active.workflow_version,
+          workflowState: current.workflowState
+        }
+      });
       const action = this.runtime.executeAction(active.bundle, current.workflowState, actionId);
       if (action === null) {
+        this.debuggerService.recordEvent({
+          eventType: "action_rejected",
+          severity: "warn",
+          message: `Workflow action ${actionId} is not allowed from ${current.workflowState}.`,
+          itemRef,
+          operationId,
+          actorId: actor.id,
+          actionId,
+          metadata: {
+            workflowState: current.workflowState,
+            reason: "action_not_allowed"
+          }
+        });
         await audit.record({
           eventName: "work_item.workflow_action_rejected",
           actor,
@@ -312,6 +356,30 @@ export class WorkflowService {
         throw new HttpError(400, "workflow_action_input_required", "Workflow action input must be an object.");
       }
 
+      this.debuggerService.recordEvent({
+        eventType: "action_allowed",
+        severity: "debug",
+        message: `Workflow action ${action.actionId} is allowed.`,
+        itemRef,
+        operationId,
+        actorId: actor.id,
+        actionId: action.actionId,
+        metadata: {
+          previousState: action.previousState,
+          newState: action.newState,
+          requiresInput: action.requiresInput,
+          confirmationRequired: action.confirmationRequired
+        }
+      });
+      await this.debuggerService.runtimeStep({
+        eventType: "runtime_step",
+        severity: "debug",
+        message: `Committing transition from ${action.previousState} to ${action.newState}.`,
+        itemRef,
+        operationId,
+        actorId: actor.id,
+        actionId: action.actionId
+      });
       const updated = await workItems.updateWorkflowState({
         workItemId: current.id,
         expectedVersion: current.workflowItemVersion,
@@ -322,11 +390,32 @@ export class WorkflowService {
         throw new HttpError(409, "stale_work_item_version", "Work item version is stale.");
       }
 
+      const transitionId = `${updated.id}:${action.previousState}:${action.newState}:${updated.workflowItemVersion}`;
+      this.debuggerService.recordEvent({
+        eventType: "transition_committed",
+        severity: "info",
+        message: `Transition committed from ${action.previousState} to ${action.newState}.`,
+        itemRef,
+        operationId,
+        actorId: actor.id,
+        actionId: action.actionId,
+        transitionId,
+        metadata: {
+          workflowId: active.workflow_id,
+          workflowVersion: active.workflow_version,
+          previousState: action.previousState,
+          newState: action.newState,
+          newVersion: updated.workflowItemVersion
+        }
+      });
       const createdSnapshotId = await runEntryHooks({
         actionResult: action,
         workItem: updated,
         snapshots,
-        actorUserId: actor.id
+        actorUserId: actor.id,
+        debuggerService: this.debuggerService,
+        operationId,
+        itemRef
       });
       const finalWorkItem =
         createdSnapshotId === null
@@ -356,6 +445,20 @@ export class WorkflowService {
           createdSnapshotId
         }
       });
+      this.debuggerService.recordEvent({
+        eventType: "record_event",
+        severity: "debug",
+        message: "Workflow action audit event recorded.",
+        itemRef,
+        operationId,
+        actorId: actor.id,
+        actionId: action.actionId,
+        transitionId,
+        metadata: {
+          auditEventName: "work_item.workflow_action_executed",
+          createdSnapshotId
+        }
+      });
 
       return {
         workItemId: finalWorkItem.id,
@@ -368,6 +471,30 @@ export class WorkflowService {
       };
     });
   }
+
+  getDebuggerSnapshot(itemRef?: WorkflowDebuggerItemRef): WorkflowDebuggerSnapshot {
+    return this.debuggerService.getSnapshot(itemRef);
+  }
+
+  startDebugger(body: unknown, actor: AppUserRecord, requestId: string): Promise<WorkflowDebuggerSnapshot> {
+    return this.debuggerService.start(body, actor, requestId);
+  }
+
+  pauseDebugger(body: unknown, actor: AppUserRecord, requestId: string): Promise<WorkflowDebuggerSnapshot> {
+    return this.debuggerService.pause(body, actor, requestId);
+  }
+
+  resumeDebugger(body: unknown, actor: AppUserRecord, requestId: string): Promise<WorkflowDebuggerSnapshot> {
+    return this.debuggerService.resume(body, actor, requestId);
+  }
+
+  stepDebugger(body: unknown, actor: AppUserRecord, requestId: string): Promise<WorkflowDebuggerSnapshot> {
+    return this.debuggerService.step(body, actor, requestId);
+  }
+
+  stopDebugger(body: unknown, actor: AppUserRecord, requestId: string): Promise<WorkflowDebuggerSnapshot> {
+    return this.debuggerService.stop(body, actor, requestId);
+  }
 }
 
 async function runEntryHooks(input: {
@@ -375,6 +502,9 @@ async function runEntryHooks(input: {
   workItem: WorkItemRecord;
   snapshots: AcceptedSnapshotRepository;
   actorUserId: string;
+  debuggerService: WorkflowDebuggerService;
+  operationId: string;
+  itemRef: WorkflowDebuggerItemRef;
 }): Promise<string | null> {
   let createdSnapshotId: string | null = null;
   for (const hook of input.actionResult.entryHooks) {
@@ -382,6 +512,35 @@ async function runEntryHooks(input: {
       throw new HttpError(422, "unsupported_workflow_hook", `Unsupported workflow hook ${hook.handlerKey}.`);
     }
 
+    await input.debuggerService.runtimeStep({
+      eventType: "runtime_step",
+      severity: "debug",
+      message: `Running state-entry hook ${hook.handlerKey}.`,
+      itemRef: input.itemRef,
+      operationId: input.operationId,
+      actorId: input.actorUserId,
+      actionId: input.actionResult.actionId,
+      metadata: {
+        hookId: hook.id,
+        phase: hook.phase,
+        targetType: hook.targetType,
+        targetId: hook.targetId,
+        handlerKey: hook.handlerKey
+      }
+    });
+    input.debuggerService.recordEvent({
+      eventType: "handler_started",
+      severity: "debug",
+      message: `State-entry hook ${hook.handlerKey} started.`,
+      itemRef: input.itemRef,
+      operationId: input.operationId,
+      actorId: input.actorUserId,
+      actionId: input.actionResult.actionId,
+      metadata: {
+        hookId: hook.id,
+        handlerKey: hook.handlerKey
+      }
+    });
     const snapshot = await input.snapshots.createFromWorkItem({
       workItemId: input.workItem.id,
       actorUserId: input.actorUserId
@@ -394,6 +553,20 @@ async function runEntryHooks(input: {
       );
     }
     createdSnapshotId = snapshot.id;
+    input.debuggerService.recordEvent({
+      eventType: "handler_completed",
+      severity: "debug",
+      message: `State-entry hook ${hook.handlerKey} completed.`,
+      itemRef: input.itemRef,
+      operationId: input.operationId,
+      actorId: input.actorUserId,
+      actionId: input.actionResult.actionId,
+      metadata: {
+        hookId: hook.id,
+        handlerKey: hook.handlerKey,
+        createdSnapshotId
+      }
+    });
   }
   return createdSnapshotId;
 }
@@ -413,6 +586,13 @@ function summarizeActive(active: ActiveWorkflowRow): WorkflowActiveSummary {
     stateMachineVersion: active.state_machine_version,
     contentHash: active.content_hash,
     activatedAt: active.activated_at instanceof Date ? active.activated_at.toISOString() : active.activated_at
+  };
+}
+
+function workItemRef(workItemId: string): WorkflowDebuggerItemRef {
+  return {
+    resourceType: "work_item",
+    resourceId: workItemId
   };
 }
 

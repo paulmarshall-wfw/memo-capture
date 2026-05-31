@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { WorkflowDebuggerService } from "../src/services/workflow-debugger.js";
 import { WorkflowRuntimeAdapter } from "../src/services/workflow-runtime.js";
 
 test("workflow runtime validates bundled contract, buckets, and allowed actions", () => {
@@ -76,6 +77,44 @@ test("workflow runtime executes only actions allowed from the current state", ()
   assert.equal(action?.entryHooks[0]?.handlerKey, "create_accepted_snapshot");
 
   assert.equal(adapter.executeAction(bundle, "accepted", "memo.accepted"), null);
+});
+
+test("workflow debugger step mode blocks runtime steps until commanded", async () => {
+  const service = new WorkflowDebuggerService();
+  const actor = {
+    id: "user-1",
+    oidcIssuer: "issuer",
+    oidcSubject: "subject",
+    email: "dev@example.test",
+    displayName: "Dev",
+    firstSeenAt: "2026-05-29T00:00:00.000Z",
+    lastSeenAt: "2026-05-29T00:00:00.000Z",
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  };
+
+  await service.start({ stepMode: true }, actor, "debug-start");
+  let released = false;
+  const blocked = service
+    .runtimeStep({
+      eventType: "runtime_step",
+      severity: "debug",
+      message: "Commit transition.",
+      operationId: "operation-1",
+      itemRef: { resourceType: "work_item", resourceId: "work-item-1" }
+    })
+    .then(() => {
+      released = true;
+    });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(released, false);
+  assert.equal(service.getSnapshot().currentStep?.message, "Commit transition.");
+
+  await service.step({ operationId: "operation-1" }, actor, "debug-step");
+  await blocked;
+  assert.equal(released, true);
+  assert.equal(service.getSnapshot().views.debugSteps.some((event) => event.eventType === "debug_step"), true);
 });
 
 function createBundle() {

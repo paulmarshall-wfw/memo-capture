@@ -209,6 +209,24 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(workflowBuckets.response.status, 200);
     assert.equal(workflowBuckets.body.buckets[0].id, "memos");
 
+    const debuggerStart = await authedJson(baseUrl, "/api/workflow/debugger/start", {
+      method: "POST",
+      body: JSON.stringify({ stepMode: true })
+    });
+    assert.equal(debuggerStart.response.status, 200);
+    assert.equal(debuggerStart.body.state, "paused");
+    assert.equal(debuggerStart.body.stepMode, true);
+
+    const debuggerSnapshot = await authedJson(baseUrl, "/api/workflow/debugger/snapshot");
+    assert.equal(debuggerSnapshot.response.status, 200);
+    assert.equal(debuggerSnapshot.body.events[0].eventType, "debug_start");
+
+    const debuggerResume = await authedJson(baseUrl, "/api/workflow/debugger/resume", {
+      method: "POST"
+    });
+    assert.equal(debuggerResume.response.status, 200);
+    assert.equal(debuggerResume.body.state, "running");
+
     const workflowActions = await authedJson(baseUrl, "/api/work-items/work-item-1/actions");
     assert.equal(workflowActions.response.status, 200);
     assert.equal(workflowActions.body.actions[0].id, "memo.accepted");
@@ -950,6 +968,114 @@ function captureRouteServices(): AppServices {
       }),
       getBuckets: async () => ({
         buckets: [{ id: "memos", label: "Memos", order: 20, states: ["memo"] }]
+      }),
+      getDebuggerSnapshot: () => ({
+        state: "paused",
+        stepMode: true,
+        events: [
+          {
+            eventId: "debug-event-1",
+            sequence: 1,
+            eventType: "debug_start",
+            severity: "debug",
+            message: "Debugger started in step mode.",
+            occurredAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
+        views: {
+          transitions: [],
+          actions: [],
+          handlers: [],
+          handlerResponses: [],
+          recordEvents: [],
+          stateHooks: [],
+          failures: [],
+          debugSteps: [
+            {
+              eventId: "debug-event-1",
+              sequence: 1,
+              eventType: "debug_start",
+              severity: "debug",
+              message: "Debugger started in step mode.",
+              occurredAt: "2026-05-29T00:00:00.000Z"
+            }
+          ]
+        }
+      }),
+      startDebugger: async () => ({
+        state: "paused",
+        stepMode: true,
+        events: [],
+        views: {
+          transitions: [],
+          actions: [],
+          handlers: [],
+          handlerResponses: [],
+          recordEvents: [],
+          stateHooks: [],
+          failures: [],
+          debugSteps: []
+        }
+      }),
+      resumeDebugger: async () => ({
+        state: "running",
+        stepMode: true,
+        events: [],
+        views: {
+          transitions: [],
+          actions: [],
+          handlers: [],
+          handlerResponses: [],
+          recordEvents: [],
+          stateHooks: [],
+          failures: [],
+          debugSteps: []
+        }
+      }),
+      pauseDebugger: async () => ({
+        state: "paused",
+        stepMode: true,
+        events: [],
+        views: {
+          transitions: [],
+          actions: [],
+          handlers: [],
+          handlerResponses: [],
+          recordEvents: [],
+          stateHooks: [],
+          failures: [],
+          debugSteps: []
+        }
+      }),
+      stepDebugger: async () => ({
+        state: "paused",
+        stepMode: true,
+        events: [],
+        views: {
+          transitions: [],
+          actions: [],
+          handlers: [],
+          handlerResponses: [],
+          recordEvents: [],
+          stateHooks: [],
+          failures: [],
+          debugSteps: []
+        }
+      }),
+      stopDebugger: async () => ({
+        state: "stopped",
+        stepMode: true,
+        events: [],
+        views: {
+          transitions: [],
+          actions: [],
+          handlers: [],
+          handlerResponses: [],
+          recordEvents: [],
+          stateHooks: [],
+          failures: [],
+          debugSteps: []
+        }
       }),
       getAllowedActions: async (workItemId: string) => ({
         workItemId,

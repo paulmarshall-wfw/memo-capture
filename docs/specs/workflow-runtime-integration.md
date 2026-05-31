@@ -426,6 +426,19 @@ Stable action ID example:
 }
 ```
 
+## Runtime Debugger
+
+The Audit workspace debugger is backed by authenticated backend endpoints, not frontend-only state:
+
+- `GET /api/workflow/debugger/snapshot`
+- `POST /api/workflow/debugger/start`
+- `POST /api/workflow/debugger/pause`
+- `POST /api/workflow/debugger/resume`
+- `POST /api/workflow/debugger/step`
+- `POST /api/workflow/debugger/stop`
+
+Workflow action execution records runtime journal events for action validation, transition commits, state-entry hooks, and audit recording. When the debugger is paused or started in step mode, action execution waits at runtime step boundaries until `resume`, `step`, or `stop` is commanded through the backend debugger API.
+
 ## Acceptance Tests
 
 - Bundle requiring missing app capability is rejected.
@@ -438,3 +451,4 @@ Stable action ID example:
 - Illegal action returns a safe 409 or 422 response and does not mutate state.
 - Accept action runs `create_accepted_snapshot` exactly once for the transition.
 - Reopen action appears only when supplied by the active workflow.
+- Debugger controls command backend runtime execution rather than only changing frontend display state.

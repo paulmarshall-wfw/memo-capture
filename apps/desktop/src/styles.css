@@ -1061,7 +1061,9 @@ button:disabled {
 .memo-debugger {
   display: grid;
   min-height: 0;
+  flex: 1;
   gap: 12px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
 }
 
 .memo-debugger-toolbar,
@@ -1089,9 +1091,67 @@ button:disabled {
   background: var(--selected-soft);
 }
 
+.memo-debugger-streams {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(260px, 1fr);
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.memo-debugger-stream {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.memo-debugger-control-stream {
+  grid-template-rows: auto minmax(0, 120px);
+}
+
+.memo-debugger-workflow-stream {
+  min-height: 320px;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.memo-debugger-stream-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.memo-debugger-stream-header h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.memo-debugger-stream-header span {
+  min-width: 28px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.memo-debugger-empty {
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .memo-debugger-timeline {
   display: grid;
-  max-height: 360px;
   gap: 8px;
   overflow: auto;
   margin: 0;
@@ -1099,10 +1159,41 @@ button:disabled {
   list-style: none;
 }
 
+.memo-debugger-control-timeline {
+  height: 120px;
+}
+
+.memo-debugger-workflow-timeline {
+  min-height: 0;
+}
+
+.memo-debugger-control-stream .memo-debugger-empty,
+.memo-debugger-workflow-stream .memo-debugger-empty {
+  min-height: 0;
+}
+
+.memo-debugger-control-event {
+  display: grid;
+  grid-template-columns: 36px minmax(132px, 0.36fr) minmax(112px, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.memo-debugger-control-event span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .memo-debugger-event button {
   display: grid;
   width: 100%;
-  grid-template-columns: 48px minmax(120px, 0.42fr) minmax(0, 1fr);
+  grid-template-columns: 36px minmax(132px, 0.34fr) minmax(112px, 0.32fr) minmax(0, 1fr);
   gap: 8px;
   align-items: start;
   padding: 10px;

@@ -8,12 +8,11 @@ import {
   type ReactElement
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { WorkflowDebuggerPanelView, useWorkflowDebugger } from "@state-workflow/debugger-react";
+import { useWorkflowDebugger } from "@state-workflow/debugger-react";
 import type {
   ItemRef,
   RuntimeDebuggerSnapshot,
   WorkflowDebuggerController,
-  WorkflowDebuggerState,
   WorkflowEventJournalRecord,
   WorkflowEventViews,
   WorkflowRuntime
@@ -52,6 +51,7 @@ type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type ActiveView = "work-items" | "audit" | "exports" | "watched-folders" | "settings";
 type ThemeMode = "light" | "dark";
+type WorkflowRuntimeEventFilter = "journal" | keyof WorkflowEventViews;
 
 interface SessionResponse {
   accessToken?: string;
@@ -339,6 +339,29 @@ interface AuditEvent {
   createdAt: string;
 }
 
+interface WorkflowEventJournalRecordResponse
+  extends Omit<WorkflowEventJournalRecord, "occurredAt"> {
+  occurredAt: string;
+}
+
+interface RuntimeDebuggerSnapshotResponse
+  extends Omit<RuntimeDebuggerSnapshot, "currentStep" | "events" | "views"> {
+  currentStep?: WorkflowEventJournalRecordResponse;
+  events: WorkflowEventJournalRecordResponse[];
+}
+
+const workflowRuntimeEventFilters: readonly { id: WorkflowRuntimeEventFilter; label: string }[] = [
+  { id: "journal", label: "All" },
+  { id: "debugSteps", label: "Checkpoints" },
+  { id: "actions", label: "Actions" },
+  { id: "transitions", label: "Transitions" },
+  { id: "handlers", label: "Handlers" },
+  { id: "handlerResponses", label: "Handler responses" },
+  { id: "recordEvents", label: "Record events" },
+  { id: "stateHooks", label: "State hooks" },
+  { id: "failures", label: "Failures" }
+];
+
 class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -362,12 +385,6 @@ const primaryNavigation: { id: ActiveView; label: string }[] = [
   { id: "watched-folders", label: "Watched folders" },
   { id: "settings", label: "Settings" }
 ];
-
-const MemoWorkflowDebuggerPanelView = WorkflowDebuggerPanelView as unknown as (props: {
-  state: WorkflowDebuggerState;
-  controller?: WorkflowDebuggerController | undefined;
-  classNames: Record<string, string>;
-}) => ReactElement | null;
 
 function createDraft(item: WorkItem): DraftState {
   return {
@@ -398,38 +415,7 @@ function createProjectForm(project: Project): ProjectFormState {
   };
 }
 
-function createMemoCaptureWorkflowDebuggerRuntime(auditEvents: AuditEvent[]): WorkflowRuntime {
-  let debuggerState: RuntimeDebuggerSnapshot["state"] = "running";
-  let stepMode = false;
-  let currentStep: WorkflowEventJournalRecord | undefined;
-  const listeners = new Set<(event: WorkflowEventJournalRecord) => void>();
-
-  const buildSnapshot = (itemRef?: ItemRef): RuntimeDebuggerSnapshot => {
-    const events = projectAuditEventsToWorkflowEvents(auditEvents).filter((event) =>
-      itemRef === undefined
-        ? true
-        : event.itemRef?.resourceType === itemRef.resourceType && event.itemRef.resourceId === itemRef.resourceId
-    );
-    const views = projectWorkflowEventViews(events);
-    return {
-      state: debuggerState,
-      stepMode,
-      ...(currentStep === undefined ? {} : { currentStep }),
-      events,
-      views
-    };
-  };
-
-  const notify = () => {
-    const latestEvent = projectAuditEventsToWorkflowEvents(auditEvents).at(-1);
-    if (latestEvent === undefined) {
-      return;
-    }
-    for (const listener of listeners) {
-      listener(latestEvent);
-    }
-  };
-
+function createMemoCaptureWorkflowDebuggerRuntime(token: string | null): WorkflowRuntime {
   const unsupportedRuntimeMethod = async (): Promise<never> => {
     throw new Error("Memo Capture exposes workflow debugger events here; lifecycle mutation remains backend-owned.");
   };
@@ -454,34 +440,82 @@ function createMemoCaptureWorkflowDebuggerRuntime(auditEvents: AuditEvent[]): Wo
     },
     debugger: {
       start: async (options) => {
-        debuggerState = "running";
-        stepMode = options?.stepMode ?? false;
-        notify();
+        await postWorkflowDebuggerCommand(token, "start", { stepMode: options?.stepMode ?? false });
       },
-      pause: async () => {
-        debuggerState = "paused";
-        notify();
+      pause: async (operationId) => {
+        await postWorkflowDebuggerCommand(token, "pause", debuggerOperationBody(operationId));
       },
-      resume: async () => {
-        debuggerState = "running";
-        notify();
+      resume: async (operationId) => {
+        await postWorkflowDebuggerCommand(token, "resume", debuggerOperationBody(operationId));
       },
-      stop: async () => {
-        debuggerState = "stopped";
-        notify();
+      stop: async (operationId) => {
+        await postWorkflowDebuggerCommand(token, "stop", debuggerOperationBody(operationId));
       },
-      step: async () => {
-        currentStep = projectAuditEventsToWorkflowEvents(auditEvents).at(-1);
-        notify();
+      step: async (operationId) => {
+        await postWorkflowDebuggerCommand(token, "step", debuggerOperationBody(operationId));
       },
-      getSnapshot: async (itemRef) => buildSnapshot(itemRef),
-      subscribe: (listener) => {
-        listeners.add(listener);
-        return () => {
-          listeners.delete(listener);
-        };
-      }
+      getSnapshot: async (itemRef) => fetchWorkflowDebuggerSnapshot(token, itemRef),
+      subscribe: () => () => undefined
     }
+  };
+}
+
+function debuggerOperationBody(operationId: string | undefined): { operationId?: string } {
+  return operationId === undefined ? {} : { operationId };
+}
+
+async function postWorkflowDebuggerCommand(
+  token: string | null,
+  command: "start" | "pause" | "resume" | "step" | "stop",
+  body: { stepMode?: boolean; operationId?: string }
+): Promise<void> {
+  if (token === null) {
+    throw new Error("Sign in before using the workflow debugger.");
+  }
+  await authedJson(token, `/api/workflow/debugger/${command}`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+async function fetchWorkflowDebuggerSnapshot(
+  token: string | null,
+  itemRef?: ItemRef
+): Promise<RuntimeDebuggerSnapshot> {
+  if (token === null) {
+    return {
+      state: "stopped",
+      stepMode: false,
+      events: [],
+      views: projectWorkflowEventViews([])
+    };
+  }
+  const query =
+    itemRef === undefined
+      ? ""
+      : `?resourceType=${encodeURIComponent(itemRef.resourceType)}&resourceId=${encodeURIComponent(
+          itemRef.resourceId
+        )}`;
+  const snapshot = await authedJson<RuntimeDebuggerSnapshotResponse>(
+    token,
+    `/api/workflow/debugger/snapshot${query}`
+  );
+  const events = snapshot.events.map(normalizeWorkflowEvent);
+  const currentStep =
+    snapshot.currentStep === undefined ? undefined : normalizeWorkflowEvent(snapshot.currentStep);
+  return {
+    state: snapshot.state,
+    stepMode: snapshot.stepMode,
+    ...(currentStep === undefined ? {} : { currentStep }),
+    events,
+    views: projectWorkflowEventViews(events)
+  };
+}
+
+function normalizeWorkflowEvent(event: WorkflowEventJournalRecordResponse): WorkflowEventJournalRecord {
+  return {
+    ...event,
+    occurredAt: new Date(event.occurredAt)
   };
 }
 
@@ -574,14 +608,25 @@ function projectWorkflowEventViews(events: readonly WorkflowEventJournalRecord[]
   };
 }
 
+function projectWorkflowRuntimeEvents(
+  snapshot: RuntimeDebuggerSnapshot,
+  filter: WorkflowRuntimeEventFilter
+): WorkflowEventJournalRecord[] {
+  const source = filter === "journal" ? snapshot.events : snapshot.views[filter];
+  return source.filter((event) => !event.eventType.startsWith("debug_"));
+}
+
 function MemoWorkflowDebuggerPanel(props: {
   runtime: WorkflowRuntime;
   classNames: Record<string, string>;
 }): ReactElement {
   const initialFilter = useMemo(() => ({ view: "journal" as const }), []);
+  const [selectedWorkflowEventId, setSelectedWorkflowEventId] = useState<string | null>(null);
+  const [workflowEventFilter, setWorkflowEventFilter] = useState<WorkflowRuntimeEventFilter>("journal");
   const { controller, state, loading, error } = useWorkflowDebugger({
     runtime: props.runtime,
-    initialFilter
+    initialFilter,
+    pollingFallbackIntervalMs: 1000
   });
 
   if (loading) {
@@ -598,12 +643,158 @@ function MemoWorkflowDebuggerPanel(props: {
     return <section className="memo-debugger">Debugger unavailable.</section>;
   }
 
+  const controlEvents = state.snapshot.events.filter((event) => event.eventType.startsWith("debug_"));
+  const workflowEvents = projectWorkflowRuntimeEvents(state.snapshot, workflowEventFilter);
+  const selectedWorkflowEvent =
+    selectedWorkflowEventId === null
+      ? null
+      : workflowEvents.find((event) => event.eventId === selectedWorkflowEventId) ?? null;
+
   return (
-    <MemoWorkflowDebuggerPanelView
-      state={state}
-      controller={controller ?? undefined}
-      classNames={props.classNames}
-    />
+    <section className="memo-debugger" aria-label="Workflow debugger">
+      <div className="memo-debugger-toolbar">
+        <button className="row-action-button" type="button" onClick={() => void controller?.startDebugger({ stepMode: false })}>
+          Monitor
+        </button>
+        <button className="row-action-button" type="button" onClick={() => void controller?.startDebugger({ stepMode: true })}>
+          Step debug
+        </button>
+        <button className="row-action-button" type="button" onClick={() => void controller?.pause()}>
+          Pause
+        </button>
+        <button className="row-action-button" type="button" onClick={() => void controller?.resume()}>
+          Resume
+        </button>
+        <button className="row-action-button" type="button" onClick={() => void controller?.step()}>
+          Step
+        </button>
+        <button className="row-action-button" type="button" onClick={() => void controller?.stop()}>
+          Stop
+        </button>
+      </div>
+
+      <div className="memo-debugger-state">
+        <span>Debugger: {state.snapshot.state}</span>
+        <span>Step mode: {state.snapshot.stepMode ? "on" : "off"}</span>
+      </div>
+
+      <div className="memo-debugger-streams">
+        <DebuggerControlEventStream
+          events={controlEvents}
+        />
+        <WorkflowRuntimeEventStream
+          events={workflowEvents}
+          filter={workflowEventFilter}
+          onFilterChange={setWorkflowEventFilter}
+          selectedEventId={selectedWorkflowEventId}
+          onSelect={setSelectedWorkflowEventId}
+        />
+      </div>
+
+      {selectedWorkflowEvent === null ? (
+        <div className="memo-debugger-detail">Select a workflow runtime event to inspect its details.</div>
+      ) : (
+        <DebuggerEventDetail event={selectedWorkflowEvent} />
+      )}
+    </section>
+  );
+}
+
+function DebuggerControlEventStream(props: {
+  events: WorkflowEventJournalRecord[];
+}): ReactElement {
+  return (
+    <section className="memo-debugger-stream memo-debugger-control-stream" aria-label="Debugger controls">
+      <div className="memo-debugger-stream-header">
+        <h3>Debugger controls</h3>
+        <span>{props.events.length}</span>
+      </div>
+      {props.events.length === 0 ? (
+        <p className="memo-debugger-empty">No debugger control events yet.</p>
+      ) : (
+        <ol className="memo-debugger-timeline memo-debugger-control-timeline" aria-label="Debugger controls timeline">
+          {props.events.map((event) => (
+            <li key={event.eventId} className="memo-debugger-control-event">
+              <span>{event.sequence}</span>
+              <span>{formatEventDateTime(event.occurredAt)}</span>
+              <span>{event.eventType}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function WorkflowRuntimeEventStream(props: {
+  events: WorkflowEventJournalRecord[];
+  filter: WorkflowRuntimeEventFilter;
+  onFilterChange: (filter: WorkflowRuntimeEventFilter) => void;
+  selectedEventId: string | null;
+  onSelect: (eventId: string) => void;
+}): ReactElement {
+  return (
+    <section className="memo-debugger-stream memo-debugger-workflow-stream" aria-label="Workflow runtime events">
+      <div className="memo-debugger-stream-header">
+        <h3>Workflow runtime events</h3>
+        <span>{props.events.length}</span>
+      </div>
+      <div className="memo-debugger-views" aria-label="Workflow event filters">
+        {workflowRuntimeEventFilters.map((filter) => (
+          <button
+            key={filter.id}
+            className="row-action-button"
+            type="button"
+            aria-pressed={props.filter === filter.id}
+            onClick={() => props.onFilterChange(filter.id)}
+          >
+            {filter.label}
+          </button>
+        ))}
+      </div>
+      {props.events.length === 0 ? (
+        <p className="memo-debugger-empty">No workflow runtime events match this filter.</p>
+      ) : (
+        <ol className="memo-debugger-timeline memo-debugger-workflow-timeline" aria-label="Workflow runtime events timeline">
+          {props.events.map((event) => (
+            <li
+              key={event.eventId}
+              className={`memo-debugger-event${
+                props.selectedEventId === event.eventId ? " memo-debugger-event-selected" : ""
+              }`}
+            >
+              <button type="button" onClick={() => props.onSelect(event.eventId)}>
+                <span>{event.sequence}</span>
+                <span>{formatEventDateTime(event.occurredAt)}</span>
+                <span>{event.eventType}</span>
+                <span>{event.message}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function DebuggerEventDetail(props: { event: WorkflowEventJournalRecord }): ReactElement {
+  return (
+    <aside className="memo-debugger-detail" aria-label="Selected event detail">
+      <h2>{props.event.eventType}</h2>
+      <dl>
+        <dt>Time</dt>
+        <dd>{formatEventDateTime(props.event.occurredAt)}</dd>
+        <dt>Severity</dt>
+        <dd>{props.event.severity}</dd>
+        <dt>Message</dt>
+        <dd>{props.event.message}</dd>
+        <dt>Operation</dt>
+        <dd>{props.event.operationId ?? "none"}</dd>
+        <dt>Action</dt>
+        <dd>{props.event.actionId ?? "none"}</dd>
+      </dl>
+      <pre className="memo-debugger-metadata">{JSON.stringify(props.event.metadata ?? {}, null, 2)}</pre>
+    </aside>
   );
 }
 
@@ -706,8 +897,8 @@ export function App() {
     );
   }, [exportSearch, exportSnapshots]);
   const workflowDebuggerRuntime = useMemo(
-    () => createMemoCaptureWorkflowDebuggerRuntime(auditEvents),
-    [auditEvents]
+    () => createMemoCaptureWorkflowDebuggerRuntime(accessToken),
+    [accessToken]
   );
   const selectedExportCount = filteredExportSnapshots.filter((snapshot) =>
     selectedExportSnapshotIds.has(snapshot.acceptedSnapshotId)
@@ -3057,4 +3248,14 @@ function formatDate(value: string): string {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(dateValue));
+}
+
+function formatEventDateTime(value: Date): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(value);
 }

@@ -4,34 +4,39 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-05-31T03:29:22Z
+- Created timestamp UTC: 2026-05-31T03:40:55Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: configurable project settings, new Audit workspace, runtime debugger panel integration, completed-task ledger update, and current checkpoint refresh.
+- Session scope: backend runtime debugger wiring, Audit debugger API integration, workflow runtime event journal docs, completed-task ledger update, and current checkpoint refresh.
 
 ### Checkpoint Status
 
-- Git HEAD: `fdfba67`
+- Git HEAD: `9190f57`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/desktop/package.json`
+  - `apps/api/src/server.ts`
+  - `apps/api/src/services/workflows.ts`
+  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/api/tests/workflow-runtime.test.ts`
   - `apps/desktop/src/App.tsx`
-  - `apps/desktop/src/styles.css`
-  - `apps/desktop/vite.config.ts`
   - `docs/completed-tasks.md`
+  - `docs/specs/workflow-runtime-integration.md`
   - `handoff.md`
-  - `package-lock.json`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - None
+  - `apps/api/src/services/workflow-debugger.ts`
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
   - `AGENTS.md`
   - `docs/completed-tasks.md`
   - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/workflow-runtime-integration.md`
+  - `apps/api/src/services/workflow-debugger.ts`
+  - `apps/api/src/services/workflows.ts`
+  - `apps/api/src/server.ts`
   - `apps/desktop/package.json`
   - `apps/desktop/src/App.tsx`
   - `apps/desktop/src/styles.css`
@@ -40,32 +45,33 @@
 - Last verification:
   - command: `npm run verify`
   - result: passed
-  - timestamp UTC: 2026-05-31T03:29:22Z
+  - timestamp UTC: 2026-05-31T03:40:55Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD` is recorded, all dirty files are accounted for, the root verification suite passed, and the remaining debugger-control caveat is explicit.
-- Next checkpoint action: decide whether to make the debugger controls read-only/hidden or wire them to a real backend runtime debugger contract; then review and commit the dirty patch set if acceptable.
+- Safe-to-continue basis: current `HEAD` is recorded, all dirty files are accounted for, the root verification suite passed, and the debugger controls now use a backend runtime debugger contract.
+- Next checkpoint action: review and commit the dirty patch set if acceptable.
 
 ## 2. Executive Summary
 
-Current focus is the desktop Settings and Audit surfaces.
+Current focus is the Audit runtime debugger surface.
 
 Complete now:
 
 - Settings includes configurable project create/edit/deactivate controls backed by the existing `/api/projects` API.
 - Audit Events moved out of Settings into a new top-level `Audit` page.
 - The `Audit` page uses a two-panel layout: application audit events on the left, generic runtime event-journal debugger on the right.
-- The right panel mounts `@state-workflow/debugger-react` through a Memo Capture adapter that projects app audit events into workflow journal records.
+- The right panel mounts `@state-workflow/debugger-react` through a Memo Capture adapter that calls backend debugger snapshot/control endpoints.
+- Backend workflow action execution now records runtime journal events and waits at debugger-controlled runtime step boundaries when paused or in step mode.
+- Protected backend debugger routes exist for snapshot, start, pause, resume, step, and stop.
 - `apps/desktop/vite.config.ts` aliases `state-workflow-runtime` to the browser-safe debugger headless build because the package root imports Node-only modules.
 - `docs/completed-tasks.md` was updated. Completed work history is tracked there; do not duplicate it here.
 
 Incomplete now:
 
-- The debugger panel controls (`Start Debugger`, `Pause`, `Resume`, `Step`, `Stop`) affect only local debugger UI state in the adapter. They do not pause, resume, step, stop, or otherwise control the backend workflow runtime.
 - The project settings form has type/build coverage and render coverage, but create/save/deactivate was not re-smoked through live browser clicks in this refresh.
 - `npm install` updated `package-lock.json` using the ambient shell Node/npm, which warned that `node v24.14.0` and `npm 11.9.0` are outside the repo engine range. Use Node `22.14.0` and npm `10.9.x` for normal repo work.
 - `npm install` reported one high-severity audit finding; it was not investigated in this pass.
 
-Safe to continue from this state if the next session treats `fdfba67` as the committed baseline plus the dirty Audit/Settings/debugger patch set listed above.
+Safe to continue from this state if the next session treats `9190f57` as the committed baseline plus the dirty debugger patch set listed above.
 
 ## 3. Current Objective
 
@@ -75,12 +81,12 @@ Intended finished state:
 
 - Project names and metadata are user-configurable rather than inferred from memo text.
 - Audit diagnostics have their own top-level workspace.
-- Runtime debugging UI is honest about whether it is read-only projection or a live runtime controller.
+- Runtime debugging UI commands backend runtime execution through protected API routes.
 
 Definition of done for the current workstream:
 
 - Audit page layout and debugger integration remain verified by `npm run verify` and browser smoke.
-- Debugger controls are either disabled/hidden for read-only projection or connected to real backend runtime debugger APIs.
+- Debugger controls are connected to real backend runtime debugger APIs.
 - Dirty files are reviewed and committed when the behavior is accepted.
 
 ## 4. Current State
@@ -91,25 +97,25 @@ Definition of done for the current workstream:
 - Desktop navigation includes `Work queue`, `Audit`, `Exports`, `Watched folders`, and `Settings`.
 - Settings renders project management controls for existing projects plus a new-project draft form.
 - Audit renders application audit events in the left panel.
-- Audit renders the generic workflow event-journal debugger in the right panel.
+- Audit renders the generic workflow event-journal debugger in the right panel using backend debugger snapshots.
+- `Start Debugger`, `Pause`, `Resume`, `Step`, and `Stop` call backend debugger endpoints.
+- Workflow action execution journals validation, transition, hook, and audit-recording events and waits at runtime step boundaries when the backend debugger is paused or in step mode.
 - Chrome visual verification at `http://127.0.0.1:5176/` confirmed Audit events in the left panel and the debugger in the right panel.
 - The current implementation builds production desktop assets successfully through the root verification script.
 
 ### Partially Working
 
-- The generic debugger is wired as a read-only projection over Memo Capture audit events. It is useful for inspecting the event journal shape, not for controlling backend workflow execution.
-- Debugger button state changes are local to the frontend adapter.
-- Existing local browser tabs may still point at `http://127.0.0.1:5175/`; the verified fresh server for this pass was `http://127.0.0.1:5176/`.
+- The backend debugger event journal is process-local and bounded to the most recent 500 events; it is not persisted across API restarts.
+- Existing local browser tabs may still point at `http://127.0.0.1:5175/`; the previously verified fresh server for the Audit page was `http://127.0.0.1:5176/`.
 
 ### Not Working Yet
 
-- There is no backend endpoint or runtime contract in Memo Capture that exposes live debugger start/pause/resume/step/stop semantics.
-- The Audit page does not yet distinguish clearly in the UI between read-only projected audit history and live runtime control.
+- No known debugger-control gap remains in the current dirty patch set.
 
 ### Not Yet Verified
 
 - Live browser-click create/save/deactivate flow for projects.
-- Whether the debugger controls should be removed, disabled, or backed by a real runtime debugger API.
+- Live browser-click stepping of an in-flight workflow action from the Audit panel.
 - Tauri/Rust desktop build/check.
 - Watched-folder import, audio transcription recovery, export download, and non-disabled AI provider flows after the latest desktop UI changes.
 
