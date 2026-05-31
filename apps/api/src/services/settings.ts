@@ -2,8 +2,9 @@ import type { ApiConfig } from "../config.js";
 import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import type { AppUserRecord } from "../repositories/rows.js";
-import { SettingsRepository, type ProviderConfigRow } from "../repositories/settings.js";
+import { SettingsRepository, type PromptDefinitionRow, type ProviderConfigRow } from "../repositories/settings.js";
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
+import { normalizePromptContextConfig } from "./llm.js";
 
 export class SettingsService {
   constructor(
@@ -48,17 +49,7 @@ export class SettingsService {
             updatedAt: toIso(transcription.updated_at)
           },
       providers: providers.map((provider) => serializeProvider(provider, this.config)),
-      prompts: prompts.map((prompt) => ({
-        id: prompt.id,
-        name: prompt.name,
-        purpose: prompt.purpose,
-        activeVersion: prompt.active_version,
-        activePromptVersionId: prompt.active_prompt_version_id,
-        body: prompt.active_body,
-        outputSchema: prompt.active_output_schema,
-        retentionPolicy: prompt.retention_policy,
-        updatedAt: toIso(prompt.updated_at)
-      })),
+      prompts: prompts.map(serializePrompt),
       auth: {
         mode: this.config.authMode,
         oidcConfigured:
@@ -154,6 +145,67 @@ export class SettingsService {
     });
   }
 
+  async createFileType(
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseCreateFileTypeBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findFileTypeByExtension(input.extension);
+      if (existing !== null) {
+        throw new HttpError(409, "file_type_exists", "A file type setting already exists for this extension.");
+      }
+      const fileType = await settings.createFileType({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "file_type_settings.created",
+        actor,
+        subjectType: "file_type_settings",
+        subjectId: fileType.id,
+        requestId,
+        metadata: {
+          extension: fileType.extension,
+          mediaKind: fileType.media_kind,
+          capabilityState: fileType.capability_state,
+          parserKey: fileType.parser_key
+        }
+      });
+      return { fileType: serializeFileType(fileType) };
+    });
+  }
+
+  async updateFileType(
+    fileTypeId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseFileTypeBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const fileType = await settings.updateFileType({ fileTypeId, ...input, actorUserId: actor.id });
+      if (fileType === null) {
+        throw new HttpError(404, "not_found", "file_type_settings row was not found.");
+      }
+      await audit.record({
+        eventName: "file_type_settings.updated",
+        actor,
+        subjectType: "file_type_settings",
+        subjectId: fileType.id,
+        requestId,
+        metadata: {
+          extension: fileType.extension,
+          mediaKind: fileType.media_kind,
+          capabilityState: fileType.capability_state
+        }
+      });
+      return { fileType: serializeFileType(fileType) };
+    });
+  }
+
   async createPromptVersion(
     promptDefinitionId: string,
     body: unknown,
@@ -168,6 +220,7 @@ export class SettingsService {
         promptDefinitionId,
         body: input.body,
         outputSchema: input.outputSchema,
+        contextConfig: input.contextConfig,
         actorUserId: actor.id
       });
       await audit.record({
@@ -193,17 +246,44 @@ export class SettingsService {
         }
       });
       return {
-        prompt: {
-          id: prompt.id,
-          name: prompt.name,
-          activeVersion: prompt.active_version,
-          activePromptVersionId: prompt.active_prompt_version_id,
-          body: prompt.active_body,
-          outputSchema: prompt.active_output_schema
-        }
+        prompt: serializePrompt(prompt)
       };
     });
   }
+}
+
+function serializeFileType(row: {
+  id: string;
+  extension: string;
+  media_kind: string;
+  capability_state: string;
+  parser_key: string | null;
+  updated_at: Date | string;
+}): Record<string, unknown> {
+  return {
+    id: row.id,
+    extension: row.extension,
+    mediaKind: row.media_kind,
+    capabilityState: row.capability_state,
+    parserKey: row.parser_key,
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function serializePrompt(prompt: PromptDefinitionRow): Record<string, unknown> {
+  const contextConfig = normalizePromptContextConfig(prompt.active_context_config, prompt.active_body ?? "");
+  return {
+    id: prompt.id,
+    name: prompt.name,
+    purpose: prompt.purpose,
+    activeVersion: prompt.active_version,
+    activePromptVersionId: prompt.active_prompt_version_id,
+    body: prompt.active_body,
+    outputSchema: prompt.active_output_schema,
+    contextConfig,
+    retentionPolicy: prompt.retention_policy,
+    updatedAt: toIso(prompt.updated_at)
+  };
 }
 
 function serializeProvider(provider: ProviderConfigRow, config: ApiConfig): Record<string, unknown> {
@@ -270,16 +350,107 @@ function parseProviderBody(body: unknown) {
   };
 }
 
+function parseFileTypeBody(body: unknown) {
+  const record = parseObject(body);
+  if (typeof record.active === "boolean") {
+    return { capabilityState: record.active ? "active" : "inactive" };
+  }
+  const capabilityState = assertNonEmptyString(record.capabilityState, "capabilityState");
+  if (!["active", "inactive", "not_supported_yet"].includes(capabilityState)) {
+    throw new HttpError(
+      400,
+      "invalid_request",
+      "capabilityState must be active, inactive, or not_supported_yet."
+    );
+  }
+  return { capabilityState };
+}
+
+function parseCreateFileTypeBody(body: unknown) {
+  const record = parseObject(body);
+  const extension = normalizeExtension(assertNonEmptyString(record.extension, "extension"));
+  const mediaKind = assertNonEmptyString(record.mediaKind, "mediaKind");
+  if (mediaKind !== "text" && mediaKind !== "audio") {
+    throw new HttpError(400, "invalid_request", "mediaKind must be text or audio.");
+  }
+  const capabilityState =
+    typeof record.active === "boolean"
+      ? record.active ? "active" : "inactive"
+      : record.capabilityState === undefined
+        ? "inactive"
+        : assertNonEmptyString(record.capabilityState, "capabilityState");
+  if (!["active", "inactive", "not_supported_yet"].includes(capabilityState)) {
+    throw new HttpError(
+      400,
+      "invalid_request",
+      "capabilityState must be active, inactive, or not_supported_yet."
+    );
+  }
+  const parserKey = parseParserKey(record.parserKey);
+  return { extension, mediaKind, capabilityState, parserKey };
+}
+
+function normalizeExtension(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/^\.+/, "");
+  const extension = `.${normalized}`;
+  if (!/^\.[a-z0-9][a-z0-9_-]{0,31}$/.test(extension)) {
+    throw new HttpError(
+      400,
+      "invalid_request",
+      "extension must be one file extension such as .txt, .md, or .mp3."
+    );
+  }
+  return extension;
+}
+
+function parseParserKey(value: unknown): string | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new HttpError(400, "invalid_request", "parserKey must be a string when provided.");
+  }
+  const parserKey = value.trim().toLowerCase();
+  if (parserKey === "" || parserKey === "none") {
+    return null;
+  }
+  if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(parserKey)) {
+    throw new HttpError(400, "invalid_request", "parserKey contains unsupported characters.");
+  }
+  return parserKey;
+}
+
 function parsePromptVersionBody(body: unknown) {
   const record = parseObject(body);
-  const outputSchema = record.outputSchema;
+  const outputSchema = record.outputSchema ?? {};
   if (outputSchema === null || typeof outputSchema !== "object" || Array.isArray(outputSchema)) {
     throw new HttpError(400, "invalid_request", "outputSchema must be an object.");
   }
-  return {
-    body: assertNonEmptyString(record.body, "body"),
-    outputSchema: outputSchema as Record<string, unknown>
+  const freeformText =
+    record.freeformText === undefined
+      ? assertNonEmptyString(record.body, "body")
+      : assertNonEmptyString(record.freeformText, "freeformText");
+  const contextConfig = {
+    freeformText,
+    includeProjectSynopsis: parsePromptToggle(record.includeProjectSynopsis, "includeProjectSynopsis"),
+    includeMemoMetadata: parsePromptToggle(record.includeMemoMetadata, "includeMemoMetadata"),
+    includeMemoTranscriptText: parsePromptToggle(record.includeMemoTranscriptText, "includeMemoTranscriptText")
   };
+  return {
+    body: freeformText,
+    outputSchema: outputSchema as Record<string, unknown>,
+    contextConfig
+  };
+}
+
+function parsePromptToggle(value: unknown, field: string): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  if (typeof value !== "boolean") {
+    throw new HttpError(400, "invalid_request", `${field} must be a boolean.`);
+  }
+  return value;
 }
 
 function parseThreshold(value: unknown, field: string): number {

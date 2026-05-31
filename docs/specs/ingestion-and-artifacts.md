@@ -29,9 +29,9 @@ Active audio formats:
 - `.mp3`
 - `.wav`
 
-Unsupported configured types can be stored as inactive or `not_supported_yet`, but watched-folder ingestion must not attempt unsupported file types.
+Inactive or `not_supported_yet` configured types are not scanned or accepted by watched-folder ingestion. Active configured text/audio types without an implemented parser are accepted into managed storage and converted into `needs_review` work items that prompt parser support.
 
-Current implementation note: watched-folder scanning and upload sessions accept the active text and audio extensions. Text finalization extracts UTF-8 text immediately. Audio finalization creates the source memo, original audio artifact, work item, import event, and a `transcribe_audio` processing job before archive reporting.
+Current implementation note: watched-folder scanning and upload sessions accept active text and audio extensions from backend settings. Text finalization extracts UTF-8 text when the parser is implemented. Audio finalization creates the source memo, original audio artifact, work item, import event, and a `transcribe_audio` processing job before archive reporting when the audio parser is implemented. Active unimplemented parser settings finalize without processing jobs.
 
 ## Source Creation Rules
 
@@ -75,7 +75,7 @@ Rules:
 - Recursion is off by default and configurable per watched folder.
 - Multiple desktop clients watching the same folder are unsupported in V1.
 - Failed local import/upload state survives desktop restart.
-- Unsupported file types are counted and shown in low-priority local diagnostics without creating backend records.
+- Inactive or not-supported file types are skipped locally. Active file types with missing parser support create backend review records.
 
 ## Archive Behavior
 
@@ -307,7 +307,8 @@ Rules:
 
 - Supported text file creates upload session, artifact, source memo, work item, and extraction job.
 - Supported audio file creates upload session, artifact, source memo, work item, and transcription job.
-- Unsupported file type creates only local diagnostics.
+- Inactive or not-supported file type creates only local diagnostics.
+- Active file type without an implemented parser creates a review work item and no processing jobs.
 - File is archived only after upload/finalize confirms managed artifact storage.
 - Archive collision generates a non-overwriting destination.
 - Archive move failure records local warning and does not undo import.

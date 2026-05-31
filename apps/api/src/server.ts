@@ -284,6 +284,11 @@ function matchProtectedRoute(
     return async () => services.settings.getSummary();
   }
 
+  if (method === "POST" && pathname === "/api/settings/file-types") {
+    return async (context, session) =>
+      services.settings.createFileType(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
   if (method === "PATCH" && pathname === "/api/settings/extraction") {
     return async (context, session) =>
       services.settings.updateExtraction(await readJsonBody(context.request), session.user, context.requestId);
@@ -299,6 +304,17 @@ function matchProtectedRoute(
     return async (context, session) =>
       services.settings.updateProvider(
         decodeURIComponent(providerPatchMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const fileTypePatchMatch = /^\/api\/settings\/file-types\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && fileTypePatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateFileType(
+        decodeURIComponent(fileTypePatchMatch[1] ?? ""),
         await readJsonBody(context.request),
         session.user,
         context.requestId

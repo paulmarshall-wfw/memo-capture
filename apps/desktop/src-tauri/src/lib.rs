@@ -70,14 +70,16 @@ fn pick_folder(title: String, default_path: Option<String>) -> Result<Option<Str
 #[tauri::command]
 fn scan_watched_folders(
     folders: Vec<WatchedFolderSetting>,
+    enabled_extensions: Option<Vec<String>>,
 ) -> Result<Vec<WatchedFileCandidate>, String> {
     let mut candidates = Vec::new();
+    let enabled_extensions = normalized_enabled_extensions(enabled_extensions);
     for folder in folders.iter().filter(|folder| folder.enabled) {
         let root = PathBuf::from(folder.path.trim());
         if root.as_os_str().is_empty() || !root.is_dir() {
             continue;
         }
-        scan_folder(folder, &root, &mut candidates)?;
+        scan_folder(folder, &root, &enabled_extensions, &mut candidates)?;
     }
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(candidates)
@@ -87,7 +89,14 @@ fn scan_watched_folders(
 fn scan_watched_text_folders(
     folders: Vec<WatchedFolderSetting>,
 ) -> Result<Vec<WatchedFileCandidate>, String> {
-    scan_watched_folders(folders)
+    scan_watched_folders(
+        folders,
+        Some(vec![
+            ".txt".to_string(),
+            ".md".to_string(),
+            ".markdown".to_string(),
+        ]),
+    )
 }
 
 #[tauri::command]
@@ -146,6 +155,7 @@ fn archive_watched_text_file(
 fn scan_folder(
     folder: &WatchedFolderSetting,
     path: &Path,
+    enabled_extensions: &[String],
     candidates: &mut Vec<WatchedFileCandidate>,
 ) -> Result<(), String> {
     for entry_result in
@@ -159,12 +169,12 @@ fn scan_folder(
             .map_err(|error| format!("Unable to inspect watched folder entry metadata: {error}"))?;
         if metadata.is_dir() {
             if folder.recursive {
-                scan_folder(folder, &entry_path, candidates)?;
+                scan_folder(folder, &entry_path, enabled_extensions, candidates)?;
             }
             continue;
         }
         if !metadata.is_file()
-            || !is_supported_watched_file(&entry_path)
+            || !is_supported_watched_file(&entry_path, enabled_extensions)
             || !is_stable(&metadata, folder.stability_ms)
         {
             continue;
@@ -193,18 +203,37 @@ fn scan_folder(
     Ok(())
 }
 
-fn is_supported_watched_file(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .map(|value| value.to_string_lossy().to_lowercase()),
-        Some(extension)
-            if extension == "txt"
-                || extension == "md"
-                || extension == "markdown"
-                || extension == "m4a"
-                || extension == "mp3"
-                || extension == "wav"
-    )
+fn normalized_enabled_extensions(enabled_extensions: Option<Vec<String>>) -> Vec<String> {
+    enabled_extensions
+        .unwrap_or_else(|| {
+            vec![
+                ".txt".to_string(),
+                ".md".to_string(),
+                ".markdown".to_string(),
+                ".m4a".to_string(),
+                ".mp3".to_string(),
+                ".wav".to_string(),
+            ]
+        })
+        .into_iter()
+        .map(|extension| {
+            let normalized = extension.trim().to_lowercase();
+            if normalized.starts_with('.') {
+                normalized
+            } else {
+                format!(".{normalized}")
+            }
+        })
+        .collect()
+}
+
+fn is_supported_watched_file(path: &Path, enabled_extensions: &[String]) -> bool {
+    let extension = path
+        .extension()
+        .map(|value| format!(".{}", value.to_string_lossy().to_lowercase()));
+    extension
+        .as_ref()
+        .is_some_and(|value| enabled_extensions.iter().any(|enabled| enabled == value))
 }
 
 fn is_stable(metadata: &fs::Metadata, stability_ms: u64) -> bool {

@@ -24,7 +24,7 @@ Keeping canonical classification, prompt, provider, and export settings in the b
 - supported file type entries and capability state
 - extraction confidence thresholds
 - transcription retry count
-- prompt definitions and prompt versions
+- prompt definitions, prompt versions, and prompt context controls
 - export settings/templates
 - provider enablement and non-secret provider config
 - workflow activation metadata
@@ -66,9 +66,27 @@ Capability states:
 
 Rules:
 
-- V1 active text: `.txt`, `.md`, `.markdown`.
-- V1 active audio: `.m4a`, `.mp3`, `.wav`.
-- Unsupported configured types must not be ingested.
+- V1 media kinds are `text` and `audio`.
+- Implemented text parser keys: `plain-text`, `markdown`.
+- Implemented audio parser key: `audio`.
+- Default active text: `.txt`, `.md`, `.markdown`.
+- Default active audio: `.m4a`, `.mp3`, `.wav`.
+- File type capability state is authoritative for watched-folder scanning and watched import upload-session validation.
+- Inactive file types are not scanned, uploaded, finalized, or accepted by watched-folder import paths.
+- Active file types without an implemented parser are stored as managed artifacts and create `needs_review` work items that prompt parser support; they do not enqueue extraction or transcription jobs.
+
+### prompt_versions
+
+Prompt versions include editable freeform prompt text plus structured context controls.
+
+Context controls:
+
+- `freeformText`
+- `includeProjectSynopsis`
+- `includeMemoMetadata`
+- `includeMemoTranscriptText`
+
+The backend composes the model prompt with freeform text first. Raw audio or video content is never eligible LLM context; audio/video sources may contribute only stored transcripts or extracted text.
 
 ### extraction_settings
 
@@ -317,6 +335,12 @@ Response includes backend settings, prompt metadata, file type settings, redacte
 
 `GET /api/settings/file-types`
 
+### Create file type setting
+
+`POST /api/settings/file-types`
+
+Creates a configured extension with media kind, capability state, and optional parser key. New extensions are normalized to lowercase with a leading dot.
+
 ### Update file type setting
 
 `PATCH /api/settings/file-types/{fileTypeSettingId}`
@@ -397,6 +421,8 @@ Settings sections:
 - Watched folders and desktop-local paths
 - System diagnostics
 
+Settings must not expose a manual per-file import queue. Watched folders own standalone file ingestion, with a Check now action allowed only when it processes eligible enabled file types automatically.
+
 Operations section:
 
 - Workflow import
@@ -411,6 +437,7 @@ Operations section:
 - AI expansion with invalid structured JSON creates a failed diagnostics job and no suggestion records.
 - Accepting an AI suggestion creates a normal memo work item without changing the parent lifecycle state.
 - File type marked `not_supported_yet` is ignored by watched-folder ingestion.
+- Active file type without an implemented parser creates a `needs_review` work item and no processing jobs.
 - Prompt edit creates a new version and does not mutate old version.
 - Contributor merge does not rewrite existing work items.
 - Feature group merge does not rewrite existing work items.

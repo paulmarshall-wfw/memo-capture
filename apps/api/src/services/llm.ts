@@ -6,11 +6,17 @@ export interface WorkItemExpansionContext {
     name: string;
     version: number;
     body: string;
+    contextConfig: PromptContextConfig;
   };
   project: {
     id: string | null;
     name: string | null;
+    description: string | null;
     context: string | null;
+  };
+  featureGroup: {
+    id: string | null;
+    name: string | null;
   };
   workItem: {
     id: string;
@@ -24,6 +30,20 @@ export interface WorkItemExpansionContext {
     transcriptText: string | null;
   } | null;
 }
+
+export interface PromptContextConfig {
+  freeformText: string;
+  includeProjectSynopsis: boolean;
+  includeMemoMetadata: boolean;
+  includeMemoTranscriptText: boolean;
+}
+
+export const DEFAULT_PROMPT_CONTEXT_CONFIG: PromptContextConfig = {
+  freeformText: "",
+  includeProjectSynopsis: true,
+  includeMemoMetadata: true,
+  includeMemoTranscriptText: true
+};
 
 export interface LlmStructuredOutput {
   rawText: string;
@@ -53,11 +73,72 @@ export function createLlmProvider(config: LlmProviderConfig, providerName: strin
   return new LocalDevLlmProvider(modelName || config.modelName);
 }
 
+export function normalizePromptContextConfig(value: unknown, fallbackFreeformText = ""): PromptContextConfig {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return {
+      ...DEFAULT_PROMPT_CONTEXT_CONFIG,
+      freeformText: fallbackFreeformText
+    };
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    freeformText:
+      typeof record.freeformText === "string" ? record.freeformText : fallbackFreeformText,
+    includeProjectSynopsis:
+      typeof record.includeProjectSynopsis === "boolean"
+        ? record.includeProjectSynopsis
+        : DEFAULT_PROMPT_CONTEXT_CONFIG.includeProjectSynopsis,
+    includeMemoMetadata:
+      typeof record.includeMemoMetadata === "boolean"
+        ? record.includeMemoMetadata
+        : DEFAULT_PROMPT_CONTEXT_CONFIG.includeMemoMetadata,
+    includeMemoTranscriptText:
+      typeof record.includeMemoTranscriptText === "boolean"
+        ? record.includeMemoTranscriptText
+        : DEFAULT_PROMPT_CONTEXT_CONFIG.includeMemoTranscriptText
+  };
+}
+
+export function buildWorkItemExpansionPrompt(context: WorkItemExpansionContext): string {
+  const config = context.prompt.contextConfig;
+  const parts = [config.freeformText.trim()].filter((part) => part !== "");
+
+  if (config.includeProjectSynopsis && context.project.description !== null && context.project.description.trim() !== "") {
+    parts.push(`Project synopsis:\n${context.project.description.trim()}`);
+  }
+
+  if (config.includeMemoMetadata) {
+    parts.push(
+      [
+        "Memo metadata:",
+        `- Title: ${context.workItem.title}`,
+        `- Project: ${context.project.name ?? "Unassigned"}`,
+        `- Feature group: ${context.featureGroup.name ?? "Unassigned"}`,
+        `- Contributor: ${context.workItem.contributorText ?? "Unknown"}`,
+        `- Source type: ${context.sourceMemo?.sourceType ?? "unknown"}`
+      ].join("\n")
+    );
+  }
+
+  if (config.includeMemoTranscriptText) {
+    const memoText = [context.workItem.body.trim(), context.sourceMemo?.transcriptText?.trim() ?? ""]
+      .filter((part) => part !== "")
+      .join("\n\n");
+    if (memoText !== "") {
+      parts.push(`Memo text:\n${memoText}`);
+    }
+  }
+
+  return parts.join("\n\n");
+}
+
 class LocalDevLlmProvider implements LlmProvider {
   constructor(private readonly modelName: string) {}
 
   async generateWorkItemExpansion(context: WorkItemExpansionContext): Promise<LlmStructuredOutput> {
     const startedAt = Date.now();
+    const composedPrompt = buildWorkItemExpansionPrompt(context);
     const title = context.workItem.title.trim();
     const projectPrefix = context.project.name === null ? "Memo" : context.project.name;
     const expanded = {
@@ -66,6 +147,7 @@ class LocalDevLlmProvider implements LlmProvider {
         body: [
           context.workItem.body.trim(),
           "",
+          composedPrompt === "" ? "" : `Prompt focus: ${composedPrompt.slice(0, 180)}`,
           `Expansion focus: clarify the user value, evidence, edge cases, and next review questions for ${projectPrefix}.`
         ]
           .filter((part) => part !== "")

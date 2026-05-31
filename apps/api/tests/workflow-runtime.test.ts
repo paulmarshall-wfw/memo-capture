@@ -117,6 +117,39 @@ test("workflow debugger step mode blocks runtime steps until commanded", async (
   assert.equal(service.getSnapshot().views.debugSteps.some((event) => event.eventType === "debug_step"), true);
 });
 
+test("workflow debugger resume exits step mode so runtime steps continue", async () => {
+  const service = new WorkflowDebuggerService();
+  const actor = {
+    id: "user-1",
+    oidcIssuer: "issuer",
+    oidcSubject: "subject",
+    email: "dev@example.test",
+    displayName: "Dev",
+    firstSeenAt: "2026-05-29T00:00:00.000Z",
+    lastSeenAt: "2026-05-29T00:00:00.000Z",
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  };
+
+  await service.start({ stepMode: true }, actor, "debug-start");
+  await service.resume({}, actor, "debug-resume");
+
+  const outcome = await Promise.race([
+    service
+      .runtimeStep({
+        eventType: "runtime_step",
+        severity: "debug",
+        message: "Resume should unblock runtime execution.",
+        operationId: "operation-1",
+        itemRef: { resourceType: "work_item", resourceId: "work-item-1" }
+      })
+      .then(() => "released"),
+    new Promise<string>((resolve) => setTimeout(() => resolve("timed_out"), 150))
+  ]);
+
+  assert.equal(outcome, "released");
+});
+
 function createBundle() {
   return {
     schemaVersion: "0.7.0",

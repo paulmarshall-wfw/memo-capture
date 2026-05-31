@@ -38,6 +38,7 @@ Dependencies may not be installed yet in a fresh checkout. Run `npm install` bef
 
 - Product shape: Tauri desktop app with a web UI, backed by a TypeScript API and worker.
 - Browser-only desktop dev URL: Vite default `http://localhost:5173` unless Vite prints another port.
+- AppLauncher local web URL: `http://127.0.0.1:5177`, reserved in `/Users/paulmarshall/Software Development/All Standards/local-port-registry.md`.
 - Tauri desktop dev URL: strict `http://127.0.0.1:5178` from `apps/desktop/src-tauri/tauri.conf.json`.
 - API port: `MEMO_CAPTURE_API_PORT`, default `4788`.
 - API base URL for desktop: `VITE_MEMO_CAPTURE_API_URL`.
@@ -78,3 +79,11 @@ Dependencies may not be installed yet in a fresh checkout. Run `npm install` bef
 - Keep changes scoped to the requested work.
 - Do not commit, tag, release, publish, install dependencies, or delete files unless the user explicitly asks.
 - Report verification performed and any verification that could not be run.
+## Port Registry
+
+Before adding or changing local ports, check and update
+`/Users/paulmarshall/Software Development/All Standards/local-port-registry.md`; record project ports in this file's Runtime Notes. After updating, run:
+
+```bash
+python3 "/Users/paulmarshall/Software Development/All Standards/scripts/check-local-port-registry.py"
+```

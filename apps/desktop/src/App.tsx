@@ -38,20 +38,18 @@ import {
   Search,
   Settings,
   Sun,
-  Trash2,
-  Upload
+  Trash2
 } from "lucide-react";
-import {
-  ACTIVE_AUDIO_FILE_EXTENSIONS,
-  ACTIVE_TEXT_FILE_EXTENSIONS,
-  MEMO_CAPTURE_EXPORT_SCHEMA_VERSION
-} from "@memo-capture/domain";
+import { MEMO_CAPTURE_EXPORT_SCHEMA_VERSION } from "@memo-capture/domain";
 
 type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type ActiveView = "work-items" | "projects" | "exports" | "settings" | "audit";
 type ThemeMode = "light" | "dark";
 type WorkflowRuntimeEventFilter = "journal" | keyof WorkflowEventViews;
+type SettingsSectionId = "watched" | "file-types" | "prompts" | "providers" | "export" | "diagnostics";
+type FileTypeMediaKind = "text" | "audio";
+type FileTypeCapabilityState = "active" | "inactive" | "not_supported_yet";
 
 interface SessionResponse {
   accessToken?: string;
@@ -273,15 +271,24 @@ interface AiSuggestion {
   createdAt: string;
 }
 
+interface FileTypeSetting {
+  id: string;
+  extension: string;
+  mediaKind: string;
+  capabilityState: string;
+  parserKey: string | null;
+  updatedAt: string;
+}
+
+interface NewFileTypeDraft {
+  extension: string;
+  mediaKind: FileTypeMediaKind;
+  parserKey: string;
+  capabilityState: FileTypeCapabilityState;
+}
+
 interface SettingsSummary {
-  fileTypes: {
-    id: string;
-    extension: string;
-    mediaKind: string;
-    capabilityState: string;
-    parserKey: string | null;
-    updatedAt: string;
-  }[];
+  fileTypes: FileTypeSetting[];
   extraction: {
     projectConfidenceThreshold: number;
     featureGroupConfidenceThreshold: number;
@@ -314,7 +321,11 @@ interface SettingsSummary {
     name: string;
     purpose: string;
     activeVersion: number;
+    activePromptVersionId: string | null;
     body: string | null;
+    outputSchema: Record<string, unknown> | null;
+    contextConfig: PromptContextConfig;
+    retentionPolicy: string;
     updatedAt: string;
   }[];
   auth: {
@@ -322,6 +333,27 @@ interface SettingsSummary {
     oidcConfigured: boolean;
   };
 }
+
+interface PromptContextConfig {
+  freeformText: string;
+  includeProjectSynopsis: boolean;
+  includeMemoMetadata: boolean;
+  includeMemoTranscriptText: boolean;
+}
+
+interface PromptDraft {
+  freeformText: string;
+  includeProjectSynopsis: boolean;
+  includeMemoMetadata: boolean;
+  includeMemoTranscriptText: boolean;
+}
+
+const defaultPromptContextConfig: PromptContextConfig = {
+  freeformText: "",
+  includeProjectSynopsis: true,
+  includeMemoMetadata: true,
+  includeMemoTranscriptText: true
+};
 
 interface AuditEvent {
   id: string;
@@ -369,6 +401,15 @@ const workflowRuntimeEventFilters: readonly { id: WorkflowRuntimeEventFilter; la
   { id: "failures", label: "Failures" }
 ];
 
+const settingsSections: readonly { id: SettingsSectionId; label: string }[] = [
+  { id: "watched", label: "Watched folders" },
+  { id: "file-types", label: "File types" },
+  { id: "prompts", label: "AI prompts" },
+  { id: "providers", label: "Providers" },
+  { id: "export", label: "Export contract" },
+  { id: "diagnostics", label: "Diagnostics" }
+];
+
 class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -385,6 +426,12 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
 const appVersion = "0.1.0";
 const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const defaultNewFileTypeDraft: NewFileTypeDraft = {
+  extension: "",
+  mediaKind: "text",
+  parserKey: "",
+  capabilityState: "inactive"
+};
 const primaryNavigation: { id: ActiveView; label: string }[] = [
   { id: "work-items", label: "Work queue" },
   { id: "projects", label: "Projects" },
@@ -1061,6 +1108,12 @@ export function App() {
   const [aiExpanding, setAiExpanding] = useState(false);
   const [suggestionIdInFlight, setSuggestionIdInFlight] = useState<string | null>(null);
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
+  const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
+  const [promptIdInFlight, setPromptIdInFlight] = useState<string | null>(null);
+  const [fileTypeIdInFlight, setFileTypeIdInFlight] = useState<string | null>(null);
+  const [newFileTypeDraft, setNewFileTypeDraft] = useState<NewFileTypeDraft>(defaultNewFileTypeDraft);
+  const [fileTypeCreateInFlight, setFileTypeCreateInFlight] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditFilter, setAuditFilter] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -1082,6 +1135,17 @@ export function App() {
     () => new Map(contributors.map((contributor) => [contributor.id, contributor])),
     [contributors]
   );
+  const activeFileExtensions = useMemo(
+    () =>
+      settingsSummary?.fileTypes
+        .filter((fileType) => fileType.capabilityState === "active")
+        .map((fileType) => fileType.extension) ?? [],
+    [settingsSummary]
+  );
+  const activeFileTypeByExtension = useMemo(() => {
+    const fileTypes = settingsSummary?.fileTypes ?? [];
+    return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
+  }, [settingsSummary]);
   const visibleActions = actions.filter((action) => action.visible && !action.requiresInput);
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1166,10 +1230,15 @@ export function App() {
       : activeView === "audit"
       ? "Application audit history and workflow runtime event-journal debugging."
       : activeView === "settings"
-      ? "Provider, prompt, watched-folder, and export contract details."
+      ? "Watched folders, file types, AI prompts, providers, and diagnostics."
       : selectedBucket === null
       ? "No workflow scope is selected."
       : `${selectedBucket.label} scope selected.`;
+  const activeSettingsSectionMeta =
+    settingsSections.find((section) => section.id === activeSettingsSection) ?? {
+      id: "watched",
+      label: "Watched folders"
+    };
 
   useEffect(() => {
     let cancelled = false;
@@ -1317,6 +1386,27 @@ export function App() {
   }, [accessToken, activeView]);
 
   useEffect(() => {
+    if (settingsSummary === null) {
+      setPromptDrafts({});
+      return;
+    }
+
+    setPromptDrafts(
+      Object.fromEntries(
+        settingsSummary.prompts.map((prompt) => [
+          prompt.id,
+          {
+            freeformText: prompt.contextConfig.freeformText || prompt.body || "",
+            includeProjectSynopsis: prompt.contextConfig.includeProjectSynopsis,
+            includeMemoMetadata: prompt.contextConfig.includeMemoMetadata,
+            includeMemoTranscriptText: prompt.contextConfig.includeMemoTranscriptText
+          }
+        ])
+      )
+    );
+  }, [settingsSummary]);
+
+  useEffect(() => {
     if (accessToken === null || activeView !== "audit") {
       return;
     }
@@ -1428,7 +1518,7 @@ export function App() {
     setStatusMessage(null);
     try {
       const settingsResponse = await authedJson<SettingsSummary>(token, "/api/settings");
-      setSettingsSummary(settingsResponse);
+      setSettingsSummary(normalizeSettingsSummary(settingsResponse));
     } finally {
       setSettingsLoading(false);
     }
@@ -1703,18 +1793,30 @@ export function App() {
       setStatusMessage("Watched-folder scanning is available in the Tauri desktop app.");
       return;
     }
+    if (accessToken === null || machineId === null) {
+      setStatusMessage("Sign in and machine identity are required before checking watched folders.");
+      return;
+    }
+    if (activeFileExtensions.length === 0) {
+      setStatusMessage("Enable at least one file type before checking watched folders.");
+      return;
+    }
 
     setWatchScanInFlight(true);
     setStatusMessage(null);
     try {
       const candidates = await invoke<WatchedFileCandidate[]>("scan_watched_folders", {
-        folders: watchedFolders
+        folders: watchedFolders,
+        enabledExtensions: activeFileExtensions
       });
       setWatchedCandidates(candidates);
       setCandidateStatuses({});
-      setStatusMessage(`${candidates.length} stable watched files found.`);
+      for (const candidate of candidates) {
+        await importWatchedCandidate(candidate);
+      }
+      setStatusMessage(`${candidates.length} stable watched files processed.`);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to scan watched folders.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to check watched folders.");
     } finally {
       setWatchScanInFlight(false);
     }
@@ -1736,7 +1838,11 @@ export function App() {
     try {
       const bytes = new Uint8Array(await invoke<number[]>("read_watched_file", { path: candidate.path }));
       const contentHash = await sha256Digest(bytes);
-      const sourceType = isAudioExtension(candidate.extension) ? "watched_audio_file" : "watched_text_file";
+      const fileType = activeFileTypeByExtension.get(candidate.extension.toLowerCase());
+      const sourceType =
+        fileType?.mediaKind === "audio"
+          ? "watched_audio_file"
+          : "watched_text_file";
       const uploadSession = await authedJson<UploadSessionResponse>(accessToken, "/api/imports/upload-sessions", {
         method: "POST",
         body: JSON.stringify({
@@ -1745,7 +1851,7 @@ export function App() {
           sourceType,
           originalFilename: candidate.filename,
           originalPath: candidate.path,
-          mimeType: mimeTypeForExtension(candidate.extension),
+          mimeType: mimeTypeForExtension(candidate.extension, fileType?.mediaKind),
           byteSize: bytes.byteLength,
           contentHash
         })
@@ -1789,7 +1895,9 @@ export function App() {
         "imported",
         sourceType === "watched_audio_file"
           ? "Audio imported and queued for transcription."
-          : "Imported, finalized, and archived."
+          : finalized.processingJobs.length === 0
+            ? "Imported for review. Parser support is still needed."
+            : "Imported, finalized, and archived."
       );
       await refreshBucket();
     } catch (error) {
@@ -1940,6 +2048,118 @@ export function App() {
       setStatusMessage(error instanceof Error ? error.message : "Unable to update provider.");
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  async function toggleFileType(fileTypeId: string, active: boolean) {
+    if (accessToken === null) {
+      return;
+    }
+    setFileTypeIdInFlight(fileTypeId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/file-types/${encodeURIComponent(fileTypeId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ active })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage(active ? "File type enabled." : "File type disabled.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to update file type.");
+    } finally {
+      setFileTypeIdInFlight(null);
+    }
+  }
+
+  function updateNewFileTypeDraft<Field extends keyof NewFileTypeDraft>(
+    field: Field,
+    value: NewFileTypeDraft[Field]
+  ) {
+    setNewFileTypeDraft((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "mediaKind") {
+        next.parserKey = "";
+      }
+      return next;
+    });
+  }
+
+  async function createFileType() {
+    if (accessToken === null) {
+      return;
+    }
+    const extension = newFileTypeDraft.extension.trim();
+    if (extension === "") {
+      setStatusMessage("Extension is required.");
+      return;
+    }
+    setFileTypeCreateInFlight(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/file-types", {
+        method: "POST",
+        body: JSON.stringify({
+          extension,
+          mediaKind: newFileTypeDraft.mediaKind,
+          parserKey: newFileTypeDraft.parserKey === "" ? null : newFileTypeDraft.parserKey,
+          capabilityState: newFileTypeDraft.capabilityState
+        })
+      });
+      setNewFileTypeDraft(defaultNewFileTypeDraft);
+      await loadSettings(accessToken);
+      setStatusMessage("File type added.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to add file type.");
+    } finally {
+      setFileTypeCreateInFlight(false);
+    }
+  }
+
+  function updatePromptDraft(promptId: string, field: keyof PromptDraft, value: string | boolean) {
+    setPromptDrafts((current) => ({
+      ...current,
+      [promptId]: {
+        ...(current[promptId] ?? {
+          freeformText: "",
+          includeProjectSynopsis: true,
+          includeMemoMetadata: true,
+          includeMemoTranscriptText: true
+        }),
+        [field]: value
+      }
+    }));
+  }
+
+  async function savePromptVersion(prompt: SettingsSummary["prompts"][number]) {
+    if (accessToken === null) {
+      return;
+    }
+    const draft = promptDrafts[prompt.id];
+    if (draft === undefined || draft.freeformText.trim() === "") {
+      setStatusMessage("Prompt text is required.");
+      return;
+    }
+
+    setPromptIdInFlight(prompt.id);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/prompts/${encodeURIComponent(prompt.id)}/versions`, {
+        method: "POST",
+        body: JSON.stringify({
+          body: draft.freeformText,
+          freeformText: draft.freeformText,
+          includeProjectSynopsis: draft.includeProjectSynopsis,
+          includeMemoMetadata: draft.includeMemoMetadata,
+          includeMemoTranscriptText: draft.includeMemoTranscriptText,
+          outputSchema: prompt.outputSchema ?? {}
+        })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Prompt version saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save prompt version.");
+    } finally {
+      setPromptIdInFlight(null);
     }
   }
 
@@ -2955,12 +3175,34 @@ export function App() {
             </section>
           </div>
         ) : activeView === "settings" ? (
-          <div className="settings-single-grid">
-            <section className="detail-panel" aria-label="Backend settings">
+          <div className="settings-workspace">
+            <aside className="settings-nav-panel" aria-label="Settings sections">
+              <div className="detail-header">
+                <div>
+                  <p className="eyebrow">Settings</p>
+                  <h2>Settings</h2>
+                </div>
+                <Settings size={22} />
+              </div>
+              <nav className="settings-section-nav">
+                {settingsSections.map((section) => (
+                  <button
+                    className={section.id === activeSettingsSection ? "settings-section-active" : ""}
+                    type="button"
+                    key={section.id}
+                    onClick={() => setActiveSettingsSection(section.id)}
+                  >
+                    {section.label}
+                  </button>
+                ))}
+              </nav>
+            </aside>
+
+            <section className="detail-panel" aria-label={`${activeSettingsSectionMeta.label} settings`}>
               <div className="detail-header">
                 <div>
                   <p className="eyebrow">Backend canonical</p>
-                  <h2>Settings</h2>
+                  <h2>{activeSettingsSectionMeta.label}</h2>
                 </div>
                 <Settings size={22} />
               </div>
@@ -2970,280 +3212,395 @@ export function App() {
                   <RefreshCcw size={22} />
                   <span>Settings not loaded</span>
                 </div>
-              ) : (
-                <>
-                  <section className="detail-section watched-settings-section" aria-label="Watched folders">
-                    <div className="settings-row-header">
-                      <div className="section-title">
-                        <FolderInput size={18} />
-                        <h3>Watched folders</h3>
-                      </div>
-                      <div className="suggestion-actions">
-                        <button className="secondary-button" type="button" onClick={addWatchedFolder}>
-                          <Plus size={18} />
-                          Add folder
-                        </button>
-                        <button className="secondary-button" type="button" onClick={() => void scanWatchedFolders()}>
-                          {watchScanInFlight ? <RefreshCcw className="spin" size={18} /> : <FolderSearch size={18} />}
-                          Scan
-                        </button>
-                        <button className="primary-button" type="button" onClick={saveWatchedFolders}>
-                          <Save size={18} />
-                          Save
-                        </button>
-                      </div>
+              ) : activeSettingsSection === "watched" ? (
+                <section className="detail-section watched-settings-section" aria-label="Watched folders">
+                  <div className="settings-row-header">
+                    <div className="section-title">
+                      <FolderInput size={18} />
+                      <h3>Watched folders</h3>
                     </div>
-                    <div className="detail-meta">
-                      <span>Machine {machineId ?? "not loaded"}</span>
-                      <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled</span>
-                      <span>{watchedSettingsSaved ? "Settings saved" : "Unsaved settings allowed"}</span>
+                    <div className="suggestion-actions">
+                      <button className="secondary-button" type="button" onClick={addWatchedFolder}>
+                        <Plus size={18} />
+                        Add folder
+                      </button>
+                      <button className="secondary-button" type="button" onClick={() => void scanWatchedFolders()}>
+                        {watchScanInFlight ? <RefreshCcw className="spin" size={18} /> : <FolderSearch size={18} />}
+                        Check now
+                      </button>
+                      <button className="primary-button" type="button" onClick={saveWatchedFolders}>
+                        <Save size={18} />
+                        Save
+                      </button>
                     </div>
+                  </div>
+                  <div className="detail-meta">
+                    <span>Machine {machineId ?? "not loaded"}</span>
+                    <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled</span>
+                    <span>{activeFileExtensions.length} active file types</span>
+                    <span>{watchedSettingsSaved ? "Settings saved" : "Unsaved settings allowed"}</span>
+                  </div>
 
-                    {watchedFolders.length === 0 ? (
-                      <div className="empty-detail compact-empty">
-                        <FolderInput size={22} />
-                        <span>No watched folders configured</span>
-                      </div>
-                    ) : null}
+                  {watchedFolders.length === 0 ? (
+                    <div className="empty-detail compact-empty">
+                      <FolderInput size={22} />
+                      <span>No watched folders configured</span>
+                    </div>
+                  ) : null}
 
-                    <div className="watch-folder-list">
-                      {watchedFolders.map((folder) => (
-                        <article className="watch-folder-row" key={folder.id}>
-                          <div className="field-grid">
-                            <div className="field-group">
-                              <label htmlFor={`${folder.id}-path`}>Watched path</label>
-                              <div className="path-picker-field">
-                                <input
-                                  id={`${folder.id}-path`}
-                                  value={folder.path}
-                                  onChange={(event) =>
-                                    updateWatchedFolder(folder.id, "path", event.currentTarget.value)
-                                  }
-                                />
-                                <button
-                                  className="secondary-button icon-only"
-                                  type="button"
-                                  title="Choose watched folder"
-                                  aria-label="Choose watched folder"
-                                  onClick={() => void pickWatchedFolderPath(folder.id, "path")}
-                                >
-                                  <FolderOpen size={18} />
-                                </button>
-                              </div>
-                            </div>
-                            <div className="field-group">
-                              <label htmlFor={`${folder.id}-archive`}>Archive path</label>
-                              <div className="path-picker-field">
-                                <input
-                                  id={`${folder.id}-archive`}
-                                  value={folder.archivePath}
-                                  onChange={(event) =>
-                                    updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
-                                  }
-                                />
-                                <button
-                                  className="secondary-button icon-only"
-                                  type="button"
-                                  title="Choose archive folder"
-                                  aria-label="Choose archive folder"
-                                  onClick={() => void pickWatchedFolderPath(folder.id, "archivePath")}
-                                >
-                                  <FolderOpen size={18} />
-                                </button>
-                              </div>
+                  <div className="watch-folder-list">
+                    {watchedFolders.map((folder) => (
+                      <article className="watch-folder-row" key={folder.id}>
+                        <div className="field-grid">
+                          <div className="field-group">
+                            <label htmlFor={`${folder.id}-path`}>Watched path</label>
+                            <div className="path-picker-field">
+                              <input
+                                id={`${folder.id}-path`}
+                                value={folder.path}
+                                onChange={(event) => updateWatchedFolder(folder.id, "path", event.currentTarget.value)}
+                              />
+                              <button
+                                className="secondary-button icon-only"
+                                type="button"
+                                title="Choose watched folder"
+                                aria-label="Choose watched folder"
+                                onClick={() => void pickWatchedFolderPath(folder.id, "path")}
+                              >
+                                <FolderOpen size={18} />
+                              </button>
                             </div>
                           </div>
-                          <div className="watch-folder-controls">
-                            <label>
+                          <div className="field-group">
+                            <label htmlFor={`${folder.id}-archive`}>Archive path</label>
+                            <div className="path-picker-field">
                               <input
-                                type="checkbox"
-                                checked={folder.enabled}
+                                id={`${folder.id}-archive`}
+                                value={folder.archivePath}
                                 onChange={(event) =>
-                                  updateWatchedFolder(folder.id, "enabled", event.currentTarget.checked)
+                                  updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
                                 }
                               />
-                              Enabled
-                            </label>
-                            <label>
-                              <input
-                                type="checkbox"
-                                checked={folder.recursive}
-                                onChange={(event) =>
-                                  updateWatchedFolder(folder.id, "recursive", event.currentTarget.checked)
-                                }
-                              />
-                              Recursive
-                            </label>
-                            <div className="field-group compact">
-                              <label htmlFor={`${folder.id}-stability`}>Stability ms</label>
-                              <input
-                                id={`${folder.id}-stability`}
-                                type="number"
-                                min={1000}
-                                step={500}
-                                value={folder.stabilityMs}
-                                onChange={(event) =>
-                                  updateWatchedFolder(
-                                    folder.id,
-                                    "stabilityMs",
-                                    Number.parseInt(event.currentTarget.value, 10) || 3000
-                                  )
-                                }
-                              />
+                              <button
+                                className="secondary-button icon-only"
+                                type="button"
+                                title="Choose archive folder"
+                                aria-label="Choose archive folder"
+                                onClick={() => void pickWatchedFolderPath(folder.id, "archivePath")}
+                              >
+                                <FolderOpen size={18} />
+                              </button>
                             </div>
-                            <button
-                              className="secondary-button icon-only"
-                              type="button"
-                              title="Remove watched folder"
-                              aria-label="Remove watched folder"
-                              onClick={() => removeWatchedFolder(folder.id)}
-                            >
-                              <Trash2 size={18} />
-                            </button>
                           </div>
-                        </article>
-                      ))}
-                    </div>
-
-                    <div className="settings-list watched-candidate-list">
-                      {watchedCandidates.length === 0 ? (
-                        <div className="empty-state compact-empty">
-                          <FolderSearch size={20} />
-                          <span>No stable watched files found</span>
                         </div>
-                      ) : null}
-                      {watchedCandidates.map((candidate) => {
-                        const status = candidateStatuses[candidate.path] ?? { state: "idle", message: null };
-                        return (
-                          <article className="item-row watched-candidate-row" key={candidate.path}>
-                            <div className="item-row-main">
-                              <div className="item-title-line">
-                                {isAudioExtension(candidate.extension) ? (
-                                  <Headphones size={18} />
-                                ) : (
-                                  <FileText size={18} />
-                                )}
-                                <h2>{candidate.filename}</h2>
+                        <div className="watch-folder-controls">
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={folder.enabled}
+                              onChange={(event) =>
+                                updateWatchedFolder(folder.id, "enabled", event.currentTarget.checked)
+                              }
+                            />
+                            Enabled
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={folder.recursive}
+                              onChange={(event) =>
+                                updateWatchedFolder(folder.id, "recursive", event.currentTarget.checked)
+                              }
+                            />
+                            Recursive
+                          </label>
+                          <div className="field-group compact">
+                            <label htmlFor={`${folder.id}-stability`}>Stability ms</label>
+                            <input
+                              id={`${folder.id}-stability`}
+                              type="number"
+                              min={1000}
+                              step={500}
+                              value={folder.stabilityMs}
+                              onChange={(event) =>
+                                updateWatchedFolder(
+                                  folder.id,
+                                  "stabilityMs",
+                                  Number.parseInt(event.currentTarget.value, 10) || 3000
+                                )
+                              }
+                            />
+                          </div>
+                          <button
+                            className="secondary-button icon-only"
+                            type="button"
+                            title="Remove watched folder"
+                            aria-label="Remove watched folder"
+                            onClick={() => removeWatchedFolder(folder.id)}
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : activeSettingsSection === "file-types" ? (
+                <section className="detail-section" aria-label="File types">
+                  <form
+                    className="settings-inline-form file-type-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void createFileType();
+                    }}
+                  >
+                    <label>
+                      Extension
+                      <input
+                        value={newFileTypeDraft.extension}
+                        onChange={(event) => updateNewFileTypeDraft("extension", event.currentTarget.value)}
+                        placeholder=".html"
+                      />
+                    </label>
+                    <label>
+                      Media
+                      <select
+                        value={newFileTypeDraft.mediaKind}
+                        onChange={(event) =>
+                          updateNewFileTypeDraft("mediaKind", event.currentTarget.value as FileTypeMediaKind)
+                        }
+                      >
+                        <option value="text">text</option>
+                        <option value="audio">audio</option>
+                      </select>
+                    </label>
+                    <label>
+                      Parser
+                      <select
+                        value={newFileTypeDraft.parserKey}
+                        onChange={(event) => updateNewFileTypeDraft("parserKey", event.currentTarget.value)}
+                      >
+                        <option value="">Needs parser support</option>
+                        {newFileTypeDraft.mediaKind === "text" ? (
+                          <>
+                            <option value="plain-text">plain-text</option>
+                            <option value="markdown">markdown</option>
+                          </>
+                        ) : (
+                          <option value="audio">audio</option>
+                        )}
+                      </select>
+                    </label>
+                    <label>
+                      Status
+                      <select
+                        value={newFileTypeDraft.capabilityState}
+                        onChange={(event) =>
+                          updateNewFileTypeDraft(
+                            "capabilityState",
+                            event.currentTarget.value as FileTypeCapabilityState
+                          )
+                        }
+                      >
+                        <option value="inactive">inactive</option>
+                        <option value="active">active</option>
+                        <option value="not_supported_yet">not supported yet</option>
+                      </select>
+                    </label>
+                    <button className="secondary-button" type="submit" disabled={fileTypeCreateInFlight}>
+                      <Plus size={16} />
+                      Add file type
+                    </button>
+                  </form>
+                  <div className="settings-table">
+                    <div className="settings-table-header">
+                      <span>Extension</span>
+                      <span>Media</span>
+                      <span>Parser</span>
+                      <span>Status</span>
+                      <span>Active</span>
+                    </div>
+                    {settingsSummary.fileTypes.map((fileType) => (
+                      <div className="settings-table-row" key={fileType.id}>
+                        <strong>{fileType.extension}</strong>
+                        <span>{fileType.mediaKind}</span>
+                        <span>{fileType.parserKey ?? "none"}</span>
+                        <span>{fileType.capabilityState}</span>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={fileType.capabilityState === "active"}
+                            disabled={fileTypeIdInFlight === fileType.id}
+                            onChange={(event) => void toggleFileType(fileType.id, event.currentTarget.checked)}
+                          />
+                          Enabled
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : activeSettingsSection === "prompts" ? (
+                <section className="detail-section" aria-label="AI prompts">
+                  <div className="settings-list prompt-editor-list">
+                    {settingsSummary.prompts.map((prompt) => {
+                      const draft = promptDrafts[prompt.id] ?? {
+                        freeformText: prompt.body ?? "",
+                        includeProjectSynopsis: true,
+                        includeMemoMetadata: true,
+                        includeMemoTranscriptText: true
+                      };
+                      return (
+                        <article className="settings-row prompt-editor-row" key={prompt.id}>
+                          <div className="prompt-editor-header">
+                            <div>
+                              <div className="batch-title">
+                                <strong>{prompt.name}</strong>
+                                <span>v{prompt.activeVersion}</span>
                               </div>
-                              <p>{candidate.path}</p>
-                              <div className="item-meta">
-                                <span>{formatBytes(candidate.byteSize)}</span>
-                                <span>Modified {formatDate(candidate.modifiedAt)}</span>
-                                <span>{statusLabel(status.state)}</span>
-                              </div>
-                              {status.message === null ? null : <p className="candidate-message">{status.message}</p>}
+                              <p>{prompt.purpose}</p>
                             </div>
                             <button
                               className="primary-button"
                               type="button"
-                              disabled={
-                                status.state === "importing" ||
-                                status.state === "imported" ||
-                                status.state === "duplicate"
-                              }
-                              onClick={() => void importWatchedCandidate(candidate)}
+                              disabled={promptIdInFlight === prompt.id}
+                              onClick={() => void savePromptVersion(prompt)}
                             >
-                              {status.state === "importing" ? (
-                                <RefreshCcw className="spin" size={18} />
-                              ) : (
-                                <Upload size={18} />
-                              )}
-                              Import
+                              <Save size={18} />
+                              Save version
                             </button>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </section>
-
-                  <section className="detail-section">
-                    <div className="section-title">
-                      <Settings size={18} />
-                      <h3>Providers</h3>
-                    </div>
-                    <div className="settings-list">
-                      {settingsSummary.providers.map((provider) => (
-                        <article className="settings-row" key={provider.id}>
-                          <div>
-                            <div className="batch-title">
-                              <strong>{provider.providerKind}: {provider.providerName}</strong>
-                              <span>{provider.enabled ? "Enabled" : "Disabled"}</span>
-                            </div>
-                            <p>
-                              Runtime {provider.runtimeProvider}; model {provider.modelName ?? provider.runtimeModelName};
-                              secret {provider.secretConfigured ? "configured" : "not configured"}
-                            </p>
                           </div>
-                          <label className="toggle-row">
-                            <input
-                              type="checkbox"
-                              checked={provider.enabled}
-                              disabled={settingsLoading}
-                              onChange={(event) => void toggleProvider(provider.id, event.currentTarget.checked)}
+                          <div className="field-group">
+                            <label htmlFor={`prompt-${prompt.id}-freeform`}>Prompt text</label>
+                            <textarea
+                              id={`prompt-${prompt.id}-freeform`}
+                              value={draft.freeformText}
+                              rows={6}
+                              onChange={(event) =>
+                                updatePromptDraft(prompt.id, "freeformText", event.currentTarget.value)
+                              }
                             />
-                            Enabled
-                          </label>
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-
-                  <section className="detail-section">
-                    <div className="section-title">
-                      <FileText size={18} />
-                      <h3>Prompts</h3>
-                    </div>
-                    <div className="settings-list">
-                      {settingsSummary.prompts.map((prompt) => (
-                        <article className="settings-row" key={prompt.id}>
-                          <div>
-                            <div className="batch-title">
-                              <strong>{prompt.name}</strong>
-                              <span>v{prompt.activeVersion}</span>
-                            </div>
-                            <p>{prompt.purpose}</p>
+                          </div>
+                          <div className="prompt-toggle-grid">
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={draft.includeProjectSynopsis}
+                                onChange={(event) =>
+                                  updatePromptDraft(prompt.id, "includeProjectSynopsis", event.currentTarget.checked)
+                                }
+                              />
+                              Project synopsis
+                            </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={draft.includeMemoMetadata}
+                                onChange={(event) =>
+                                  updatePromptDraft(prompt.id, "includeMemoMetadata", event.currentTarget.checked)
+                                }
+                              />
+                              Memo metadata
+                            </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={draft.includeMemoTranscriptText}
+                                onChange={(event) =>
+                                  updatePromptDraft(prompt.id, "includeMemoTranscriptText", event.currentTarget.checked)
+                                }
+                              />
+                              Memo text/transcript
+                            </label>
                           </div>
                         </article>
-                      ))}
+                      );
+                    })}
+                  </div>
+                </section>
+              ) : activeSettingsSection === "providers" ? (
+                <section className="detail-section" aria-label="Providers">
+                  <div className="settings-list">
+                    {settingsSummary.providers.map((provider) => (
+                      <article className="settings-row" key={provider.id}>
+                        <div>
+                          <div className="batch-title">
+                            <strong>{provider.providerKind}: {provider.providerName}</strong>
+                            <span>{provider.enabled ? "Enabled" : "Disabled"}</span>
+                          </div>
+                          <p>
+                            Runtime {provider.runtimeProvider}; model {provider.modelName ?? provider.runtimeModelName};
+                            secret {provider.secretConfigured ? "configured" : "not configured"}
+                          </p>
+                        </div>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={provider.enabled}
+                            disabled={settingsLoading}
+                            onChange={(event) => void toggleProvider(provider.id, event.currentTarget.checked)}
+                          />
+                          Enabled
+                        </label>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ) : activeSettingsSection === "export" ? (
+                <section className="detail-section" aria-label="Export contract">
+                  <dl className="metadata-list compact-metadata">
+                    <div>
+                      <dt>Schema</dt>
+                      <dd>
+                        <span>{MEMO_CAPTURE_EXPORT_SCHEMA_VERSION}</span>
+                      </dd>
                     </div>
-                  </section>
-
-                  <section className="detail-section">
-                    <div className="section-title">
-                      <FolderInput size={18} />
-                      <h3>File types</h3>
-                    </div>
-                    <div className="item-meta">
-                      {settingsSummary.fileTypes.map((fileType) => (
-                        <span key={fileType.id}>
-                          {fileType.extension} {fileType.capabilityState}
+                    <div>
+                      <dt>Text</dt>
+                      <dd>
+                        <span>
+                          {settingsSummary.fileTypes
+                            .filter((fileType) => fileType.mediaKind === "text" && fileType.capabilityState === "active")
+                            .map((fileType) => fileType.extension)
+                            .join(", ")}
                         </span>
-                      ))}
+                      </dd>
                     </div>
-                  </section>
-
-                  <section className="detail-section">
-                    <div className="section-title">
-                      <PackageCheck size={18} />
-                      <h3>Export contract</h3>
+                    <div>
+                      <dt>Audio</dt>
+                      <dd>
+                        <span>
+                          {settingsSummary.fileTypes
+                            .filter((fileType) => fileType.mediaKind === "audio" && fileType.capabilityState === "active")
+                            .map((fileType) => fileType.extension)
+                            .join(", ")}
+                        </span>
+                      </dd>
                     </div>
+                  </dl>
+                </section>
+              ) : (
+                <>
+                  <section className="detail-section" aria-label="Diagnostics">
                     <dl className="metadata-list compact-metadata">
                       <div>
-                        <dt>Schema</dt>
+                        <dt>Auth</dt>
                         <dd>
-                          <span>{MEMO_CAPTURE_EXPORT_SCHEMA_VERSION}</span>
+                          <span>{settingsSummary.auth.mode}</span>
                         </dd>
                       </div>
                       <div>
-                        <dt>Text</dt>
+                        <dt>OIDC</dt>
                         <dd>
-                          <span>{ACTIVE_TEXT_FILE_EXTENSIONS.join(", ")}</span>
+                          <span>{settingsSummary.auth.oidcConfigured ? "Configured" : "Not configured"}</span>
                         </dd>
                       </div>
                       <div>
-                        <dt>Audio</dt>
+                        <dt>Transcription</dt>
                         <dd>
-                          <span>{ACTIVE_AUDIO_FILE_EXTENSIONS.join(", ")}</span>
+                          <span>
+                            {settingsSummary.transcription?.runtimeProvider ?? "not configured"} /{" "}
+                            {settingsSummary.transcription?.runtimeModelName ?? "not configured"}
+                          </span>
                         </dd>
                       </div>
                     </dl>
@@ -3368,6 +3725,35 @@ async function requestJson<Result>(path: string, init: RequestInit = {}): Promis
   return body as Result;
 }
 
+function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
+  return {
+    ...summary,
+    fileTypes: Array.isArray(summary.fileTypes) ? summary.fileTypes : [],
+    providers: Array.isArray(summary.providers) ? summary.providers : [],
+    prompts: Array.isArray(summary.prompts)
+      ? summary.prompts.map((prompt) => {
+          const contextConfig = prompt.contextConfig ?? {
+            ...defaultPromptContextConfig,
+            freeformText: prompt.body ?? ""
+          };
+          return {
+            ...prompt,
+            contextConfig: {
+              ...defaultPromptContextConfig,
+              ...contextConfig,
+              freeformText: contextConfig.freeformText || prompt.body || ""
+            },
+            outputSchema: prompt.outputSchema ?? {}
+          };
+        })
+      : [],
+    auth: summary.auth ?? {
+      mode: "unknown",
+      oidcConfigured: false
+    }
+  };
+}
+
 function stateLabel(state: string): string {
   return state.replaceAll("_", " ");
 }
@@ -3462,7 +3848,7 @@ async function sha256Digest(bytes: Uint8Array): Promise<string> {
   return `sha256:${hex}`;
 }
 
-function mimeTypeForExtension(extension: string): string {
+function mimeTypeForExtension(extension: string, mediaKind?: string): string {
   switch (extension.toLowerCase()) {
     case ".m4a":
       return "audio/mp4";
@@ -3474,12 +3860,11 @@ function mimeTypeForExtension(extension: string): string {
     case ".markdown":
       return "text/markdown";
     default:
+      if (mediaKind === "audio") {
+        return "application/octet-stream";
+      }
       return "text/plain";
   }
-}
-
-function isAudioExtension(extension: string): boolean {
-  return ACTIVE_AUDIO_FILE_EXTENSIONS.some((candidate) => candidate === extension.toLowerCase());
 }
 
 function requireValue<Value>(value: Value | null | undefined, message: string): Value {

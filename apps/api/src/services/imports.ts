@@ -1,11 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  ACTIVE_AUDIO_FILE_EXTENSIONS,
-  ACTIVE_TEXT_FILE_EXTENSIONS,
-  INGESTION_REVIEW_WORK_ITEM_STATE,
-  type ArtifactKind,
-  type SourceMemoType
-} from "@memo-capture/domain";
+import { INGESTION_REVIEW_WORK_ITEM_STATE, type ArtifactKind, type SourceMemoType } from "@memo-capture/domain";
 import type { Database, Queryable } from "../db/types.js";
 import { ArtifactRepository } from "../repositories/artifacts.js";
 import { AuditRepository } from "../repositories/audit.js";
@@ -20,6 +14,7 @@ import {
   SourceMemoArtifactRepository,
   SourceMemoRepository
 } from "../repositories/source-memos.js";
+import { SettingsRepository, type FileTypeSettingRow } from "../repositories/settings.js";
 import { WorkItemRepository } from "../repositories/work-items.js";
 import type { ObjectStorageService } from "./object-storage.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
@@ -80,7 +75,7 @@ export class ImportService {
     _requestId: string
   ): Promise<UploadSessionResponse> {
     const input = parseCreateUploadSessionRequest(requestBody);
-    assertSupportedWatchedImport(input);
+    await assertSupportedWatchedImport(this.db, input);
 
     return this.db.transaction(async (client) => {
       const sourceMemos = new SourceMemoRepository(client);
@@ -210,14 +205,21 @@ export class ImportService {
         throw new HttpError(409, "upload_session_not_finalizable", "Upload session is not ready to finalize.");
       }
 
-      const finalize = session.sourceType === "watched_audio_file"
-        ? finalizeWatchedAudioImport
-        : finalizeWatchedTextImport;
+      const fileType = await assertActiveWatchedFileType(client, {
+        sourceType: session.sourceType,
+        originalFilename: session.originalFilename
+      });
+      const finalize = hasImplementedParser(fileType)
+        ? session.sourceType === "watched_audio_file"
+          ? finalizeWatchedAudioImport
+          : finalizeWatchedTextImport
+        : finalizeUnsupportedWatchedImport;
 
       return finalize({
         client,
         objectStorage: this.objectStorage,
         session,
+        fileType,
         actor,
         requestId,
         archivePlanned: input.archivePlanned
@@ -288,6 +290,7 @@ async function finalizeWatchedAudioImport(input: {
   client: Queryable;
   objectStorage: ObjectStorageService;
   session: ImportUploadSessionRecord;
+  fileType?: FileTypeSettingRow;
   actor: AppUserRecord;
   requestId: string;
   archivePlanned: boolean;
@@ -407,6 +410,7 @@ async function finalizeWatchedTextImport(input: {
   client: Queryable;
   objectStorage: ObjectStorageService;
   session: ImportUploadSessionRecord;
+  fileType?: FileTypeSettingRow;
   actor: AppUserRecord;
   requestId: string;
   archivePlanned: boolean;
@@ -527,6 +531,127 @@ async function finalizeWatchedTextImport(input: {
   };
 }
 
+async function finalizeUnsupportedWatchedImport(input: {
+  client: Queryable;
+  objectStorage: ObjectStorageService;
+  session: ImportUploadSessionRecord;
+  fileType?: FileTypeSettingRow;
+  actor: AppUserRecord;
+  requestId: string;
+  archivePlanned: boolean;
+}): Promise<FinalizeUploadSessionResponse> {
+  const session = input.session;
+  if (
+    session === null ||
+    session.objectKey === null ||
+    session.bucket === null ||
+    session.artifactId === null ||
+    session.reservedSourceMemoId === null
+  ) {
+    throw new Error("Invalid upload session state.");
+  }
+  const fileType = requireValue(input.fileType, "File type settings are required for unsupported imports.");
+
+  const artifacts = new ArtifactRepository(input.client);
+  const sourceMemos = new SourceMemoRepository(input.client);
+  const sourceMemoArtifacts = new SourceMemoArtifactRepository(input.client);
+  const importEvents = new ImportEventRepository(input.client);
+  const workItems = new WorkItemRepository(input.client);
+  const audit = new AuditRepository(input.client);
+  const title = `Add file type support for ${fileType.extension}`;
+
+  await artifacts.create({
+    id: session.artifactId,
+    artifactKind: artifactKindForSourceType(session.sourceType),
+    objectKey: session.objectKey,
+    bucket: session.bucket,
+    originalFilename: session.originalFilename,
+    mimeType: session.mimeType,
+    byteSize: session.byteSize,
+    contentHash: session.contentHash,
+    layoutVersion: "v1",
+    createdBy: input.actor.id
+  });
+
+  const sourceMemo = await sourceMemos.create({
+    id: session.reservedSourceMemoId,
+    sourceType: session.sourceType,
+    primaryArtifactId: session.artifactId,
+    contentHash: session.contentHash,
+    originalPath: session.originalPath,
+    createdBy: input.actor.id
+  });
+  await sourceMemoArtifacts.link({
+    sourceMemoId: sourceMemo.id,
+    artifactId: session.artifactId,
+    relationship: "primary_original"
+  });
+
+  const workItem = await workItems.create({
+    sourceMemoId: sourceMemo.id,
+    projectId: null,
+    featureGroupId: null,
+    contributorText: null,
+    contributorId: null,
+    title,
+    body: buildUnsupportedFileTypeBody(session, fileType),
+    bodyFormat: "markdown",
+    workflowState: INGESTION_REVIEW_WORK_ITEM_STATE,
+    actorUserId: input.actor.id
+  });
+
+  const importEvent = await importEvents.create({
+    sourceMemoId: sourceMemo.id,
+    artifactId: session.artifactId,
+    machineId: session.machineId,
+    watchFolderId: session.watchFolderId,
+    originalPath: session.originalPath,
+    contentHash: session.contentHash,
+    status: "imported"
+  });
+  await new ImportUploadSessionRepository(input.client).markFinalized(session.id);
+  await audit.record({
+    eventName: "source_memo.created",
+    actor: input.actor,
+    subjectType: "source_memo",
+    subjectId: sourceMemo.id,
+    requestId: input.requestId,
+    sourceMemoId: sourceMemo.id,
+    metadata: {
+      sourceType: session.sourceType,
+      archivePlanned: input.archivePlanned,
+      importEventId: importEvent.id,
+      fileTypeSupport: "parser_not_available",
+      extension: fileType.extension,
+      mediaKind: fileType.media_kind,
+      parserKey: fileType.parser_key
+    }
+  });
+  await audit.record({
+    eventName: "work_item.created",
+    actor: input.actor,
+    subjectType: "work_item",
+    subjectId: workItem.id,
+    requestId: input.requestId,
+    sourceMemoId: sourceMemo.id,
+    workItemId: workItem.id,
+    metadata: {
+      workflowState: workItem.workflowState,
+      fileTypeSupport: "parser_not_available",
+      extension: fileType.extension
+    }
+  });
+
+  return {
+    sourceMemoId: sourceMemo.id,
+    workItemId: workItem.id,
+    artifactId: session.artifactId,
+    importEventId: importEvent.id,
+    initialWorkflowState: workItem.workflowState,
+    processingJobs: []
+  };
+}
+
 function parseCreateUploadSessionRequest(body: unknown): CreateUploadSessionRequest {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new HttpError(400, "invalid_request", "Upload session request body must be an object.");
@@ -595,14 +720,63 @@ function assertContentHash(value: unknown): string {
   return contentHash;
 }
 
-function assertSupportedWatchedImport(input: CreateUploadSessionRequest): void {
-  const filename = input.originalFilename.toLowerCase();
-  const supportedExtensions =
-    input.sourceType === "watched_audio_file" ? ACTIVE_AUDIO_FILE_EXTENSIONS : ACTIVE_TEXT_FILE_EXTENSIONS;
-  const supported = supportedExtensions.some((extension) => filename.endsWith(extension));
-  if (!supported) {
+async function assertSupportedWatchedImport(db: Queryable, input: CreateUploadSessionRequest): Promise<void> {
+  await assertActiveWatchedFileType(db, input);
+}
+
+async function assertActiveWatchedFileType(
+  db: Queryable,
+  input: Pick<CreateUploadSessionRequest, "sourceType" | "originalFilename">
+): Promise<FileTypeSettingRow> {
+  const extension = extensionFromFilename(input.originalFilename);
+  const fileType = extension === null ? null : await new SettingsRepository(db).findFileTypeByExtension(extension);
+  const expectedMediaKind = input.sourceType === "watched_audio_file" ? "audio" : "text";
+  if (
+    fileType === null ||
+    fileType.media_kind !== expectedMediaKind ||
+    fileType.capability_state !== "active"
+  ) {
     throw new HttpError(400, "unsupported_file_type", "Watched import does not support this file extension.");
   }
+  return fileType;
+}
+
+function hasImplementedParser(fileType: FileTypeSettingRow): boolean {
+  if (fileType.media_kind === "audio") {
+    return fileType.parser_key === "audio";
+  }
+  return fileType.media_kind === "text" && ["markdown", "plain-text"].includes(fileType.parser_key ?? "");
+}
+
+function buildUnsupportedFileTypeBody(
+  session: ImportUploadSessionRecord,
+  fileType: FileTypeSettingRow
+): string {
+  return [
+    `${session.originalFilename} was imported from a watched folder, but Memo Capture does not have processing support for ${fileType.extension} yet.`,
+    "",
+    "Add or select a parser before expecting automatic extraction for this file type.",
+    "",
+    `- Extension: ${fileType.extension}`,
+    `- Media kind: ${fileType.media_kind}`,
+    `- Parser key: ${fileType.parser_key ?? "none"}`,
+    `- Original path: ${session.originalPath}`
+  ].join("\n");
+}
+
+function requireValue<Value>(value: Value | null | undefined, message: string): Value {
+  if (value === null || value === undefined) {
+    throw new Error(message);
+  }
+  return value;
+}
+
+function extensionFromFilename(filename: string): string | null {
+  const index = filename.lastIndexOf(".");
+  if (index <= 0 || index === filename.length - 1) {
+    return null;
+  }
+  return filename.slice(index).toLowerCase();
 }
 
 function buildOriginalObjectKey(sourceMemoId: string, artifactId: string, filename: string): string {

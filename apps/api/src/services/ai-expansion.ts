@@ -2,14 +2,19 @@ import type { ApiConfig } from "../config.js";
 import type { Database } from "../db/types.js";
 import { AiSuggestionRepository, type AiSuggestionRecord } from "../repositories/ai-suggestions.js";
 import { AuditRepository } from "../repositories/audit.js";
-import { ProjectRepository } from "../repositories/catalog.js";
+import { FeatureGroupRepository, ProjectRepository } from "../repositories/catalog.js";
 import { ProcessingJobRepository } from "../repositories/jobs.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { SettingsRepository } from "../repositories/settings.js";
 import { SourceMemoRepository } from "../repositories/source-memos.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { HttpError } from "./errors.js";
-import { createLlmProvider, type LlmStructuredOutput, type WorkItemExpansionContext } from "./llm.js";
+import {
+  createLlmProvider,
+  normalizePromptContextConfig,
+  type LlmStructuredOutput,
+  type WorkItemExpansionContext
+} from "./llm.js";
 
 export class AiExpansionService {
   constructor(
@@ -37,12 +42,13 @@ export class AiExpansionService {
     validation: Record<string, unknown>;
   }> {
     const settings = new SettingsRepository(this.db);
-    const [prompt, providerConfig, workItem, sourceMemo, projects] = await Promise.all([
+    const [prompt, providerConfig, workItem, sourceMemo, projects, featureGroups] = await Promise.all([
       settings.getActivePrompt("work_item_expansion"),
       settings.findEnabledProvider("llm"),
       new WorkItemRepository(this.db).findById(workItemId),
       this.findSourceMemoForWorkItem(workItemId),
-      new ProjectRepository(this.db).list()
+      new ProjectRepository(this.db).list(),
+      new FeatureGroupRepository(this.db).list()
     ]);
     if (workItem === null) {
       throw new HttpError(404, "not_found", "work_item was not found.");
@@ -57,16 +63,23 @@ export class AiExpansionService {
     }
 
     const project = projects.find((candidate) => candidate.id === workItem.projectId) ?? null;
+    const featureGroup = featureGroups.find((candidate) => candidate.id === workItem.featureGroupId) ?? null;
     const context: WorkItemExpansionContext = {
       prompt: {
         name: prompt.name,
         version: prompt.active_version,
-        body: promptBody
+        body: promptBody,
+        contextConfig: normalizePromptContextConfig(prompt.active_context_config, promptBody)
       },
       project: {
         id: project?.id ?? null,
         name: project?.name ?? null,
+        description: project?.description ?? null,
         context: project?.context ?? null
+      },
+      featureGroup: {
+        id: featureGroup?.id ?? null,
+        name: featureGroup?.name ?? null
       },
       workItem: {
         id: workItem.id,

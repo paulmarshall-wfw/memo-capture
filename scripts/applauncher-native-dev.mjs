@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,10 +10,12 @@ const nodeBin = process.execPath;
 const nodeBinDir = path.dirname(nodeBin);
 const npmBin = path.join(nodeBinDir, "npm");
 const apiPort = process.env.MEMO_CAPTURE_API_PORT ?? "4788";
-const desktopPort = process.env.MEMO_CAPTURE_DESKTOP_PORT ?? process.env.PORT ?? "5177";
 const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
-const desktopUrl = `http://127.0.0.1:${desktopPort}/`;
+const appBundle =
+  process.env.MEMO_CAPTURE_NATIVE_APP_BUNDLE ??
+  path.join(root, "apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app");
 const workflowBundlePath = path.join(root, "docs/design/memo-capture-0.2.2-workflow-definition-bundled.json");
+const logPath = path.join(root, ".memo-capture/native-launch.log");
 const children = new Set();
 let shuttingDown = false;
 
@@ -32,7 +34,6 @@ const baseEnv = {
   VITE_MEMO_CAPTURE_API_URL: apiBaseUrl,
   MEMO_CAPTURE_API_HOST: "127.0.0.1",
   MEMO_CAPTURE_API_PORT: apiPort,
-  MEMO_CAPTURE_DESKTOP_PORT: desktopPort,
   MEMO_CAPTURE_LOG_LEVEL: "debug",
   MEMO_CAPTURE_APP_VERSION: "0.1.0",
   MEMO_CAPTURE_COMMIT_SHA: "dev",
@@ -52,16 +53,25 @@ const baseEnv = {
 };
 
 function log(message) {
-  process.stdout.write(`[memo-capture] ${message}\n`);
+  mkdirSync(path.dirname(logPath), { recursive: true });
+  appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`);
 }
 
 function runChecked(command, args, options = {}) {
+  log(`Running ${command} ${args.join(" ")}`);
   const result = spawnSync(command, args, {
     cwd: root,
     env: baseEnv,
-    stdio: "inherit",
+    stdio: "pipe",
+    encoding: "utf8",
     ...options
   });
+  if (result.stdout) {
+    log(result.stdout.trimEnd());
+  }
+  if (result.stderr) {
+    log(result.stderr.trimEnd());
+  }
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status ?? "unknown"}.`);
   }
@@ -129,7 +139,8 @@ async function ensurePostgres() {
   const started = spawnSync("docker", ["start", "memo-capture-postgres-16-8"], {
     cwd: root,
     env: baseEnv,
-    stdio: "inherit"
+    stdio: "pipe",
+    encoding: "utf8"
   });
 
   if (started.status !== 0) {
@@ -160,9 +171,11 @@ function spawnService(label, args, env = {}) {
   const child = spawn(npmBin, args, {
     cwd: root,
     env: { ...baseEnv, ...env },
-    stdio: "inherit"
+    stdio: "pipe"
   });
   children.add(child);
+  child.stdout.on("data", (chunk) => log(`[${label}] ${chunk.toString().trimEnd()}`));
+  child.stderr.on("data", (chunk) => log(`[${label}] ${chunk.toString().trimEnd()}`));
   child.once("exit", (code, signal) => {
     children.delete(child);
     if (!shuttingDown) {
@@ -193,13 +206,13 @@ async function ensureWorkflowActive() {
   }
 
   log("Activating workflow bundle 0.2.2 for local development.");
-  const bundle = JSON.parse(await readFile(workflowBundlePath, "utf8"));
+  const bundle = JSON.parse(readFileSync(workflowBundlePath, "utf8"));
   const importResponse = await fetch(`${apiBaseUrl}/api/workflow/imports`, {
     method: "POST",
     headers,
     body: JSON.stringify({
       bundle,
-      notes: "Seeded by AppLauncher local development bootstrap."
+      notes: "Seeded by AppLauncher native bootstrap."
     })
   });
   if (!importResponse.ok) {
@@ -212,7 +225,7 @@ async function ensureWorkflowActive() {
     headers,
     body: JSON.stringify({
       confirmActivation: true,
-      activationNotes: "Activated by AppLauncher local development bootstrap."
+      activationNotes: "Activated by AppLauncher native bootstrap."
     })
   });
   if (!activationResponse.ok) {
@@ -233,8 +246,8 @@ process.once("SIGINT", () => shutdown(0, "Received SIGINT."));
 process.once("SIGTERM", () => shutdown(0, "Received SIGTERM."));
 
 try {
+  log("Starting Memo Capture native bootstrap.");
   await ensurePostgres();
-  log("Applying database migrations.");
   runChecked(npmBin, ["run", "db:migrate"]);
 
   if (await httpOk(`${apiBaseUrl}/health`)) {
@@ -249,28 +262,17 @@ try {
   await ensureWorkflowActive();
   spawnService("worker", ["run", "dev", "-w", "@memo-capture/worker"]);
 
-  if (await httpOk(desktopUrl)) {
-    log("Desktop web UI is already running.");
-  } else {
-    spawnService("desktop web UI", [
-      "run",
-      "dev",
-      "-w",
-      "@memo-capture/desktop",
-      "--",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      desktopPort,
-      "--strictPort"
-    ]);
-    if (!(await waitForHttp(desktopUrl, 30_000))) {
-      throw new Error("Desktop web UI did not become ready.");
-    }
-  }
-
-  log(`Ready: ${desktopUrl}`);
-  await new Promise(() => {});
+  log(`Opening native app bundle: ${appBundle}`);
+  const app = spawn("/usr/bin/open", ["-n", "-W", appBundle], {
+    cwd: root,
+    env: baseEnv,
+    stdio: "pipe"
+  });
+  app.stdout.on("data", (chunk) => log(`[open] ${chunk.toString().trimEnd()}`));
+  app.stderr.on("data", (chunk) => log(`[open] ${chunk.toString().trimEnd()}`));
+  app.once("exit", (code, signal) => {
+    shutdown(code ?? 0, `Native app exited${signal ? ` with signal ${signal}` : ""}.`);
+  });
 } catch (error) {
   shutdown(1, error instanceof Error ? error.message : String(error));
 }

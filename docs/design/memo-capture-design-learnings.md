@@ -63,7 +63,7 @@ Feature group, tags, and contributor are optional.
 
 ## File Type Support
 
-The settings model should support adding/removing configured file type entries, but V1 should activate only implemented parsers.
+The settings model should support adding/removing configured file type entries. V1 supports text and audio media kinds, with parser selection tracked separately from whether the extension is active.
 
 Active text formats in V1:
 
@@ -77,7 +77,7 @@ Active audio formats in V1:
 - `.mp3`
 - `.wav`
 
-Unsupported configured types should be stored as inactive or `not_supported_yet`. Watched-folder ingestion must not attempt unsupported file types.
+Inactive configured types are not scanned or accepted. Active configured types with no implemented parser are accepted into managed storage, then create a `needs_review` work item prompting parser support instead of queuing text extraction or transcription.
 
 ## Watched Folder Handling
 
@@ -228,6 +228,8 @@ Dismissing a suggestion does not create a workflow item or mutate workflow state
 Prompts are backend-owned, versioned assets.
 
 Editing a prompt creates a new prompt version and does not mutate previous versions.
+
+Prompt editing exposes freeform prompt text first, then explicit toggles for project synopsis, memo metadata, and memo text/transcript content. The backend composes the final model prompt in that order and does not send raw audio or video content to the LLM.
 
 AI generation records should include:
 

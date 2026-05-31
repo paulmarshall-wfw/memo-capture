@@ -45,6 +45,7 @@ export interface PromptDefinitionRow extends Record<string, unknown> {
   active_prompt_version_id: string | null;
   active_body: string | null;
   active_output_schema: Record<string, unknown> | null;
+  active_context_config: Record<string, unknown> | null;
   updated_at: Date | string;
 }
 
@@ -58,6 +59,65 @@ export class SettingsRepository {
        order by media_kind asc, extension asc`
     );
     return result.rows;
+  }
+
+  async findFileTypeByExtension(extension: string): Promise<FileTypeSettingRow | null> {
+    const result = await this.db.query<FileTypeSettingRow>(
+      `select id, extension, media_kind, capability_state, parser_key, updated_at
+       from file_type_settings
+       where lower(extension) = lower($1)
+       limit 1`,
+      [extension]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async createFileType(input: {
+    extension: string;
+    mediaKind: string;
+    capabilityState: string;
+    parserKey: string | null;
+    actorUserId: string;
+  }): Promise<FileTypeSettingRow> {
+    const result = await this.db.query<FileTypeSettingRow>(
+      `insert into file_type_settings (
+         id,
+         extension,
+         media_kind,
+         capability_state,
+         parser_key,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at
+       )
+       values ($1, $2, $3, $4, $5, $6, $6, now(), now())
+       returning id, extension, media_kind, capability_state, parser_key, updated_at`,
+      [
+        randomUUID(),
+        input.extension,
+        input.mediaKind,
+        input.capabilityState,
+        input.parserKey,
+        input.actorUserId
+      ]
+    );
+    return requiredRow(result.rows[0], "file type setting creation failed");
+  }
+
+  async updateFileType(input: {
+    fileTypeId: string;
+    capabilityState: string;
+    actorUserId: string;
+  }): Promise<FileTypeSettingRow | null> {
+    const result = await this.db.query<FileTypeSettingRow>(
+      `update file_type_settings
+       set capability_state = $2, updated_by = $3, updated_at = now()
+       where id = $1
+       returning id, extension, media_kind, capability_state, parser_key, updated_at`,
+      [input.fileTypeId, input.capabilityState, input.actorUserId]
+    );
+    return result.rows[0] ?? null;
   }
 
   async getExtractionSettings(): Promise<ExtractionSettingsRow | null> {
@@ -201,6 +261,7 @@ export class SettingsRepository {
          prompt_versions.id as active_prompt_version_id,
          prompt_versions.body as active_body,
          prompt_versions.output_schema as active_output_schema,
+         prompt_versions.context_config as active_context_config,
          prompt_definitions.updated_at
        from prompt_definitions
        left join prompt_versions on prompt_versions.prompt_definition_id = prompt_definitions.id
@@ -221,6 +282,7 @@ export class SettingsRepository {
          prompt_versions.id as active_prompt_version_id,
          prompt_versions.body as active_body,
          prompt_versions.output_schema as active_output_schema,
+         prompt_versions.context_config as active_context_config,
          prompt_definitions.updated_at
        from prompt_definitions
        join prompt_versions on prompt_versions.prompt_definition_id = prompt_definitions.id
@@ -235,6 +297,7 @@ export class SettingsRepository {
     promptDefinitionId: string;
     body: string;
     outputSchema: Record<string, unknown>;
+    contextConfig: Record<string, unknown>;
     actorUserId: string;
   }): Promise<PromptDefinitionRow> {
     const version = await this.db.query<{ version: number }>(
@@ -251,16 +314,18 @@ export class SettingsRepository {
          version,
          body,
          output_schema,
+         context_config,
          created_by,
          created_at
        )
-       values ($1, $2, $3, $4, $5::jsonb, $6, now())`,
+       values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, now())`,
       [
         randomUUID(),
         input.promptDefinitionId,
         nextVersion,
         input.body,
         JSON.stringify(input.outputSchema),
+        JSON.stringify(input.contextConfig),
         input.actorUserId
       ]
     );

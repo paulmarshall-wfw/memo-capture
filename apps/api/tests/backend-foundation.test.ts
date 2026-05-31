@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { readApiConfig } from "../src/config.js";
@@ -91,6 +92,159 @@ test("archive result rejects mismatched machine ids", async () => {
       error.statusCode === 409 &&
       error.code === "machine_id_mismatch"
   );
+});
+
+test("upload sessions reject inactive file type settings", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  db.fileTypes.push({
+    id: "file-type-md",
+    extension: ".md",
+    media_kind: "text",
+    capability_state: "inactive",
+    parser_key: "markdown",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  await assert.rejects(
+    () =>
+      services.imports.createUploadSession(
+        {
+          machineId: "machine-1",
+          watchFolderId: "watch-1",
+          sourceType: "watched_text_file",
+          originalFilename: "memo.md",
+          originalPath: "/watched/memo.md",
+          mimeType: "text/markdown",
+          byteSize: 10,
+          contentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        session.user,
+        "request-1"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 400 &&
+      error.code === "unsupported_file_type"
+  );
+});
+
+test("settings service creates configurable file types with audit", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const created = await services.settings.createFileType(
+    {
+      extension: "HTML",
+      mediaKind: "text",
+      parserKey: null,
+      capabilityState: "active"
+    },
+    session.user,
+    "request-1"
+  ) as { fileType: { extension: string; capabilityState: string; parserKey: string | null } };
+
+  assert.equal(created.fileType.extension, ".html");
+  assert.equal(created.fileType.capabilityState, "active");
+  assert.equal(created.fileType.parserKey, null);
+  assert.equal(db.auditEvents.at(-1)?.event_name, "file_type_settings.created");
+
+  await assert.rejects(
+    () =>
+      services.settings.createFileType(
+        {
+          extension: ".html",
+          mediaKind: "text",
+          parserKey: null,
+          capabilityState: "inactive"
+        },
+        session.user,
+        "request-2"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "file_type_exists"
+  );
+
+  await assert.rejects(
+    () =>
+      services.settings.createFileType(
+        {
+          extension: ".pdf",
+          mediaKind: "document",
+          parserKey: null,
+          capabilityState: "inactive"
+        },
+        session.user,
+        "request-3"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 400 &&
+      error.code === "invalid_request"
+  );
+});
+
+test("enabled file types without parsers finalize into ingestion review without jobs", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  db.fileTypes.push({
+    id: "file-type-html",
+    extension: ".html",
+    media_kind: "text",
+    capability_state: "active",
+    parser_key: null,
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  const body = Buffer.from("<section>memo</section>", "utf8");
+  const contentHash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+
+  const uploadSession = await services.imports.createUploadSession(
+    {
+      machineId: "machine-1",
+      watchFolderId: "watch-1",
+      sourceType: "watched_text_file",
+      originalFilename: "memo.html",
+      originalPath: "/watched/memo.html",
+      mimeType: "text/plain",
+      byteSize: body.byteLength,
+      contentHash
+    },
+    session.user,
+    "request-1"
+  );
+  assert.equal(uploadSession.status, "upload_required");
+  await services.imports.uploadSessionArtifact(uploadSession.sessionId, body);
+
+  const finalized = await services.imports.finalizeUploadSession(
+    uploadSession.sessionId,
+    { machineId: "machine-1", archivePlanned: true },
+    session.user,
+    "request-2"
+  );
+
+  assert.equal(finalized.initialWorkflowState, "needs_review");
+  assert.deepEqual(finalized.processingJobs, []);
+  assert.equal(db.processingJobs.length, 0);
+  assert.match(String(db.workItems[0]?.title), /Add file type support for \.html/);
+  assert.match(String(db.workItems[0]?.body), /Parser key: none/);
 });
 
 test("protected routes require authorization and include a request id", async () => {
@@ -286,6 +440,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     const settings = await authedJson(baseUrl, "/api/settings");
     assert.equal(settings.response.status, 200);
     assert.equal(settings.body.providers[0].providerName, "local-dev");
+    assert.equal(settings.body.fileTypes[0].extension, ".md");
 
     const providerPatch = await authedJson(baseUrl, "/api/settings/providers/provider-1", {
       method: "PATCH",
@@ -293,6 +448,40 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     });
     assert.equal(providerPatch.response.status, 200);
     assert.equal(providerPatch.body.provider.enabled, true);
+
+    const fileTypePatch = await authedJson(baseUrl, "/api/settings/file-types/file-type-md", {
+      method: "PATCH",
+      body: JSON.stringify({ active: false })
+    });
+    assert.equal(fileTypePatch.response.status, 200);
+    assert.equal(fileTypePatch.body.fileType.capabilityState, "inactive");
+
+    const fileTypeCreate = await authedJson(baseUrl, "/api/settings/file-types", {
+      method: "POST",
+      body: JSON.stringify({
+        extension: ".html",
+        mediaKind: "text",
+        parserKey: null,
+        capabilityState: "active"
+      })
+    });
+    assert.equal(fileTypeCreate.response.status, 200);
+    assert.equal(fileTypeCreate.body.fileType.extension, ".html");
+    assert.equal(fileTypeCreate.body.fileType.capabilityState, "active");
+
+    const promptVersion = await authedJson(baseUrl, "/api/settings/prompts/prompt-1/versions", {
+      method: "POST",
+      body: JSON.stringify({
+        freeformText: "Expand with implementation detail.",
+        includeProjectSynopsis: true,
+        includeMemoMetadata: false,
+        includeMemoTranscriptText: true,
+        outputSchema: {}
+      })
+    });
+    assert.equal(promptVersion.response.status, 200);
+    assert.equal(promptVersion.body.prompt.activeVersion, 2);
+    assert.equal(promptVersion.body.prompt.contextConfig.includeMemoMetadata, false);
 
     const auditEvents = await authedJson(baseUrl, "/api/audit-events?event_name=provider_config.updated");
     assert.equal(auditEvents.response.status, 200);
@@ -517,6 +706,12 @@ function stubServices(): AppServices {
       updateTranscription: async () => {
         throw new Error("not used");
       },
+      updateFileType: async () => {
+        throw new Error("not used");
+      },
+      createFileType: async () => {
+        throw new Error("not used");
+      },
       updateProvider: async () => {
         throw new Error("not used");
       },
@@ -629,6 +824,14 @@ function captureRouteServices(): AppServices {
     ...suggestionOne,
     id: "suggestion-2",
     title: "Captured memo updated rollout notes"
+  };
+  let fileTypeCapabilityState = "active";
+  let promptActiveVersion = 1;
+  let promptContextConfig = {
+    freeformText: "Return strict JSON.",
+    includeProjectSynopsis: true,
+    includeMemoMetadata: true,
+    includeMemoTranscriptText: true
   };
 
   return {
@@ -888,7 +1091,16 @@ function captureRouteServices(): AppServices {
     } as unknown as AppServices["jobs"],
     settings: {
       getSummary: async () => ({
-        fileTypes: [],
+        fileTypes: [
+          {
+            id: "file-type-md",
+            extension: ".md",
+            mediaKind: "text",
+            capabilityState: fileTypeCapabilityState,
+            parserKey: "markdown",
+            updatedAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
         extraction: {
           projectConfidenceThreshold: 0.7,
           featureGroupConfidenceThreshold: 0.7,
@@ -924,10 +1136,11 @@ function captureRouteServices(): AppServices {
             id: "prompt-1",
             name: "work_item_expansion",
             purpose: "Expand work items.",
-            activeVersion: 1,
+            activeVersion: promptActiveVersion,
             activePromptVersionId: "prompt-version-1",
-            body: "Return strict JSON.",
+            body: promptContextConfig.freeformText,
             outputSchema: {},
+            contextConfig: promptContextConfig,
             retentionPolicy: "retain_active_and_referenced",
             updatedAt: "2026-05-29T00:00:00.000Z"
           }
@@ -936,6 +1149,37 @@ function captureRouteServices(): AppServices {
       }),
       updateExtraction: async () => ({ extraction: { projectConfidenceThreshold: 0.8 } }),
       updateTranscription: async () => ({ transcription: { maxRetryAttempts: 4 } }),
+      updateFileType: async () => {
+        fileTypeCapabilityState = "inactive";
+        return {
+          fileType: {
+            id: "file-type-md",
+            extension: ".md",
+            mediaKind: "text",
+            capabilityState: fileTypeCapabilityState,
+            parserKey: "markdown",
+            updatedAt: "2026-05-29T00:06:00.000Z"
+          }
+        };
+      },
+      createFileType: async (body: unknown) => {
+        const record = body as {
+          extension: string;
+          mediaKind: string;
+          capabilityState: string;
+          parserKey: string | null;
+        };
+        return {
+          fileType: {
+            id: "file-type-html",
+            extension: record.extension,
+            mediaKind: record.mediaKind,
+            capabilityState: record.capabilityState,
+            parserKey: record.parserKey,
+            updatedAt: "2026-05-29T00:06:00.000Z"
+          }
+        };
+      },
       updateProvider: async () => ({
         provider: {
           id: "provider-1",
@@ -953,7 +1197,26 @@ function captureRouteServices(): AppServices {
           updatedAt: "2026-05-29T00:06:00.000Z"
         }
       }),
-      createPromptVersion: async () => ({ prompt: { id: "prompt-1", activeVersion: 2 } })
+      createPromptVersion: async (_promptDefinitionId: string, body: unknown) => {
+        const record = body as typeof promptContextConfig;
+        promptActiveVersion = 2;
+        promptContextConfig = {
+          freeformText: record.freeformText,
+          includeProjectSynopsis: record.includeProjectSynopsis,
+          includeMemoMetadata: record.includeMemoMetadata,
+          includeMemoTranscriptText: record.includeMemoTranscriptText
+        };
+        return {
+          prompt: {
+            id: "prompt-1",
+            name: "work_item_expansion",
+            activeVersion: promptActiveVersion,
+            body: promptContextConfig.freeformText,
+            outputSchema: {},
+            contextConfig: promptContextConfig
+          }
+        };
+      }
     } as unknown as AppServices["settings"],
     workflows: {
       getStatus: async () => ({
@@ -1170,9 +1433,12 @@ async function authedJson(
 
 class FakeDatabase implements Database {
   readonly users: FakeUserRow[] = [];
+  readonly fileTypes: Record<string, unknown>[] = [];
+  readonly importUploadSessions: Record<string, unknown>[] = [];
   readonly sourceMemos: Record<string, unknown>[] = [];
   readonly workItems: Record<string, unknown>[] = [];
   readonly importEvents: Record<string, unknown>[] = [];
+  readonly processingJobs: Record<string, unknown>[] = [];
   readonly auditEvents: Record<string, unknown>[] = [];
 
   async transaction<Result>(operation: (client: Queryable) => Promise<Result>): Promise<Result> {
@@ -1213,7 +1479,88 @@ class FakeDatabase implements Database {
     }
 
     if (text.includes("insert into source_memos")) {
-      this.sourceMemos.push({ id: values[0], source_type: values[1] });
+      this.sourceMemos.push({
+        id: values[0],
+        source_type: values[1],
+        primary_artifact_id: values[2],
+        content_hash: values[6]
+      });
+      return rows([]);
+    }
+
+    if (text.includes("from source_memos") && text.includes("where content_hash")) {
+      const sourceMemo = this.sourceMemos.find((row) => row.content_hash === values[0]);
+      return rows(sourceMemo === undefined ? [] : [sourceMemo as Row]);
+    }
+
+    if (text.includes("from file_type_settings") && text.includes("where lower(extension)")) {
+      const extension = String(values[0]).toLowerCase();
+      const fileType = this.fileTypes.find((row) => String(row.extension).toLowerCase() === extension);
+      return rows(fileType === undefined ? [] : [fileType as Row]);
+    }
+
+    if (text.includes("insert into file_type_settings")) {
+      const row = {
+        id: values[0],
+        extension: values[1],
+        media_kind: values[2],
+        capability_state: values[3],
+        parser_key: values[4],
+        created_by: values[5],
+        updated_by: values[5],
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.fileTypes.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("insert into import_upload_sessions")) {
+      const row = {
+        id: values[0],
+        status: values[1],
+        machine_id: values[2],
+        watch_folder_id: values[3],
+        source_type: values[4],
+        original_filename: values[5],
+        original_path: values[6],
+        mime_type: values[7],
+        byte_size: values[8],
+        content_hash: values[9],
+        object_key: values[10],
+        bucket: values[11],
+        artifact_id: values[12],
+        reserved_source_memo_id: values[13],
+        duplicate_of_source_memo_id: values[14],
+        created_by: values[15],
+        created_at: "2026-05-29T00:00:00.000Z",
+        updated_at: "2026-05-29T00:00:00.000Z",
+        uploaded_at: null,
+        finalized_at: null
+      };
+      this.importUploadSessions.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("from import_upload_sessions")) {
+      const session = this.importUploadSessions.find((row) => row.id === values[0]);
+      return rows(session === undefined ? [] : [session as Row]);
+    }
+
+    if (text.includes("update import_upload_sessions") && text.includes("status = 'uploaded'")) {
+      const session = this.importUploadSessions.find((row) => row.id === values[0]);
+      if (session !== undefined && session.status === "upload_required") {
+        session.status = "uploaded";
+        session.uploaded_at = "2026-05-29T00:00:00.000Z";
+      }
+      return rows(session === undefined ? [] : [session as Row]);
+    }
+
+    if (text.includes("update import_upload_sessions") && text.includes("status = 'finalized'")) {
+      const session = this.importUploadSessions.find((row) => row.id === values[0]);
+      if (session !== undefined) {
+        session.status = "finalized";
+        session.finalized_at = "2026-05-29T00:00:00.000Z";
+      }
       return rows([]);
     }
 
@@ -1237,6 +1584,11 @@ class FakeDatabase implements Database {
       };
       this.workItems.push(row);
       return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("insert into processing_jobs")) {
+      this.processingJobs.push({ id: values[0], job_kind: values[1] });
+      return rows([]);
     }
 
     if (text.includes("insert into import_events")) {

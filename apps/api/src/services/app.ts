@@ -81,6 +81,8 @@ export interface SettingsOperations {
   updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  createFileType(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateFileType(fileTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createPromptVersion(promptDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
 }
 

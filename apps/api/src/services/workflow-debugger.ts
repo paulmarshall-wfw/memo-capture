@@ -100,6 +100,7 @@ export class WorkflowDebuggerService {
 
   async resume(body: unknown, actor: AppUserRecord, requestId: string): Promise<WorkflowDebuggerSnapshot> {
     const input = parseControlBody(body);
+    this.stepMode = false;
     this.state = "running";
     this.stepAllowance = 0;
     this.append({
