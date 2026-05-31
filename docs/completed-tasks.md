@@ -70,3 +70,15 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Added an import-event lookup and machine-ID mismatch check so archive-result updates cannot mark another machine's watched import as archived or failed.
   Verification: `node --test --import tsx --test-name-pattern='archive result rejects mismatched machine ids' apps/api/tests/backend-foundation.test.ts` passed; `npm run typecheck` passed; `git diff --check` passed.
   Traceability: branch `main`, HEAD `847efa2`; changed files include `apps/api/src/repositories/source-memos.ts`, `apps/api/src/services/imports.ts`, `apps/api/tests/backend-foundation.test.ts`, and `docs/completed-tasks.md`.
+
+- Task: Refine work queue shell and layout
+  Outcome: Reworked the desktop shell into top-level navigation, separated Work queue page identity from workflow bucket scope, moved workflow actions into selected rows with clearer intent styling and confirmation for risky actions, added labeled search, resizable list/detail panels, metadata copy controls, Settings-only export contract details, and light/dark semantic tokens.
+  Verification: `npm run typecheck` passed; `npm run build` passed; `git diff --check` passed; Chrome visual pass at `http://127.0.0.1:5176/` covered Work queue and Settings in light/dark modes.
+  Traceability: branch `main`, HEAD `9523e2f`; changed files include `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, and `docs/completed-tasks.md`.
+
+## 2026-05-31
+
+- Task: Move watched-folder actions left
+  Outcome: Adjusted the watched-folder toolbar layout so `Add folder` and `Save settings` stay grouped on the left after the enabled-folder count.
+  Verification: `npm run typecheck` passed; `git diff --check -- apps/desktop/src/styles.css` passed; Chrome visual check at `http://127.0.0.1:5175/` confirmed the buttons render on the left.
+  Traceability: branch `main`, HEAD `9523e2f`; changed files include `apps/desktop/src/styles.css` and `docs/completed-tasks.md`.

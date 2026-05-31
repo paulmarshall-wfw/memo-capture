@@ -1,15 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
   Check,
   CheckCircle2,
   CircleSlash,
+  Copy,
   Download,
   FileText,
   FolderInput,
+  FolderOpen,
   FolderSearch,
   Headphones,
+  Moon,
   PackageCheck,
   PackagePlus,
   Plus,
@@ -17,9 +27,9 @@ import {
   Save,
   Search,
   Settings,
+  Sun,
   Trash2,
-  Upload,
-  Workflow
+  Upload
 } from "lucide-react";
 import {
   ACTIVE_AUDIO_FILE_EXTENSIONS,
@@ -30,6 +40,7 @@ import {
 type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type ActiveView = "work-items" | "exports" | "watched-folders" | "settings";
+type ThemeMode = "light" | "dark";
 
 interface SessionResponse {
   accessToken?: string;
@@ -316,8 +327,15 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
   /\/$/,
   ""
 );
+const appVersion = "0.1.0";
 const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const primaryNavigation: { id: ActiveView; label: string }[] = [
+  { id: "work-items", label: "Work queue" },
+  { id: "exports", label: "Exports" },
+  { id: "watched-folders", label: "Watched folders" },
+  { id: "settings", label: "Settings" }
+];
 
 function createDraft(item: WorkItem): DraftState {
   return {
@@ -333,6 +351,7 @@ function createDraft(item: WorkItem): DraftState {
 export function App() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [activeView, setActiveView] = useState<ActiveView>("work-items");
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [buckets, setBuckets] = useState<WorkflowBucket[]>([]);
@@ -371,6 +390,7 @@ export function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditFilter, setAuditFilter] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(560);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
@@ -442,6 +462,24 @@ export function App() {
     selectedDiagnostics?.jobs.filter((job) => job.jobKind === "transcribe_audio") ?? [];
   const retryableTranscriptionJob =
     transcriptionJobs.find((job) => job.status === "failed" || job.status === "exhausted") ?? null;
+  const pageTitle =
+    activeView === "exports"
+      ? "Exports"
+      : activeView === "watched-folders"
+      ? "Watched folders"
+      : activeView === "settings"
+      ? "Settings"
+      : "Work queue";
+  const pageDescription =
+    activeView === "exports"
+      ? "Accepted snapshots and generated export batches."
+      : activeView === "watched-folders"
+      ? "Desktop-local watched folders and import candidates."
+      : activeView === "settings"
+      ? "Provider, prompt, settings, audit, and export contract details."
+      : selectedBucket === null
+      ? "No workflow scope is selected."
+      : `${selectedBucket.label} scope selected.`;
 
   useEffect(() => {
     let cancelled = false;
@@ -478,6 +516,10 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+  }, [themeMode]);
 
   useEffect(() => {
     return () => {
@@ -582,7 +624,9 @@ export function App() {
       authedJson<{ contributors: Contributor[] }>(token, "/api/contributors")
     ]);
     const orderedBuckets = [...bucketResponse.buckets].sort((left, right) => left.order - right.order);
-    const nextBucketId = requestedBucketId ?? orderedBuckets[0]?.id ?? null;
+    const defaultBucketId =
+      orderedBuckets.find((bucket) => bucket.label.toLowerCase() === "memos")?.id ?? orderedBuckets[0]?.id ?? null;
+    const nextBucketId = requestedBucketId ?? defaultBucketId;
     const itemResponse = await loadWorkItems(token, nextBucketId);
 
     setBuckets(orderedBuckets);
@@ -814,6 +858,14 @@ export function App() {
       return;
     }
 
+    const intent = workflowActionIntent(action);
+    if (
+      (action.confirmationRequired || intent === "danger" || intent === "warning") &&
+      !window.confirm(`Run "${action.label}" on "${selectedItem.title}"?`)
+    ) {
+      return;
+    }
+
     setActionIdInFlight(action.id);
     setStatusMessage(null);
     try {
@@ -871,6 +923,29 @@ export function App() {
     setWatchedFolders((current) =>
       current.map((folder) => (folder.id === id ? { ...folder, [field]: value } : folder))
     );
+  }
+
+  async function pickWatchedFolderPath(id: string, field: "path" | "archivePath") {
+    if (!isTauriRuntime) {
+      setStatusMessage("Native folder picking is available in the Tauri desktop app.");
+      return;
+    }
+
+    const currentPath = watchedFolders.find((folder) => folder.id === id)?.[field] ?? "";
+    const label = field === "path" ? "watched folder" : "archive folder";
+    try {
+      const selectedPath = await invoke<string | null>("pick_folder", {
+        title: field === "path" ? "Choose watched folder" : "Choose archive folder",
+        defaultPath: currentPath.trim() === "" ? null : currentPath
+      });
+      if (selectedPath === null) {
+        return;
+      }
+      updateWatchedFolder(id, field, selectedPath);
+      setStatusMessage(`Selected ${label}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : `Unable to choose ${label}.`);
+    }
   }
 
   function removeWatchedFolder(id: string) {
@@ -1129,6 +1204,48 @@ export function App() {
     }
   }
 
+  function refreshCurrentView() {
+    void (activeView === "exports"
+      ? loadExports()
+      : activeView === "watched-folders"
+      ? scanWatchedFolders()
+      : activeView === "settings"
+      ? loadSettingsAndAudit()
+      : refreshBucket());
+  }
+
+  function handlePanelResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = detailPanelWidth;
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = startWidth - (moveEvent.clientX - startX);
+      setDetailPanelWidth(Math.min(760, Math.max(460, nextWidth)));
+    };
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  }
+
+  function handlePanelResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+      return;
+    }
+    event.preventDefault();
+    setDetailPanelWidth((current) => {
+      const delta = event.key === "ArrowLeft" ? 32 : -32;
+      return Math.min(760, Math.max(460, current + delta));
+    });
+  }
+
+  async function copyText(value: string, label: string) {
+    await navigator.clipboard.writeText(value);
+    setStatusMessage(`${label} copied.`);
+  }
+
   async function saveManualTranscript() {
     if (accessToken === null || selectedItem === null || draft === null || draft.body.trim() === "") {
       return;
@@ -1197,111 +1314,53 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar" aria-label="Workspace navigation">
+      <header className="topbar">
         <div className="brand">
           <div className="brand-mark">MC</div>
-          <div>
-            <p className="brand-name">Memo Capture</p>
+          <div className="brand-copy">
+            <div className="brand-title-row">
+              <p className="brand-name">Memo Capture</p>
+              <span className="brand-version">v{appVersion}</span>
+              <button
+                className="theme-toggle"
+                type="button"
+                title={themeMode === "light" ? "Switch to dark mode" : "Switch to light mode"}
+                aria-label={themeMode === "light" ? "Switch to dark mode" : "Switch to light mode"}
+                onClick={() => setThemeMode((current) => (current === "light" ? "dark" : "light"))}
+              >
+                {themeMode === "light" ? <Moon size={16} /> : <Sun size={16} />}
+              </button>
+            </div>
             <p className="brand-meta">{session?.user.displayName ?? session?.user.email ?? "Signed in"}</p>
           </div>
         </div>
 
-        <nav className="view-switcher" aria-label="Primary views">
-          <button
-            className={`bucket-button ${activeView === "work-items" ? "active" : ""}`}
-            type="button"
-            onClick={() => setActiveView("work-items")}
-          >
-            <span>Work queue</span>
-          </button>
-          <button
-            className={`bucket-button ${activeView === "exports" ? "active" : ""}`}
-            type="button"
-            onClick={() => setActiveView("exports")}
-          >
-            <span>Exports</span>
-          </button>
-          <button
-            className={`bucket-button ${activeView === "watched-folders" ? "active" : ""}`}
-            type="button"
-            onClick={() => setActiveView("watched-folders")}
-          >
-            <span>Watched folders</span>
-          </button>
-          <button
-            className={`bucket-button ${activeView === "settings" ? "active" : ""}`}
-            type="button"
-            onClick={() => setActiveView("settings")}
-          >
-            <span>Settings</span>
-          </button>
-        </nav>
-
-        <nav className="bucket-list" aria-label="Workflow buckets">
-          {buckets.map((bucket) => (
+        <nav className="top-nav" aria-label="Primary navigation">
+          {primaryNavigation.map((item) => (
             <button
-              className={`bucket-button ${bucket.id === activeBucketId ? "active" : ""}`}
+              className={`top-nav-tab ${activeView === item.id ? "active" : ""}`}
               type="button"
-              key={bucket.id}
-              onClick={() => {
-                setActiveView("work-items");
-                void selectBucket(bucket.id);
-              }}
+              key={item.id}
+              onClick={() => setActiveView(item.id)}
             >
-              <span>{bucket.label}</span>
-              <span className="bucket-count">{bucket.count ?? 0}</span>
+              {item.label}
             </button>
           ))}
         </nav>
+      </header>
 
-        <div className="sidebar-actions">
-          <button className="icon-text-button" type="button" onClick={() => setActiveView("watched-folders")}>
-            <FolderInput size={18} />
-            Watched folders
-          </button>
-          <button className="icon-text-button" type="button" onClick={() => setActiveView("settings")}>
-            <Settings size={18} />
-            Settings
-          </button>
-        </div>
-      </aside>
-
-      <section className="workspace" aria-label="Work items">
+      <section className="workspace" aria-label={pageTitle}>
         <header className="workspace-header">
           <div>
-            <h1>
-              {activeView === "exports"
-                ? "Exports"
-                : activeView === "watched-folders"
-                ? "Watched folders"
-                : activeView === "settings"
-                ? "Settings"
-                : selectedBucket?.label ?? "Work queue"}
-            </h1>
-            <p>
-              {activeView === "exports"
-                ? `${MEMO_CAPTURE_EXPORT_SCHEMA_VERSION} accepted snapshot batches`
-                : activeView === "watched-folders"
-                ? `${[...ACTIVE_TEXT_FILE_EXTENSIONS, ...ACTIVE_AUDIO_FILE_EXTENSIONS].join(", ")} imports with archive-after-finalize`
-                : activeView === "settings"
-                ? "Provider, prompt, settings, and audit controls"
-                : selectedBucket === null
-                ? "No active workflow bucket is selected."
-                : `${selectedBucket.states.join(", ")} workflow states`}
-            </p>
+            <h1>{pageTitle}</h1>
+            <p>{pageDescription}</p>
           </div>
           <button
-            className="primary-button"
+            className={activeView === "watched-folders" ? "secondary-button" : "icon-button"}
             type="button"
-            onClick={() =>
-              void (activeView === "exports"
-                ? loadExports()
-                : activeView === "watched-folders"
-                ? scanWatchedFolders()
-                : activeView === "settings"
-                ? loadSettingsAndAudit()
-                : refreshBucket())
-            }
+            title={activeView === "watched-folders" ? "Scan watched folders" : "Refresh current view"}
+            aria-label={activeView === "watched-folders" ? "Scan watched folders" : "Refresh current view"}
+            onClick={refreshCurrentView}
           >
             {activeView === "settings" && settingsLoading ? (
               <RefreshCcw className="spin" size={18} />
@@ -1309,12 +1368,10 @@ export function App() {
               <RefreshCcw className="spin" size={18} />
             ) : activeView === "watched-folders" ? (
               <FolderSearch size={18} />
-            ) : activeView === "settings" ? (
-              <Settings size={18} />
             ) : (
               <RefreshCcw size={18} />
             )}
-            {activeView === "watched-folders" ? "Scan" : "Refresh"}
+            {activeView === "watched-folders" ? "Scan" : null}
           </button>
         </header>
 
@@ -1326,24 +1383,30 @@ export function App() {
         ) : null}
 
         {activeView === "work-items" ? (
-          <div className="toolbar" role="search">
-            <Search size={18} />
-            <input
-              aria-label="Search work items"
-              placeholder="Search title, body, project, feature group, or contributor"
-              value={search}
-              onChange={(event) => setSearch(event.currentTarget.value)}
-            />
+          <div className="toolbar search-toolbar" role="search">
+            <label htmlFor="work-item-search">Search work items</label>
+            <div className="search-field">
+              <Search size={18} />
+              <input
+                id="work-item-search"
+                placeholder="Title, body, project, feature group, or contributor"
+                value={search}
+                onChange={(event) => setSearch(event.currentTarget.value)}
+              />
+            </div>
           </div>
         ) : activeView === "exports" ? (
           <div className="toolbar export-toolbar" role="search">
-            <Search size={18} />
-            <input
-              aria-label="Search accepted snapshots"
-              placeholder="Search accepted snapshots by title, project, feature group, or contributor"
-              value={exportSearch}
-              onChange={(event) => setExportSearch(event.currentTarget.value)}
-            />
+            <label htmlFor="export-search">Search snapshots</label>
+            <div className="search-field">
+              <Search size={18} />
+              <input
+                id="export-search"
+                placeholder="Title, project, feature group, or contributor"
+                value={exportSearch}
+                onChange={(event) => setExportSearch(event.currentTarget.value)}
+              />
+            </div>
             <button
               className="secondary-button"
               type="button"
@@ -1377,13 +1440,16 @@ export function App() {
           </div>
         ) : (
           <div className="toolbar settings-toolbar" role="search">
-            <Search size={18} />
-            <input
-              aria-label="Filter audit events by event name"
-              placeholder="Filter audit events by exact event name"
-              value={auditFilter}
-              onChange={(event) => setAuditFilter(event.currentTarget.value)}
-            />
+            <label htmlFor="audit-filter">Audit event name</label>
+            <div className="search-field">
+              <Search size={18} />
+              <input
+                id="audit-filter"
+                placeholder="Exact event name"
+                value={auditFilter}
+                onChange={(event) => setAuditFilter(event.currentTarget.value)}
+              />
+            </div>
             <button className="secondary-button" type="button" onClick={() => void loadSettingsAndAudit()}>
               <RefreshCcw size={18} />
               Apply filter
@@ -1392,7 +1458,33 @@ export function App() {
         )}
 
         {activeView === "work-items" ? (
-        <div className="content-grid">
+        <div
+          className="content-grid"
+          style={{ "--detail-panel-width": `${detailPanelWidth}px` } as CSSProperties}
+        >
+          <aside className="scope-rail" aria-label="Workflow buckets">
+            <div className="scope-rail-header">
+              <span>Scope</span>
+              <strong>{selectedBucket?.label ?? "None"}</strong>
+            </div>
+            <nav className="bucket-list" aria-label="Workflow buckets">
+              {buckets.map((bucket) => (
+                <button
+                  className={`bucket-button ${bucket.id === activeBucketId ? "active" : ""}`}
+                  type="button"
+                  key={bucket.id}
+                  onClick={() => {
+                    setActiveView("work-items");
+                    void selectBucket(bucket.id);
+                  }}
+                >
+                  <span>{bucket.label}</span>
+                  <span className="bucket-count">{bucket.count ?? 0}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+
           <section className="item-list" aria-label="Filtered work items">
             {filteredItems.length === 0 ? (
               <div className="empty-state">
@@ -1401,37 +1493,78 @@ export function App() {
               </div>
             ) : null}
 
-            {filteredItems.map((item) => (
-              <button
-                className={`item-row ${item.id === selectedItemId ? "selected" : ""}`}
-                type="button"
-                key={item.id}
-                onClick={() => setSelectedItemId(item.id)}
-              >
-                <div className="item-row-main">
-                  <div className="item-title-line">
-                    <FileText size={18} />
-                    <h2>{item.title}</h2>
-                  </div>
-                  <p>{item.body}</p>
-                  <div className="item-meta">
-                    <span>{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
-                    {item.featureGroupId !== null ? (
-                      <span>{featureGroupById.get(item.featureGroupId)?.name ?? "Feature group"}</span>
-                    ) : null}
-                    {item.contributorText !== null || item.contributorId !== null ? (
-                      <span>
-                        {item.contributorText ??
-                          contributorById.get(item.contributorId ?? "")?.displayName ??
-                          "Contributor"}
+            {filteredItems.map((item) => {
+              const rowActions = item.id === selectedItemId ? visibleActions : [];
+              return (
+                <article className={`item-row ${item.id === selectedItemId ? "selected" : ""}`} key={item.id}>
+                  <button className="item-row-select" type="button" onClick={() => setSelectedItemId(item.id)}>
+                    <div className="item-row-main">
+                      <div className="item-title-line">
+                        <FileText size={18} />
+                        <h2>{item.title}</h2>
+                      </div>
+                      <p>{item.body}</p>
+                    </div>
+                    <div className="item-meta item-meta-column" aria-label="Project, feature, and contributor">
+                      <span>{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
+                      {item.featureGroupId !== null ? (
+                        <span>{featureGroupById.get(item.featureGroupId)?.name ?? "Feature group"}</span>
+                      ) : null}
+                      {item.contributorText !== null || item.contributorId !== null ? (
+                        <span>
+                          {item.contributorText ??
+                            contributorById.get(item.contributorId ?? "")?.displayName ??
+                            "Contributor"}
+                        </span>
+                      ) : null}
+                    </div>
+                    <span className={`state-chip state-${item.workflowState}`}>{stateLabel(item.workflowState)}</span>
+                    <span className="updated-time">Updated {formatDate(item.updatedAt)}</span>
+                  </button>
+                  {rowActions.length === 0 ? null : (
+                    <div className="row-action-groups" aria-label="Workflow actions for selected memo">
+                      <span className="row-action-hint">
+                        {hasDraftChanges ? "Save or reset edits before workflow actions" : "Workflow actions"}
                       </span>
-                    ) : null}
-                  </div>
-                </div>
-                <span className={`state-chip state-${item.workflowState}`}>{stateLabel(item.workflowState)}</span>
-              </button>
-            ))}
+                      {rowActions.map((action) => {
+                        const intent = workflowActionIntent(action);
+                        return (
+                          <button
+                            className={`row-action-button ${intent}`}
+                            type="button"
+                            key={action.id}
+                            title={workflowActionTitle(action)}
+                            disabled={actionIdInFlight !== null || hasDraftChanges}
+                            onClick={() => void runAction(action)}
+                          >
+                            {action.id === actionIdInFlight ? (
+                              <RefreshCcw className="spin" size={16} />
+                            ) : intent === "danger" || intent === "warning" ? (
+                              <AlertTriangle size={16} />
+                            ) : (
+                              <CheckCircle2 size={16} />
+                            )}
+                            {action.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </section>
+
+          <div
+            className="panel-resizer"
+            role="separator"
+            aria-label="Resize list and detail panels"
+            aria-orientation="vertical"
+            title="Drag or use arrow keys to resize the list and detail panels"
+            tabIndex={0}
+            onPointerDown={handlePanelResizeStart}
+            onKeyDown={handlePanelResizeKeyDown}
+          />
 
           <aside className="detail-panel" aria-label="Work item detail">
             {selectedItem === null || draft === null ? (
@@ -1698,44 +1831,41 @@ export function App() {
                   </section>
                 ) : null}
 
-                <section className="detail-section" aria-label="Workflow actions">
-                  <div className="section-title">
-                    <Workflow size={18} />
-                    <h3>Workflow actions</h3>
-                  </div>
-                  <div className="action-row">
-                    {visibleActions.length === 0 ? <span className="muted-text">No visible actions</span> : null}
-                    {visibleActions.map((action) => (
-                      <button
-                        type="button"
-                        key={action.id}
-                        disabled={actionIdInFlight !== null || hasDraftChanges}
-                        onClick={() => void runAction(action)}
-                      >
-                        {action.id === actionIdInFlight ? (
-                          <RefreshCcw className="spin" size={18} />
-                        ) : (
-                          <CheckCircle2 size={18} />
-                        )}
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="detail-section" aria-label="Source memo">
+                <section className="detail-section" aria-label="Memo metadata">
                   <div className="section-title">
                     <FileText size={18} />
-                    <h3>Source memo</h3>
+                    <h3>Metadata</h3>
                   </div>
-                  <dl className="source-list">
+                  <dl className="metadata-list">
                     <div>
                       <dt>Source ID</dt>
-                      <dd>{selectedItem.sourceMemoId}</dd>
+                      <dd>
+                        <span>{selectedItem.sourceMemoId}</span>
+                        <button
+                          className="copy-button"
+                          type="button"
+                          title="Copy source ID"
+                          aria-label="Copy source ID"
+                          onClick={() => void copyText(selectedItem.sourceMemoId, "Source ID")}
+                        >
+                          <Copy size={15} />
+                        </button>
+                      </dd>
                     </div>
                     <div>
                       <dt>Body format</dt>
-                      <dd>{selectedItem.bodyFormat}</dd>
+                      <dd>
+                        <span>{selectedItem.bodyFormat}</span>
+                        <button
+                          className="copy-button"
+                          type="button"
+                          title="Copy body format"
+                          aria-label="Copy body format"
+                          onClick={() => void copyText(selectedItem.bodyFormat, "Body format")}
+                        >
+                          <Copy size={15} />
+                        </button>
+                      </dd>
                     </div>
                   </dl>
                 </section>
@@ -1858,21 +1988,43 @@ export function App() {
                     <div className="field-grid">
                       <div className="field-group">
                         <label htmlFor={`${folder.id}-path`}>Watched path</label>
-                        <input
-                          id={`${folder.id}-path`}
-                          value={folder.path}
-                          onChange={(event) => updateWatchedFolder(folder.id, "path", event.currentTarget.value)}
-                        />
+                        <div className="path-picker-field">
+                          <input
+                            id={`${folder.id}-path`}
+                            value={folder.path}
+                            onChange={(event) => updateWatchedFolder(folder.id, "path", event.currentTarget.value)}
+                          />
+                          <button
+                            className="secondary-button icon-only"
+                            type="button"
+                            title="Choose watched folder"
+                            aria-label="Choose watched folder"
+                            onClick={() => void pickWatchedFolderPath(folder.id, "path")}
+                          >
+                            <FolderOpen size={18} />
+                          </button>
+                        </div>
                       </div>
                       <div className="field-group">
                         <label htmlFor={`${folder.id}-archive`}>Archive path</label>
-                        <input
-                          id={`${folder.id}-archive`}
-                          value={folder.archivePath}
-                          onChange={(event) =>
-                            updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
-                          }
-                        />
+                        <div className="path-picker-field">
+                          <input
+                            id={`${folder.id}-archive`}
+                            value={folder.archivePath}
+                            onChange={(event) =>
+                              updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
+                            }
+                          />
+                          <button
+                            className="secondary-button icon-only"
+                            type="button"
+                            title="Choose archive folder"
+                            aria-label="Choose archive folder"
+                            onClick={() => void pickWatchedFolderPath(folder.id, "archivePath")}
+                          >
+                            <FolderOpen size={18} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <div className="watch-folder-controls">
@@ -2041,6 +2193,33 @@ export function App() {
                       ))}
                     </div>
                   </section>
+
+                  <section className="detail-section">
+                    <div className="section-title">
+                      <PackageCheck size={18} />
+                      <h3>Export contract</h3>
+                    </div>
+                    <dl className="metadata-list compact-metadata">
+                      <div>
+                        <dt>Schema</dt>
+                        <dd>
+                          <span>{MEMO_CAPTURE_EXPORT_SCHEMA_VERSION}</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Text</dt>
+                        <dd>
+                          <span>{ACTIVE_TEXT_FILE_EXTENSIONS.join(", ")}</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Audio</dt>
+                        <dd>
+                          <span>{ACTIVE_AUDIO_FILE_EXTENSIONS.join(", ")}</span>
+                        </dd>
+                      </div>
+                    </dl>
+                  </section>
                 </>
               )}
             </section>
@@ -2084,11 +2263,6 @@ export function App() {
           </div>
         )}
 
-        <footer className="workspace-footer">
-          <span>Export schema: {MEMO_CAPTURE_EXPORT_SCHEMA_VERSION}</span>
-          <span>Text: {ACTIVE_TEXT_FILE_EXTENSIONS.join(", ")}</span>
-          <span>Audio: {ACTIVE_AUDIO_FILE_EXTENSIONS.join(", ")}</span>
-        </footer>
       </section>
     </main>
   );
@@ -2259,6 +2433,34 @@ function requireValue<Value>(value: Value | null | undefined, message: string): 
 
 function statusLabel(state: string): string {
   return state.replaceAll("_", " ");
+}
+
+function workflowActionIntent(action: AllowedWorkflowAction): "primary" | "secondary" | "warning" | "danger" {
+  const key = `${action.id} ${action.label}`.toLowerCase();
+  if (key.includes("accept") || key.includes("review")) {
+    return "primary";
+  }
+  if (key.includes("fail")) {
+    return "warning";
+  }
+  if (key.includes("reject")) {
+    return "danger";
+  }
+  return "secondary";
+}
+
+function workflowActionTitle(action: AllowedWorkflowAction): string {
+  const intent = workflowActionIntent(action);
+  if (intent === "primary") {
+    return "Primary next workflow action";
+  }
+  if (intent === "warning") {
+    return "Marks this memo as failed after confirmation";
+  }
+  if (intent === "danger") {
+    return "Rejects this memo after confirmation";
+  }
+  return "Secondary workflow action";
 }
 
 function formatBytes(value: number): string {

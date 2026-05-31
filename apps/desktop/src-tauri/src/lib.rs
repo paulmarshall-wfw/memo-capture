@@ -56,6 +56,18 @@ fn watched_text_machine_id(app: AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn pick_folder(title: String, default_path: Option<String>) -> Result<Option<String>, String> {
+    let mut dialog = rfd::FileDialog::new().set_title(title);
+    if let Some(path) = default_path.and_then(|value| default_folder_path(value.trim())) {
+        dialog = dialog.set_directory(path);
+    }
+
+    Ok(dialog
+        .pick_folder()
+        .map(|path| path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 fn scan_watched_folders(
     folders: Vec<WatchedFolderSetting>,
 ) -> Result<Vec<WatchedFileCandidate>, String> {
@@ -232,6 +244,21 @@ fn non_overwriting_path(path: &Path) -> PathBuf {
     unreachable!("suffix loop always returns a candidate")
 }
 
+fn default_folder_path(value: &str) -> Option<PathBuf> {
+    if value.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(value);
+    if path.is_dir() {
+        return Some(path);
+    }
+
+    path.parent()
+        .filter(|parent| parent.is_dir())
+        .map(Path::to_path_buf)
+}
+
 fn move_file(source: &Path, target: &Path) -> Result<(), String> {
     match fs::rename(source, target) {
         Ok(()) => Ok(()),
@@ -258,6 +285,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             app_version,
+            pick_folder,
             watched_text_machine_id,
             scan_watched_folders,
             scan_watched_text_folders,
