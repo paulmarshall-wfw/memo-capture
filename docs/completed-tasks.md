@@ -82,3 +82,8 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Adjusted the watched-folder toolbar layout so `Add folder` and `Save settings` stay grouped on the left after the enabled-folder count.
   Verification: `npm run typecheck` passed; `git diff --check -- apps/desktop/src/styles.css` passed; Chrome visual check at `http://127.0.0.1:5175/` confirmed the buttons render on the left.
   Traceability: branch `main`, HEAD `9523e2f`; changed files include `apps/desktop/src/styles.css` and `docs/completed-tasks.md`.
+
+- Task: Add configurable projects and Audit workspace
+  Outcome: Added Settings project create/edit/deactivate controls, moved audit events to a new top-level Audit page, and mounted the generic `@state-workflow/debugger-react` event-journal debugger with a Memo Capture audit-event adapter.
+  Verification: `npm run typecheck`, `npm run build`, and `npm run verify` passed; Chrome verification at `http://127.0.0.1:5176/` confirmed Audit events render in the left panel and the event-journal debugger renders in the right panel.
+  Traceability: branch `main`, HEAD `fdfba67`; changed files include `apps/desktop/package.json`, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `apps/desktop/vite.config.ts`, `package-lock.json`, and `docs/completed-tasks.md`.

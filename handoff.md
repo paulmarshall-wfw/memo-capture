@@ -3,146 +3,122 @@
 ## 1. Metadata
 
 - Project name: Memo Capture
-- Handoff type: verification handoff
-- Created timestamp UTC: 2026-05-30T05:20:57Z
+- Handoff type: implementation handoff
+- Created timestamp UTC: 2026-05-31T03:29:22Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: dependencies installed, verification fixed, migrations applied, and local app smoke-tested.
+- Session scope: configurable project settings, new Audit workspace, runtime debugger panel integration, completed-task ledger update, and current checkpoint refresh.
 
 ### Checkpoint Status
 
-- Git HEAD: `1d38833`
+- Git HEAD: `fdfba67`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/src/db/postgres.ts`
-  - `apps/api/src/migrate.ts`
-  - `apps/api/src/services/exports.ts`
-  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/desktop/package.json`
   - `apps/desktop/src/App.tsx`
+  - `apps/desktop/src/styles.css`
+  - `apps/desktop/vite.config.ts`
   - `docs/completed-tasks.md`
   - `handoff.md`
-  - `package.json`
-  - `packages/config/package.json`
-  - `packages/domain/package.json`
+  - `package-lock.json`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `package-lock.json`
+  - None
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
   - `AGENTS.md`
   - `docs/completed-tasks.md`
   - `docs/design/memo-capture-design-learnings.md`
-  - `docs/design/memo-capture-0.2.2-workflow-definition-bundled.json`
-  - `docs/specs/index.md`
-  - `docs/specs/domain-model-and-schema.md`
-  - `docs/specs/ingestion-and-artifacts.md`
-  - `docs/specs/processing-jobs-and-diagnostics.md`
-  - `docs/specs/settings-and-audit.md`
-  - `docs/specs/workflow-runtime-integration.md`
-  - `apps/api/db/migrations/0001_initial.sql`
-  - `apps/api/db/migrations/0008_ai_settings_and_audit.sql`
-  - `apps/api/src/db/postgres.ts`
-  - `apps/api/src/server.ts`
-  - `apps/api/src/services/`
-  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/desktop/package.json`
   - `apps/desktop/src/App.tsx`
-  - `apps/worker/src/index.ts`
-  - `packages/domain/src/index.ts`
+  - `apps/desktop/src/styles.css`
+  - `apps/desktop/vite.config.ts`
+  - `package-lock.json`
 - Last verification:
-  - command: `npm run verify`; `npm run db:migrate`; `git diff --check`
+  - command: `npm run verify`
   - result: passed
-  - timestamp UTC: 2026-05-30T05:20:57Z
+  - timestamp UTC: 2026-05-31T03:29:22Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD` is recorded, dirty/untracked files are accounted for, full npm verification passed, migrations through `0008` applied, and Chrome smoke testing reached a populated work queue.
-- Next checkpoint action: review the dirty changes, then commit or continue runtime testing.
+- Safe-to-continue basis: current `HEAD` is recorded, all dirty files are accounted for, the root verification suite passed, and the remaining debugger-control caveat is explicit.
+- Next checkpoint action: decide whether to make the debugger controls read-only/hidden or wire them to a real backend runtime debugger contract; then review and commit the dirty patch set if acceptable.
 
 ## 2. Executive Summary
 
-Memo Capture is now runnable for local testing from this checkout.
+Current focus is the desktop Settings and Audit surfaces.
 
 Complete now:
 
-- Node `22.14.0` and npm `10.9.2` were installed via nvm.
-- npm workspace dependencies were installed and `package-lock.json` was created.
-- TypeScript project-reference verification now works from the root `typecheck` script.
-- Shared workspace package `main`/`types` entries now match the emitted `dist/src/index.*` files.
-- Strict TypeScript errors in API, desktop, and tests were fixed.
-- Postgres adapter result normalization now handles multi-statement migration SQL.
-- `npm run verify` passed outside the sandbox.
-- Migrations `0001` through `0008` applied to a local Postgres `16.8-alpine` dev container.
-- API, worker, and desktop dev servers are running.
-- Workflow bundle `0.2.2` was imported and activated for local testing.
-- A smoke-test project, feature group, and form memo were created through the API and rendered in Chrome in the Memos bucket.
-- Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
+- Settings includes configurable project create/edit/deactivate controls backed by the existing `/api/projects` API.
+- Audit Events moved out of Settings into a new top-level `Audit` page.
+- The `Audit` page uses a two-panel layout: application audit events on the left, generic runtime event-journal debugger on the right.
+- The right panel mounts `@state-workflow/debugger-react` through a Memo Capture adapter that projects app audit events into workflow journal records.
+- `apps/desktop/vite.config.ts` aliases `state-workflow-runtime` to the browser-safe debugger headless build because the package root imports Node-only modules.
+- `docs/completed-tasks.md` was updated. Completed work history is tracked there; do not duplicate it here.
 
 Incomplete now:
 
-- The dirty fixes and generated `package-lock.json` are not committed.
-- Tauri/Rust desktop build/check was not run in this pass.
-- Full watched-folder, audio/transcription, export download, settings/audit, and AI suggestion workflows still need manual/end-to-end testing.
-- Object storage was only exercised enough for app startup; export artifact generation still needs a runtime smoke.
+- The debugger panel controls (`Start Debugger`, `Pause`, `Resume`, `Step`, `Stop`) affect only local debugger UI state in the adapter. They do not pause, resume, step, stop, or otherwise control the backend workflow runtime.
+- The project settings form has type/build coverage and render coverage, but create/save/deactivate was not re-smoked through live browser clicks in this refresh.
+- `npm install` updated `package-lock.json` using the ambient shell Node/npm, which warned that `node v24.14.0` and `npm 11.9.0` are outside the repo engine range. Use Node `22.14.0` and npm `10.9.x` for normal repo work.
+- `npm install` reported one high-severity audit finding; it was not investigated in this pass.
 
-Safe to continue from this state if the next session treats `1d38833` as the committed baseline plus the dirty verification/runtime-readiness patch set listed above.
+Safe to continue from this state if the next session treats `fdfba67` as the committed baseline plus the dirty Audit/Settings/debugger patch set listed above.
 
 ## 3. Current Objective
 
-Immediate goal: continue local runtime testing from a verified, migrated, running app.
+Immediate goal: keep the desktop app's Settings and Audit areas aligned with the product expectation that projects are deterministic/configurable and audit diagnostics are separated from backend settings.
 
 Intended finished state:
 
-- Smoke the main V1 flows end-to-end against the local Postgres dev database.
-- Fix any runtime issues found in watched import, transcription recovery, exports, settings/audit, and AI suggestion flows.
-- Commit the dependency/runtime-readiness fixes when reviewed.
+- Project names and metadata are user-configurable rather than inferred from memo text.
+- Audit diagnostics have their own top-level workspace.
+- Runtime debugging UI is honest about whether it is read-only projection or a live runtime controller.
 
-Definition of done:
+Definition of done for the current workstream:
 
-- Dirty fixes are reviewed and committed.
-- Runtime smoke coverage includes at least one work item through accepted/export flow.
-- Any remaining environmental blockers are recorded explicitly.
+- Audit page layout and debugger integration remain verified by `npm run verify` and browser smoke.
+- Debugger controls are either disabled/hidden for read-only projection or connected to real backend runtime debugger APIs.
+- Dirty files are reviewed and committed when the behavior is accepted.
 
 ## 4. Current State
 
 ### Working
 
-- `npm run verify` passes under Node `22.14.0`/npm `10.9.2`.
-- `npm run db:migrate` applied migrations `0001` through `0008`.
-- API public health route works at `http://127.0.0.1:4788/health`.
-- Local-dev auth session creation works at `POST /api/dev-auth/session`.
-- Desktop Vite UI is running at `http://127.0.0.1:5175/`.
-- Worker dev process is running and supports `transcribe_audio` and `generate_export_batch`.
-- Active workflow status reports workflow version `0.2.2`.
-- Chrome smoke verified the populated Memos bucket and visible workflow actions for a smoke-test memo.
+- `npm run verify` passes.
+- Desktop navigation includes `Work queue`, `Audit`, `Exports`, `Watched folders`, and `Settings`.
+- Settings renders project management controls for existing projects plus a new-project draft form.
+- Audit renders application audit events in the left panel.
+- Audit renders the generic workflow event-journal debugger in the right panel.
+- Chrome visual verification at `http://127.0.0.1:5176/` confirmed Audit events in the left panel and the debugger in the right panel.
+- The current implementation builds production desktop assets successfully through the root verification script.
 
 ### Partially Working
 
-- Local Postgres is running in Docker container `memo-capture-postgres-16-8` from image `postgres:16.8-alpine`.
-- `.env` exists locally from `.env.example`; it is intentionally git-ignored.
-- Dev servers were started with local-dev auth overrides for API and worker.
-- Object storage uses the configured local adapter path and still needs export/runtime validation.
+- The generic debugger is wired as a read-only projection over Memo Capture audit events. It is useful for inspecting the event journal shape, not for controlling backend workflow execution.
+- Debugger button state changes are local to the frontend adapter.
+- Existing local browser tabs may still point at `http://127.0.0.1:5175/`; the verified fresh server for this pass was `http://127.0.0.1:5176/`.
 
 ### Not Working Yet
 
-- `/api/health` is protected and returns `unauthorized` without a bearer token; this is expected, not a health-route failure.
-- No active workflow exists in a fresh database until a workflow bundle is imported and activated.
-- The ambient shell may still default to Node `v24.14.0`; use the Node 22 nvm path or `nvm use 22.14.0`.
+- There is no backend endpoint or runtime contract in Memo Capture that exposes live debugger start/pause/resume/step/stop semantics.
+- The Audit page does not yet distinguish clearly in the UI between read-only projected audit history and live runtime control.
 
 ### Not Yet Verified
 
-- Tauri Rust build/check.
-- Watched-folder file scanning from the native shell path.
-- Audio playback/transcription retry/manual recovery against the running worker.
-- Export generation and authenticated bundle download.
-- Settings/audit filters against live data.
-- AI expansion with any non-disabled provider.
+- Live browser-click create/save/deactivate flow for projects.
+- Whether the debugger controls should be removed, disabled, or backed by a real runtime debugger API.
+- Tauri/Rust desktop build/check.
+- Watched-folder import, audio transcription recovery, export download, and non-disabled AI provider flows after the latest desktop UI changes.
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
 - Do not commit, tag, release, publish, deploy, delete files, or weaken project instructions unless explicitly asked.
 - Never use `latest`; always use numbered versions.
+- Use Node `22.14.0` and npm `10.9.x` for repo commands.
 - Apply `engineering-project-standard` for setup, maintenance, versioning, stack, documentation, and verification work.
 - Apply `web-app-design-standard` for frontend UI work.
 - Use Chrome for browser automation unless the user explicitly asks for another browser or Chrome is unavailable.
@@ -155,68 +131,61 @@ Definition of done:
 
 ## 6. Commands and Verification
 
-Use Node 22 for npm commands:
+Use the repo's expected Node/npm versions:
 
 ```bash
 nvm use 22.14.0
 npm run verify
-npm run db:migrate
+```
+
+Primary dev commands:
+
+```bash
 npm run dev:api
 npm run dev:worker
 npm run dev:desktop
 ```
 
-Current local runtime commands used:
+Desktop-only verified command used in this pass:
 
 ```bash
-docker run --name memo-capture-postgres-16-8 -e POSTGRES_USER=memo_capture -e POSTGRES_PASSWORD=memo_capture -e POSTGRES_DB=memo_capture -p 5432:5432 -d postgres:16.8-alpine
-MEMO_CAPTURE_AUTH_MODE=local-dev MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED=true npm run dev:api
-MEMO_CAPTURE_AUTH_MODE=local-dev MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED=true npm run dev:worker
-npm run dev:desktop
+npm run dev -w @memo-capture/desktop -- --host 127.0.0.1 --port 5176
 ```
 
 Passed in this refresh:
 
 ```bash
 npm run verify
-npm run db:migrate
-git diff --check
 ```
 
-Runtime smoke evidence:
+Verification evidence:
 
-- `GET http://127.0.0.1:4788/health` returned `ok: true`.
-- `POST http://127.0.0.1:4788/api/dev-auth/session` returned a local-dev bearer token.
-- Workflow import/activation of `docs/design/memo-capture-0.2.2-workflow-definition-bundled.json` succeeded.
-- Smoke memo `Smoke test memo` rendered in Chrome under the Memos bucket.
+- Root doctor, typecheck, workspace tests, and build passed.
+- Desktop Vite build transformed 1636 modules and emitted production assets.
+- Chrome visual check confirmed the new `Audit` page layout and debugger rendering at `http://127.0.0.1:5176/`.
 
-Current blockers:
+Current blockers and caveats:
 
-- No `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py` exists in this repo, so freshness was checked manually with Git status, file existence, and verification evidence.
-- Sandbox blocks localhost listen/tsx IPC for some commands; run verification and dev servers outside the sandbox when needed.
+- No `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py` exists in this repo, so handoff freshness was checked manually with `git status`, `HEAD`, dirty file inventory, file existence, and `npm run verify`.
+- The generic debugger controls are semantically misleading until made read-only or backed by real backend runtime debugger behavior.
+- The package-lock update should be reviewed because installation ran under the ambient Node/npm and produced engine warnings.
 
 ## 7. Files to Open First
 
 - `AGENTS.md`: repo-local instructions and constraints.
 - `handoff.md`: hot-context continuity source.
-- `docs/completed-tasks.md`: compact completed work ledger.
+- `docs/completed-tasks.md`: append-only completed work ledger.
 - `docs/design/memo-capture-design-learnings.md`: resolved V1 product decisions.
-- `docs/design/memo-capture-0.2.2-workflow-definition-bundled.json`: workflow bundle activated in local smoke testing.
-- `docs/specs/index.md`: V1 spec reading order.
-- `docs/specs/workflow-runtime-integration.md`: import/activation/status/bucket contracts.
-- `apps/api/src/db/postgres.ts`: DB adapter fix for multi-statement migration results.
-- `apps/api/src/server.ts`: protected route wiring.
-- `apps/api/src/services/app.ts`: service composition.
-- `apps/api/tests/backend-foundation.test.ts`: route/service coverage and test stubs.
-- `apps/desktop/src/App.tsx`: desktop UI flows.
-- `apps/worker/src/index.ts`: worker job loop.
-- `package.json`: workspace order and root verification script.
+- `apps/desktop/src/App.tsx`: project settings, Audit page, and debugger adapter.
+- `apps/desktop/src/styles.css`: Audit, Settings, project editor, and debugger styling.
+- `apps/desktop/vite.config.ts`: runtime debugger alias for browser bundling.
+- `apps/desktop/package.json`: local state-workflow debugger dependencies.
+- `package-lock.json`: dependency graph updated after adding debugger packages.
 
 ## 8. Suggested Next Steps
 
-1. Review the dirty changes and `package-lock.json`.
-2. Continue runtime smoke testing from `http://127.0.0.1:5175/`.
-3. Test accepted/export flow with the smoke memo.
-4. Test watched text/audio import paths.
-5. Run Tauri/Rust verification if native desktop packaging is in scope.
-6. Commit the readiness fixes once the patch set is acceptable.
+1. Decide the debugger-control behavior: disable/hide the controls for read-only projection, or add backend runtime debugger APIs and wire them honestly.
+2. Re-smoke project create/save/deactivate from Chrome.
+3. Review `package-lock.json` and the local file dependencies to `state-workflow-runtime`.
+4. Re-run `npm run verify` after any debugger-control change.
+5. Commit the dirty patch set once the UI behavior is accepted.

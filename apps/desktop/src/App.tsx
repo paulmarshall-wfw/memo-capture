@@ -4,9 +4,20 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { WorkflowDebuggerPanelView, useWorkflowDebugger } from "@state-workflow/debugger-react";
+import type {
+  ItemRef,
+  RuntimeDebuggerSnapshot,
+  WorkflowDebuggerController,
+  WorkflowDebuggerState,
+  WorkflowEventJournalRecord,
+  WorkflowEventViews,
+  WorkflowRuntime
+} from "state-workflow-runtime";
 import {
   AlertTriangle,
   Check,
@@ -39,7 +50,7 @@ import {
 
 type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
-type ActiveView = "work-items" | "exports" | "watched-folders" | "settings";
+type ActiveView = "work-items" | "audit" | "exports" | "watched-folders" | "settings";
 type ThemeMode = "light" | "dark";
 
 interface SessionResponse {
@@ -122,8 +133,19 @@ interface ProcessingJobDiagnostic {
 
 interface Project {
   id: string;
+  slug: string;
   name: string;
+  description: string;
+  context: string;
   isActive: boolean;
+  updatedAt: string;
+}
+
+interface ProjectFormState {
+  name: string;
+  slug: string;
+  description: string;
+  context: string;
 }
 
 interface FeatureGroup {
@@ -304,9 +326,12 @@ interface SettingsSummary {
 interface AuditEvent {
   id: string;
   eventName: string;
+  actorUserId: string | null;
   actorEmailSnapshot: string | null;
   subjectType: string;
   subjectId: string | null;
+  requestId: string | null;
+  sourceMemoId: string | null;
   workItemId: string | null;
   jobId: string | null;
   metadata: Record<string, unknown>;
@@ -332,10 +357,17 @@ const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const primaryNavigation: { id: ActiveView; label: string }[] = [
   { id: "work-items", label: "Work queue" },
+  { id: "audit", label: "Audit" },
   { id: "exports", label: "Exports" },
   { id: "watched-folders", label: "Watched folders" },
   { id: "settings", label: "Settings" }
 ];
+
+const MemoWorkflowDebuggerPanelView = WorkflowDebuggerPanelView as unknown as (props: {
+  state: WorkflowDebuggerState;
+  controller?: WorkflowDebuggerController | undefined;
+  classNames: Record<string, string>;
+}) => ReactElement | null;
 
 function createDraft(item: WorkItem): DraftState {
   return {
@@ -346,6 +378,233 @@ function createDraft(item: WorkItem): DraftState {
     contributorId: item.contributorId ?? "",
     contributorText: item.contributorText ?? ""
   };
+}
+
+function createEmptyProjectForm(): ProjectFormState {
+  return {
+    name: "",
+    slug: "",
+    description: "",
+    context: ""
+  };
+}
+
+function createProjectForm(project: Project): ProjectFormState {
+  return {
+    name: project.name,
+    slug: project.slug,
+    description: project.description,
+    context: project.context
+  };
+}
+
+function createMemoCaptureWorkflowDebuggerRuntime(auditEvents: AuditEvent[]): WorkflowRuntime {
+  let debuggerState: RuntimeDebuggerSnapshot["state"] = "running";
+  let stepMode = false;
+  let currentStep: WorkflowEventJournalRecord | undefined;
+  const listeners = new Set<(event: WorkflowEventJournalRecord) => void>();
+
+  const buildSnapshot = (itemRef?: ItemRef): RuntimeDebuggerSnapshot => {
+    const events = projectAuditEventsToWorkflowEvents(auditEvents).filter((event) =>
+      itemRef === undefined
+        ? true
+        : event.itemRef?.resourceType === itemRef.resourceType && event.itemRef.resourceId === itemRef.resourceId
+    );
+    const views = projectWorkflowEventViews(events);
+    return {
+      state: debuggerState,
+      stepMode,
+      ...(currentStep === undefined ? {} : { currentStep }),
+      events,
+      views
+    };
+  };
+
+  const notify = () => {
+    const latestEvent = projectAuditEventsToWorkflowEvents(auditEvents).at(-1);
+    if (latestEvent === undefined) {
+      return;
+    }
+    for (const listener of listeners) {
+      listener(latestEvent);
+    }
+  };
+
+  const unsupportedRuntimeMethod = async (): Promise<never> => {
+    throw new Error("Memo Capture exposes workflow debugger events here; lifecycle mutation remains backend-owned.");
+  };
+  const unsupportedRegistration = (): never => {
+    throw new Error("Memo Capture registers workflow behavior on the backend.");
+  };
+
+  return {
+    importDefinitionBundle: unsupportedRuntimeMethod,
+    listDefinitionVersions: unsupportedRuntimeMethod,
+    setActiveDefinitionVersion: unsupportedRuntimeMethod,
+    getActiveDefinitionVersion: unsupportedRuntimeMethod,
+    getItemWorkflowState: unsupportedRuntimeMethod,
+    getAllowedActions: unsupportedRuntimeMethod,
+    initializeItemWorkflowState: unsupportedRuntimeMethod,
+    executeAction: unsupportedRuntimeMethod,
+    registerPermissionGuard: unsupportedRegistration,
+    registerHandler: unsupportedRegistration,
+    registerMigration: unsupportedRegistration,
+    lifecycle: {
+      evaluateDueStateHooks: unsupportedRuntimeMethod
+    },
+    debugger: {
+      start: async (options) => {
+        debuggerState = "running";
+        stepMode = options?.stepMode ?? false;
+        notify();
+      },
+      pause: async () => {
+        debuggerState = "paused";
+        notify();
+      },
+      resume: async () => {
+        debuggerState = "running";
+        notify();
+      },
+      stop: async () => {
+        debuggerState = "stopped";
+        notify();
+      },
+      step: async () => {
+        currentStep = projectAuditEventsToWorkflowEvents(auditEvents).at(-1);
+        notify();
+      },
+      getSnapshot: async (itemRef) => buildSnapshot(itemRef),
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      }
+    }
+  };
+}
+
+function projectAuditEventsToWorkflowEvents(auditEvents: AuditEvent[]): WorkflowEventJournalRecord[] {
+  return [...auditEvents]
+    .reverse()
+    .map((event, index) => {
+      const actionId = typeof event.metadata.actionId === "string" ? event.metadata.actionId : undefined;
+      const transitionId =
+        event.eventName === "work_item.workflow_action_executed" && event.subjectId !== null
+          ? `${event.subjectId}:${event.metadata.previousState ?? "unknown"}:${event.metadata.newState ?? "unknown"}`
+          : undefined;
+      return {
+        eventId: `audit:${event.id}`,
+        sequence: index + 1,
+        eventType: workflowEventTypeForAuditEvent(event),
+        severity: workflowEventSeverityForAuditEvent(event),
+        message: workflowEventMessageForAuditEvent(event),
+        ...(event.workItemId === null
+          ? {}
+          : { itemRef: { resourceType: "work_item", resourceId: event.workItemId } }),
+        ...(actionId === undefined ? {} : { actionId }),
+        ...(transitionId === undefined ? {} : { transitionId }),
+        ...(event.requestId === null ? {} : { operationId: event.requestId }),
+        ...(event.actorUserId === null ? {} : { actorId: event.actorUserId }),
+        metadata: {
+          auditEventName: event.eventName,
+          subjectType: event.subjectType,
+          subjectId: event.subjectId,
+          sourceMemoId: event.sourceMemoId,
+          jobId: event.jobId,
+          actorEmailSnapshot: event.actorEmailSnapshot,
+          ...event.metadata
+        },
+        occurredAt: new Date(event.createdAt)
+      };
+    });
+}
+
+function workflowEventTypeForAuditEvent(event: AuditEvent): string {
+  if (event.eventName === "work_item.workflow_action_executed") {
+    return "transition_committed";
+  }
+  if (event.eventName === "work_item.workflow_action_rejected") {
+    return "action_rejected";
+  }
+  if (event.eventName.includes("failed") || event.eventName.includes("blocked")) {
+    return "handler_failed";
+  }
+  return event.eventName.replaceAll(".", "_");
+}
+
+function workflowEventSeverityForAuditEvent(event: AuditEvent): WorkflowEventJournalRecord["severity"] {
+  if (event.eventName.includes("failed")) {
+    return "error";
+  }
+  if (event.eventName.includes("rejected") || event.eventName.includes("blocked")) {
+    return "warn";
+  }
+  return "info";
+}
+
+function workflowEventMessageForAuditEvent(event: AuditEvent): string {
+  if (event.eventName === "work_item.workflow_action_executed") {
+    return `Workflow action ${String(event.metadata.actionId ?? "unknown")} moved ${String(
+      event.metadata.previousState ?? "unknown"
+    )} to ${String(event.metadata.newState ?? "unknown")}.`;
+  }
+  return `${event.actorEmailSnapshot ?? "System"} recorded ${event.eventName} for ${event.subjectType}.`;
+}
+
+function projectWorkflowEventViews(events: readonly WorkflowEventJournalRecord[]): WorkflowEventViews {
+  return {
+    transitions: events.filter(
+      (event) =>
+        event.eventType === "transition_committed" ||
+        event.eventType === "item_initiated" ||
+        event.eventType === "item_initialized"
+    ),
+    actions: events.filter((event) => event.eventType.includes("action") || event.actionId !== undefined),
+    handlers: events.filter((event) => event.eventType.startsWith("handler_")),
+    handlerResponses: events.filter((event) => event.eventType === "handler_response_received"),
+    recordEvents: events.filter((event) => event.eventType === "record_event" || event.eventType.includes("audit")),
+    stateHooks: events.filter((event) => event.eventType.startsWith("state_hook_")),
+    failures: events.filter(
+      (event) =>
+        event.severity === "error" || event.eventType.includes("failed") || event.eventType.includes("rejected")
+    ),
+    debugSteps: events.filter((event) => event.eventType.startsWith("debug_") || event.eventType === "runtime_step")
+  };
+}
+
+function MemoWorkflowDebuggerPanel(props: {
+  runtime: WorkflowRuntime;
+  classNames: Record<string, string>;
+}): ReactElement {
+  const initialFilter = useMemo(() => ({ view: "journal" as const }), []);
+  const { controller, state, loading, error } = useWorkflowDebugger({
+    runtime: props.runtime,
+    initialFilter
+  });
+
+  if (loading) {
+    return <section className="memo-debugger">Loading debugger...</section>;
+  }
+  if (error !== null) {
+    return (
+      <section className="memo-debugger">
+        <p role="alert">{error.message}</p>
+      </section>
+    );
+  }
+  if (state === null) {
+    return <section className="memo-debugger">Debugger unavailable.</section>;
+  }
+
+  return (
+    <MemoWorkflowDebuggerPanelView
+      state={state}
+      controller={controller ?? undefined}
+      classNames={props.classNames}
+    />
+  );
 }
 
 export function App() {
@@ -390,6 +649,10 @@ export function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditFilter, setAuditFilter] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
+  const [projectDrafts, setProjectDrafts] = useState<Record<string, ProjectFormState>>({});
+  const [newProjectDraft, setNewProjectDraft] = useState<ProjectFormState>(() => createEmptyProjectForm());
+  const [projectIdInFlight, setProjectIdInFlight] = useState<string | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
   const [detailPanelWidth, setDetailPanelWidth] = useState(560);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
@@ -442,6 +705,10 @@ export function App() {
         .includes(query)
     );
   }, [exportSearch, exportSnapshots]);
+  const workflowDebuggerRuntime = useMemo(
+    () => createMemoCaptureWorkflowDebuggerRuntime(auditEvents),
+    [auditEvents]
+  );
   const selectedExportCount = filteredExportSnapshots.filter((snapshot) =>
     selectedExportSnapshotIds.has(snapshot.acceptedSnapshotId)
   ).length;
@@ -465,6 +732,8 @@ export function App() {
   const pageTitle =
     activeView === "exports"
       ? "Exports"
+      : activeView === "audit"
+      ? "Audit"
       : activeView === "watched-folders"
       ? "Watched folders"
       : activeView === "settings"
@@ -473,10 +742,12 @@ export function App() {
   const pageDescription =
     activeView === "exports"
       ? "Accepted snapshots and generated export batches."
+      : activeView === "audit"
+      ? "Application audit history and workflow runtime event-journal debugging."
       : activeView === "watched-folders"
       ? "Desktop-local watched folders and import candidates."
       : activeView === "settings"
-      ? "Provider, prompt, settings, audit, and export contract details."
+      ? "Provider, prompt, settings, and export contract details."
       : selectedBucket === null
       ? "No workflow scope is selected."
       : `${selectedBucket.label} scope selected.`;
@@ -611,8 +882,18 @@ export function App() {
       return;
     }
 
-    void loadSettingsAndAudit(accessToken).catch((error) => {
+    void loadSettings(accessToken).catch((error) => {
       setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
+    });
+  }, [accessToken, activeView]);
+
+  useEffect(() => {
+    if (accessToken === null || activeView !== "audit") {
+      return;
+    }
+
+    void loadAuditEvents(accessToken).catch((error) => {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load audit events.");
     });
   }, [accessToken, activeView]);
 
@@ -631,6 +912,9 @@ export function App() {
 
     setBuckets(orderedBuckets);
     setProjects(projectsResponse.projects);
+    setProjectDrafts(
+      Object.fromEntries(projectsResponse.projects.map((project) => [project.id, createProjectForm(project)]))
+    );
     setFeatureGroups(featureGroupsResponse.featureGroups);
     setContributors(contributorsResponse.contributors);
     setActiveBucketId(nextBucketId);
@@ -691,22 +975,39 @@ export function App() {
     );
   }
 
-  async function loadSettingsAndAudit(token = accessToken): Promise<void> {
+  async function loadSettings(token = accessToken): Promise<void> {
     if (token === null) {
       return;
     }
     setSettingsLoading(true);
     setStatusMessage(null);
     try {
-      const query = auditFilter.trim() === "" ? "" : `?event_name=${encodeURIComponent(auditFilter.trim())}`;
-      const [settingsResponse, auditResponse] = await Promise.all([
+      const [settingsResponse, projectsResponse] = await Promise.all([
         authedJson<SettingsSummary>(token, "/api/settings"),
-        authedJson<{ auditEvents: AuditEvent[] }>(token, `/api/audit-events${query}`)
+        authedJson<{ projects: Project[] }>(token, "/api/projects")
       ]);
       setSettingsSummary(settingsResponse);
-      setAuditEvents(auditResponse.auditEvents);
+      setProjects(projectsResponse.projects);
+      setProjectDrafts(
+        Object.fromEntries(projectsResponse.projects.map((project) => [project.id, createProjectForm(project)]))
+      );
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  async function loadAuditEvents(token = accessToken): Promise<void> {
+    if (token === null) {
+      return;
+    }
+    setAuditLoading(true);
+    setStatusMessage(null);
+    try {
+      const query = auditFilter.trim() === "" ? "" : `?event_name=${encodeURIComponent(auditFilter.trim())}`;
+      const auditResponse = await authedJson<{ auditEvents: AuditEvent[] }>(token, `/api/audit-events${query}`);
+      setAuditEvents(auditResponse.auditEvents);
+    } finally {
+      setAuditLoading(false);
     }
   }
 
@@ -1195,12 +1496,111 @@ export function App() {
         method: "PATCH",
         body: JSON.stringify({ enabled })
       });
-      await loadSettingsAndAudit(accessToken);
+      await loadSettings(accessToken);
       setStatusMessage(enabled ? "Provider enabled." : "Provider disabled.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to update provider.");
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  function updateNewProjectDraft(field: keyof ProjectFormState, value: string) {
+    setNewProjectDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateProjectDraft(projectId: string, field: keyof ProjectFormState, value: string) {
+    setProjectDrafts((current) => ({
+      ...current,
+      [projectId]: {
+        ...(current[projectId] ?? createEmptyProjectForm()),
+        [field]: value
+      }
+    }));
+  }
+
+  async function createProject() {
+    if (accessToken === null) {
+      return;
+    }
+    if (newProjectDraft.name.trim() === "") {
+      setStatusMessage("Project name is required.");
+      return;
+    }
+
+    setProjectIdInFlight("new");
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/projects", {
+        method: "POST",
+        body: JSON.stringify({
+          name: newProjectDraft.name,
+          slug: newProjectDraft.slug,
+          description: newProjectDraft.description,
+          context: newProjectDraft.context
+        })
+      });
+      setNewProjectDraft(createEmptyProjectForm());
+      await loadSettings(accessToken);
+      setStatusMessage("Project created.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to create project.");
+    } finally {
+      setProjectIdInFlight(null);
+    }
+  }
+
+  async function saveProject(projectId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    const projectDraft = projectDrafts[projectId];
+    if (projectDraft === undefined) {
+      return;
+    }
+    if (projectDraft.name.trim() === "") {
+      setStatusMessage("Project name is required.");
+      return;
+    }
+
+    setProjectIdInFlight(projectId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/projects/${encodeURIComponent(projectId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: projectDraft.name,
+          slug: projectDraft.slug,
+          description: projectDraft.description,
+          context: projectDraft.context
+        })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Project saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save project.");
+    } finally {
+      setProjectIdInFlight(null);
+    }
+  }
+
+  async function deactivateProject(projectId: string) {
+    if (accessToken === null) {
+      return;
+    }
+
+    setProjectIdInFlight(projectId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/projects/${encodeURIComponent(projectId)}/deactivate`, {
+        method: "POST"
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Project deactivated.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to deactivate project.");
+    } finally {
+      setProjectIdInFlight(null);
     }
   }
 
@@ -1210,7 +1610,9 @@ export function App() {
       : activeView === "watched-folders"
       ? scanWatchedFolders()
       : activeView === "settings"
-      ? loadSettingsAndAudit()
+      ? loadSettings()
+      : activeView === "audit"
+      ? loadAuditEvents()
       : refreshBucket());
   }
 
@@ -1364,6 +1766,8 @@ export function App() {
           >
             {activeView === "settings" && settingsLoading ? (
               <RefreshCcw className="spin" size={18} />
+            ) : activeView === "audit" && auditLoading ? (
+              <RefreshCcw className="spin" size={18} />
             ) : activeView === "watched-folders" && watchScanInFlight ? (
               <RefreshCcw className="spin" size={18} />
             ) : activeView === "watched-folders" ? (
@@ -1438,7 +1842,7 @@ export function App() {
               Save settings
             </button>
           </div>
-        ) : (
+        ) : activeView === "audit" ? (
           <div className="toolbar settings-toolbar" role="search">
             <label htmlFor="audit-filter">Audit event name</label>
             <div className="search-field">
@@ -1450,12 +1854,12 @@ export function App() {
                 onChange={(event) => setAuditFilter(event.currentTarget.value)}
               />
             </div>
-            <button className="secondary-button" type="button" onClick={() => void loadSettingsAndAudit()}>
-              <RefreshCcw size={18} />
+            <button className="secondary-button" type="button" onClick={() => void loadAuditEvents()}>
+              {auditLoading ? <RefreshCcw className="spin" size={18} /> : <RefreshCcw size={18} />}
               Apply filter
             </button>
           </div>
-        )}
+        ) : null}
 
         {activeView === "work-items" ? (
         <div
@@ -2110,8 +2514,8 @@ export function App() {
               })}
             </section>
           </div>
-        ) : (
-          <div className="settings-grid">
+        ) : activeView === "settings" ? (
+          <div className="settings-single-grid">
             <section className="detail-panel" aria-label="Backend settings">
               <div className="detail-header">
                 <div>
@@ -2128,6 +2532,151 @@ export function App() {
                 </div>
               ) : (
                 <>
+                  <section className="detail-section">
+                    <div className="section-title">
+                      <FolderOpen size={18} />
+                      <h3>Projects</h3>
+                    </div>
+                    <div className="settings-list">
+                      <article className="settings-row project-settings-row">
+                        <div className="settings-row-header">
+                          <div>
+                            <div className="batch-title">
+                              <strong>New project</strong>
+                              <span>Controlled list</span>
+                            </div>
+                          </div>
+                          <button
+                            className="row-action-button primary"
+                            type="button"
+                            disabled={projectIdInFlight !== null}
+                            onClick={() => void createProject()}
+                          >
+                            {projectIdInFlight === "new" ? <RefreshCcw className="spin" size={16} /> : <Plus size={16} />}
+                            Create
+                          </button>
+                        </div>
+                        <div className="project-editor">
+                          <div className="field-group">
+                            <label htmlFor="new-project-name">Name</label>
+                            <input
+                              id="new-project-name"
+                              value={newProjectDraft.name}
+                              onChange={(event) => updateNewProjectDraft("name", event.currentTarget.value)}
+                            />
+                          </div>
+                          <div className="field-group">
+                            <label htmlFor="new-project-slug">Slug</label>
+                            <input
+                              id="new-project-slug"
+                              placeholder="Generated from name"
+                              value={newProjectDraft.slug}
+                              onChange={(event) => updateNewProjectDraft("slug", event.currentTarget.value)}
+                            />
+                          </div>
+                          <div className="field-group project-editor-wide">
+                            <label htmlFor="new-project-description">Description</label>
+                            <input
+                              id="new-project-description"
+                              value={newProjectDraft.description}
+                              onChange={(event) => updateNewProjectDraft("description", event.currentTarget.value)}
+                            />
+                          </div>
+                          <div className="field-group project-editor-wide">
+                            <label htmlFor="new-project-context">Context</label>
+                            <textarea
+                              id="new-project-context"
+                              value={newProjectDraft.context}
+                              onChange={(event) => updateNewProjectDraft("context", event.currentTarget.value)}
+                            />
+                          </div>
+                        </div>
+                      </article>
+
+                      {projects.map((project) => {
+                        const projectDraft = projectDrafts[project.id] ?? createProjectForm(project);
+                        return (
+                          <article className="settings-row project-settings-row" key={project.id}>
+                            <div className="settings-row-header">
+                              <div>
+                                <div className="batch-title">
+                                  <strong>{project.name}</strong>
+                                  <span>{project.isActive ? "Active" : "Inactive"}</span>
+                                  <span>{project.slug}</span>
+                                </div>
+                                <p>Updated {formatDate(project.updatedAt)}</p>
+                              </div>
+                              <div className="suggestion-actions">
+                                <button
+                                  className="row-action-button"
+                                  type="button"
+                                  disabled={projectIdInFlight !== null}
+                                  onClick={() => void saveProject(project.id)}
+                                >
+                                  {projectIdInFlight === project.id ? (
+                                    <RefreshCcw className="spin" size={16} />
+                                  ) : (
+                                    <Save size={16} />
+                                  )}
+                                  Save
+                                </button>
+                                {project.isActive ? (
+                                  <button
+                                    className="row-action-button warning"
+                                    type="button"
+                                    disabled={projectIdInFlight !== null}
+                                    onClick={() => void deactivateProject(project.id)}
+                                  >
+                                    <CircleSlash size={16} />
+                                    Deactivate
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="project-editor">
+                              <div className="field-group">
+                                <label htmlFor={`project-${project.id}-name`}>Name</label>
+                                <input
+                                  id={`project-${project.id}-name`}
+                                  value={projectDraft.name}
+                                  onChange={(event) => updateProjectDraft(project.id, "name", event.currentTarget.value)}
+                                />
+                              </div>
+                              <div className="field-group">
+                                <label htmlFor={`project-${project.id}-slug`}>Slug</label>
+                                <input
+                                  id={`project-${project.id}-slug`}
+                                  value={projectDraft.slug}
+                                  onChange={(event) => updateProjectDraft(project.id, "slug", event.currentTarget.value)}
+                                />
+                              </div>
+                              <div className="field-group project-editor-wide">
+                                <label htmlFor={`project-${project.id}-description`}>Description</label>
+                                <input
+                                  id={`project-${project.id}-description`}
+                                  value={projectDraft.description}
+                                  onChange={(event) =>
+                                    updateProjectDraft(project.id, "description", event.currentTarget.value)
+                                  }
+                                />
+                              </div>
+                              <div className="field-group project-editor-wide">
+                                <label htmlFor={`project-${project.id}-context`}>Context</label>
+                                <textarea
+                                  id={`project-${project.id}-context`}
+                                  value={projectDraft.context}
+                                  onChange={(event) =>
+                                    updateProjectDraft(project.id, "context", event.currentTarget.value)
+                                  }
+                                />
+                              </div>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+
                   <section className="detail-section">
                     <div className="section-title">
                       <Settings size={18} />
@@ -2223,7 +2772,9 @@ export function App() {
                 </>
               )}
             </section>
-
+          </div>
+        ) : activeView === "audit" ? (
+          <div className="audit-grid">
             <section className="detail-panel" aria-label="Audit events">
               <div className="detail-header">
                 <div>
@@ -2260,8 +2811,33 @@ export function App() {
                 ))}
               </div>
             </section>
+
+            <section className="detail-panel runtime-debugger-panel" aria-label="Runtime event-journal debugger">
+              <div className="detail-header">
+                <div>
+                  <p className="eyebrow">State Workflow Runtime</p>
+                  <h2>Event journal debugger</h2>
+                </div>
+                <Settings size={22} />
+              </div>
+              <MemoWorkflowDebuggerPanel
+                runtime={workflowDebuggerRuntime}
+                classNames={{
+                  root: "memo-debugger",
+                  toolbar: "memo-debugger-toolbar",
+                  button: "row-action-button",
+                  state: "memo-debugger-state",
+                  views: "memo-debugger-views",
+                  timeline: "memo-debugger-timeline",
+                  event: "memo-debugger-event",
+                  selectedEvent: "memo-debugger-event-selected",
+                  detail: "memo-debugger-detail",
+                  metadata: "memo-debugger-metadata"
+                }}
+              />
+            </section>
           </div>
-        )}
+        ) : null}
 
       </section>
     </main>

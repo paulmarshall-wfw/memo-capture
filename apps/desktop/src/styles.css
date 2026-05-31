@@ -460,6 +460,22 @@ button:disabled {
   gap: 14px;
 }
 
+.settings-single-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(560px, 0.82fr);
+  gap: 14px;
+}
+
+.audit-grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: minmax(420px, 0.9fr) minmax(520px, 1.1fr);
+  gap: 14px;
+}
+
 .item-list {
   display: grid;
   min-height: 0;
@@ -1013,6 +1029,148 @@ button:disabled {
   font-weight: 680;
 }
 
+.settings-row-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-settings-row {
+  gap: 12px;
+}
+
+.project-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.project-editor-wide {
+  grid-column: 1 / -1;
+}
+
+.project-editor textarea {
+  min-height: 92px;
+}
+
+.runtime-debugger-panel {
+  min-width: 0;
+}
+
+.memo-debugger {
+  display: grid;
+  min-height: 0;
+  gap: 12px;
+}
+
+.memo-debugger-toolbar,
+.memo-debugger-views,
+.memo-debugger-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memo-debugger-state {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.memo-debugger-state span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+
+.memo-debugger-views .row-action-button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  color: var(--accent);
+  background: var(--selected-soft);
+}
+
+.memo-debugger-timeline {
+  display: grid;
+  max-height: 360px;
+  gap: 8px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memo-debugger-event button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 48px minmax(120px, 0.42fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+}
+
+.memo-debugger-event-selected button {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--selected-soft);
+}
+
+.memo-debugger-event span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.memo-debugger-detail {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.memo-debugger-detail h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.memo-debugger-detail dl {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.memo-debugger-detail dt {
+  color: var(--text-subtle);
+  font-weight: 720;
+}
+
+.memo-debugger-detail dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.memo-debugger-metadata {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .watch-folder-list {
   display: grid;
   gap: 12px;
@@ -1145,6 +1303,8 @@ button:disabled {
   .export-grid,
   .watched-grid,
   .settings-grid,
+  .settings-single-grid,
+  .audit-grid,
   .field-grid {
     grid-template-columns: 1fr;
   }
@@ -1162,6 +1322,15 @@ button:disabled {
   .watched-toolbar,
   .settings-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .settings-row-header,
+  .project-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-row-header {
+    display: grid;
   }
 
   .search-toolbar {
