@@ -12,7 +12,6 @@ export interface FileTypeSettingRow extends Record<string, unknown> {
 
 export interface ExtractionSettingsRow extends Record<string, unknown> {
   project_confidence_threshold: string | number;
-  feature_group_confidence_threshold: string | number;
   contributor_confidence_threshold: string | number;
   tag_confidence_threshold: string | number;
   updated_at: Date | string;
@@ -122,8 +121,8 @@ export class SettingsRepository {
 
   async getExtractionSettings(): Promise<ExtractionSettingsRow | null> {
     const result = await this.db.query<ExtractionSettingsRow>(
-      `select project_confidence_threshold, feature_group_confidence_threshold,
-              contributor_confidence_threshold, tag_confidence_threshold, updated_at
+      `select project_confidence_threshold, contributor_confidence_threshold,
+              tag_confidence_threshold, updated_at
        from extraction_settings
        where singleton_id = true`
     );
@@ -132,7 +131,6 @@ export class SettingsRepository {
 
   async updateExtractionSettings(input: {
     projectConfidenceThreshold: number;
-    featureGroupConfidenceThreshold: number;
     contributorConfidenceThreshold: number;
     tagConfidenceThreshold: number;
     actorUserId: string;
@@ -141,26 +139,23 @@ export class SettingsRepository {
       `insert into extraction_settings (
          singleton_id,
          project_confidence_threshold,
-         feature_group_confidence_threshold,
          contributor_confidence_threshold,
          tag_confidence_threshold,
          updated_by,
          updated_at
        )
-       values (true, $1, $2, $3, $4, $5, now())
+       values (true, $1, $2, $3, $4, now())
        on conflict (singleton_id) do update
        set
          project_confidence_threshold = excluded.project_confidence_threshold,
-         feature_group_confidence_threshold = excluded.feature_group_confidence_threshold,
          contributor_confidence_threshold = excluded.contributor_confidence_threshold,
          tag_confidence_threshold = excluded.tag_confidence_threshold,
          updated_by = excluded.updated_by,
          updated_at = now()
-       returning project_confidence_threshold, feature_group_confidence_threshold,
-                 contributor_confidence_threshold, tag_confidence_threshold, updated_at`,
+       returning project_confidence_threshold, contributor_confidence_threshold,
+                 tag_confidence_threshold, updated_at`,
       [
         input.projectConfidenceThreshold,
-        input.featureGroupConfidenceThreshold,
         input.contributorConfidenceThreshold,
         input.tagConfidenceThreshold,
         input.actorUserId

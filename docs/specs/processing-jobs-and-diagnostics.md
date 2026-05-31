@@ -192,7 +192,6 @@ Input:
 Output:
 
 - candidate project
-- candidate feature group
 - title
 - body
 - contributor suggestion
@@ -203,7 +202,7 @@ Rules:
 
 - Low confidence enters or remains in `needs_review`.
 - Confidence scores do not block promotion once a signed-in user supplies required fields.
-- AI/extraction may suggest projects, feature groups, contributors, and tags, but creation/confirmation follows settings rules.
+- AI/extraction may suggest projects, contributors, and tags, but project/contributor creation or confirmation follows settings rules.
 
 ### generate_keywords
 
@@ -213,7 +212,7 @@ Input:
 
 Output:
 
-- normalized tag suggestions or assignments depending on confidence and user review policy
+- normalized tag assignments with confidence, per-item counts, corpus/project counts, co-occurrence metadata, and derived grouping paths
 
 ### expand_work_item
 

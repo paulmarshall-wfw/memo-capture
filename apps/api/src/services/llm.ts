@@ -14,14 +14,11 @@ export interface WorkItemExpansionContext {
     description: string | null;
     context: string | null;
   };
-  featureGroup: {
-    id: string | null;
-    name: string | null;
-  };
   workItem: {
     id: string;
     title: string;
     body: string;
+    tags: string[];
     contributorText: string | null;
   };
   sourceMemo: {
@@ -114,7 +111,7 @@ export function buildWorkItemExpansionPrompt(context: WorkItemExpansionContext):
         "Memo metadata:",
         `- Title: ${context.workItem.title}`,
         `- Project: ${context.project.name ?? "Unassigned"}`,
-        `- Feature group: ${context.featureGroup.name ?? "Unassigned"}`,
+        `- Tags: ${context.workItem.tags.length === 0 ? "None" : context.workItem.tags.join(", ")}`,
         `- Contributor: ${context.workItem.contributorText ?? "Unknown"}`,
         `- Source type: ${context.sourceMemo?.sourceType ?? "unknown"}`
       ].join("\n")
@@ -152,15 +149,13 @@ class LocalDevLlmProvider implements LlmProvider {
         ]
           .filter((part) => part !== "")
           .join("\n"),
-        tags: ["ai-expanded", normalizeTag(projectPrefix)],
-        feature_group: null
+        tags: ["ai-expanded", normalizeTag(projectPrefix)]
       },
       related_suggestions: [
         {
           title: `${title} acceptance criteria`,
           body: `Define acceptance criteria, failure modes, and owner review notes for: ${context.workItem.body.trim()}`,
           tags: ["acceptance-criteria", "ai-suggestion"],
-          feature_group: null,
           rationale: "Acceptance criteria make the captured idea easier to review and export."
         }
       ]

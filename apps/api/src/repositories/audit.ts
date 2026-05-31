@@ -85,8 +85,7 @@ export class AuditRepository {
          coalesce(linked_work_items.title, subject_work_items.title) as display_title,
          primary_artifacts.original_filename as display_original_filename,
          linked_source_memos.original_path as display_original_path,
-         coalesce(linked_projects.name, subject_projects.name) as display_project_name,
-         coalesce(linked_feature_groups.name, subject_feature_groups.name) as display_feature_group_name
+         coalesce(linked_projects.name, subject_projects.name) as display_project_name
        from audit_events
        left join work_items linked_work_items
          on linked_work_items.id = audit_events.work_item_id
@@ -109,11 +108,6 @@ export class AuditRepository {
        left join projects subject_projects
          on audit_events.subject_type = 'project'
         and subject_projects.id::text = audit_events.subject_id
-       left join feature_groups linked_feature_groups
-         on linked_feature_groups.id = coalesce(linked_work_items.feature_group_id, subject_work_items.feature_group_id)
-       left join feature_groups subject_feature_groups
-         on audit_events.subject_type = 'feature_group'
-        and subject_feature_groups.id::text = audit_events.subject_id
        where ($1::text is null or audit_events.event_name = $1::text)
          and ($2::uuid is null or audit_events.actor_user_id = $2::uuid)
          and ($3::text is null or audit_events.subject_type = $3::text)
@@ -159,7 +153,6 @@ interface AuditEventRow extends Record<string, unknown> {
   display_original_filename: string | null;
   display_original_path: string | null;
   display_project_name: string | null;
-  display_feature_group_name: string | null;
 }
 
 export interface AuditEventRecord {
@@ -185,7 +178,6 @@ export interface AuditEventDisplay {
   originalFilename: string | null;
   originalPath: string | null;
   projectName: string | null;
-  featureGroupName: string | null;
 }
 
 function mapAuditEvent(row: AuditEventRow): AuditEventRecord {
@@ -208,8 +200,7 @@ function mapAuditEvent(row: AuditEventRow): AuditEventRecord {
       title: row.display_title,
       originalFilename: row.display_original_filename,
       originalPath: row.display_original_path,
-      projectName: row.display_project_name,
-      featureGroupName: row.display_feature_group_name
+      projectName: row.display_project_name
     }
   };
 }

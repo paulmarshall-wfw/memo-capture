@@ -1,13 +1,8 @@
 import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
-import {
-  ContributorRepository,
-  FeatureGroupRepository,
-  ProjectRepository
-} from "../repositories/catalog.js";
+import { ContributorRepository, ProjectRepository } from "../repositories/catalog.js";
 import type {
   ContributorRecord,
-  FeatureGroupRecord,
   ProjectRecord,
   AppUserRecord
 } from "../repositories/rows.js";
@@ -82,82 +77,6 @@ export class CatalogService {
         });
       }
       return project;
-    });
-  }
-
-  async listFeatureGroups(): Promise<FeatureGroupRecord[]> {
-    return new FeatureGroupRepository(this.db).list();
-  }
-
-  async createFeatureGroup(
-    body: unknown,
-    actor: AppUserRecord,
-    requestId: string
-  ): Promise<FeatureGroupRecord> {
-    const input = parseFeatureGroupBody(body);
-    return this.db.transaction(async (client) => {
-      const featureGroups = new FeatureGroupRepository(client);
-      const audit = new AuditRepository(client);
-      const featureGroup = await featureGroups.create({ ...input, actorUserId: actor.id });
-      await audit.record({
-        eventName: "feature_group.created",
-        actor,
-        subjectType: "feature_group",
-        subjectId: featureGroup.id,
-        requestId,
-        metadata: { slug: featureGroup.slug }
-      });
-      return featureGroup;
-    });
-  }
-
-  async updateFeatureGroup(
-    featureGroupId: string,
-    body: unknown,
-    actor: AppUserRecord,
-    requestId: string
-  ): Promise<FeatureGroupRecord | null> {
-    const input = parseFeatureGroupPatchBody(body);
-    return this.db.transaction(async (client) => {
-      const featureGroups = new FeatureGroupRepository(client);
-      const audit = new AuditRepository(client);
-      const featureGroup = await featureGroups.update(featureGroupId, {
-        ...input,
-        actorUserId: actor.id
-      });
-      if (featureGroup !== null) {
-        await audit.record({
-          eventName: "feature_group.updated",
-          actor,
-          subjectType: "feature_group",
-          subjectId: featureGroup.id,
-          requestId,
-          metadata: { slug: featureGroup.slug }
-        });
-      }
-      return featureGroup;
-    });
-  }
-
-  async deactivateFeatureGroup(
-    featureGroupId: string,
-    actor: AppUserRecord,
-    requestId: string
-  ): Promise<FeatureGroupRecord | null> {
-    return this.db.transaction(async (client) => {
-      const featureGroups = new FeatureGroupRepository(client);
-      const audit = new AuditRepository(client);
-      const featureGroup = await featureGroups.deactivate(featureGroupId, actor.id);
-      if (featureGroup !== null) {
-        await audit.record({
-          eventName: "feature_group.deactivated",
-          actor,
-          subjectType: "feature_group",
-          subjectId: featureGroup.id,
-          requestId
-        });
-      }
-      return featureGroup;
     });
   }
 
@@ -254,25 +173,6 @@ function parseProjectPatchBody(body: unknown) {
     description:
       record.description === undefined ? undefined : optionalString(record.description, "description") ?? "",
     context: record.context === undefined ? undefined : optionalString(record.context, "context") ?? ""
-  };
-}
-
-function parseFeatureGroupBody(body: unknown) {
-  const record = parseObject(body);
-  return {
-    name: assertNonEmptyString(record.name, "name"),
-    slug: optionalString(record.slug, "slug"),
-    description: optionalString(record.description, "description") ?? ""
-  };
-}
-
-function parseFeatureGroupPatchBody(body: unknown) {
-  const record = parseObject(body);
-  return {
-    name: record.name === undefined ? undefined : assertNonEmptyString(record.name, "name"),
-    slug: record.slug === undefined ? undefined : optionalString(record.slug, "slug"),
-    description:
-      record.description === undefined ? undefined : optionalString(record.description, "description") ?? ""
   };
 }
 

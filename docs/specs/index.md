@@ -38,7 +38,7 @@ Memo Capture captures ideas from:
 - watched-folder text files
 - watched-folder audio files
 
-Captured material becomes source provenance first, then reviewable work items. Work items are organized by project, optional feature group, tags, and optional contributor attribution, then moved through a workflow-driven lifecycle.
+Captured material becomes source provenance first, then reviewable work items. Work items are organized by controlled project, flexible tags/keywords, derived grouping metadata, and optional contributor attribution, then moved through a workflow-driven lifecycle.
 
 ## Runtime Surfaces
 
@@ -100,7 +100,7 @@ The first screen is the work queue, not a dashboard.
 - Ingestion review bucket: required-field recovery for low-confidence imports.
 - Detail panel: edit/save, provenance, diagnostics, audio playback when applicable, workflow actions, and AI expansion controls.
 - Export view: accepted snapshots, filters, selection, batch creation, and download links.
-- Settings: projects, feature groups, contributors, file type support, confidence thresholds, provider status, prompts, export templates, and desktop-local watched/archive paths.
+- Settings: projects, tags/keyword grouping, contributors, file type support, confidence thresholds, provider status, prompts, export templates, and desktop-local watched/archive paths.
 - Operations: workflow import, validation, staging, explicit activation, active workflow status.
 - Jobs diagnostics: global processing job list, retry/cancel actions, sanitized details.
 - System diagnostics: auth, API, object storage, Postgres, worker, app version, commit SHA, DB schema, active workflow version, export schema.

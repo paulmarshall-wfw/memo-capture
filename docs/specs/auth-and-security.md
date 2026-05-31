@@ -143,7 +143,7 @@ Do not:
 - treat LLM output as trusted commands
 - let retrieved memo content override system/developer instructions
 - create work items directly from related AI suggestions
-- apply AI-suggested feature groups/contributors without user confirmation where required
+- apply AI-suggested projects/contributors without user confirmation where required
 - store invalid structured output as normal records
 
 Invalid output creates diagnostics and may schedule bounded retry where appropriate.

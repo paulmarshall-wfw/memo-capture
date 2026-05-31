@@ -182,49 +182,6 @@ function matchProtectedRoute(
     });
   }
 
-  if (method === "GET" && pathname === "/api/feature-groups") {
-    return async () => ({ featureGroups: await services.catalog.listFeatureGroups() });
-  }
-
-  if (method === "POST" && pathname === "/api/feature-groups") {
-    return async (context, session) => ({
-      featureGroup: await services.catalog.createFeatureGroup(
-        await readJsonBody(context.request),
-        session.user,
-        context.requestId
-      )
-    });
-  }
-
-  const featureGroupDeactivateMatch = /^\/api\/feature-groups\/([^/]+)\/deactivate$/.exec(pathname);
-  if (method === "POST" && featureGroupDeactivateMatch !== null) {
-    return async (context, session) => ({
-      featureGroup: requireFound(
-        await services.catalog.deactivateFeatureGroup(
-          featureGroupDeactivateMatch[1] ?? "",
-          session.user,
-          context.requestId
-        ),
-        "feature_group"
-      )
-    });
-  }
-
-  const featureGroupPatchMatch = /^\/api\/feature-groups\/([^/]+)$/.exec(pathname);
-  if (method === "PATCH" && featureGroupPatchMatch !== null) {
-    return async (context, session) => ({
-      featureGroup: requireFound(
-        await services.catalog.updateFeatureGroup(
-          featureGroupPatchMatch[1] ?? "",
-          await readJsonBody(context.request),
-          session.user,
-          context.requestId
-        ),
-        "feature_group"
-      )
-    });
-  }
-
   if (method === "GET" && pathname === "/api/contributors") {
     return async () => ({ contributors: await services.catalog.listContributors() });
   }
@@ -610,6 +567,10 @@ function matchProtectedRoute(
         session.user,
         context.requestId
       );
+  }
+
+  if (pathname.startsWith("/api/feature-groups")) {
+    return null;
   }
 
   if (pathname.startsWith("/api/")) {

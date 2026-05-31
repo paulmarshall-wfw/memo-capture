@@ -2,12 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Queryable } from "../db/types.js";
 import {
   mapContributor,
-  mapFeatureGroup,
   mapProject,
   type ContributorRecord,
   type ContributorRow,
-  type FeatureGroupRecord,
-  type FeatureGroupRow,
   type ProjectRecord,
   type ProjectRow
 } from "./rows.js";
@@ -102,95 +99,6 @@ export class ProjectRepository {
       [projectId, actorUserId]
     );
     return result.rows[0] === undefined ? null : mapProject(result.rows[0]);
-  }
-}
-
-export interface FeatureGroupInput {
-  name: string;
-  slug?: string | null | undefined;
-  description?: string | null | undefined;
-  actorUserId: string;
-}
-
-export interface FeatureGroupPatchInput {
-  name?: string | undefined;
-  slug?: string | null | undefined;
-  description?: string | undefined;
-  actorUserId: string;
-}
-
-export class FeatureGroupRepository {
-  constructor(private readonly db: Queryable) {}
-
-  async list(): Promise<FeatureGroupRecord[]> {
-    const result = await this.db.query<FeatureGroupRow>(
-      `select *
-       from feature_groups
-       order by is_active desc, lower(name), created_at desc`
-    );
-    return result.rows.map(mapFeatureGroup);
-  }
-
-  async create(input: FeatureGroupInput): Promise<FeatureGroupRecord> {
-    const result = await this.db.query<FeatureGroupRow>(
-      `insert into feature_groups (
-         id,
-         slug,
-         name,
-         description,
-         created_by,
-         updated_by,
-         created_at,
-         updated_at
-       )
-       values ($1, $2, $3, $4, $5, $5, now(), now())
-       returning *`,
-      [
-        randomUUID(),
-        normalizeSlug(input.slug ?? input.name),
-        input.name.trim(),
-        input.description ?? "",
-        input.actorUserId
-      ]
-    );
-    return requiredRow(result.rows[0], "feature group create failed", mapFeatureGroup);
-  }
-
-  async update(
-    featureGroupId: string,
-    input: FeatureGroupPatchInput
-  ): Promise<FeatureGroupRecord | null> {
-    const nextSlug = input.slug === undefined || input.slug === null ? null : normalizeSlug(input.slug);
-    const result = await this.db.query<FeatureGroupRow>(
-      `update feature_groups
-       set
-         name = coalesce($2, name),
-         slug = coalesce($3, slug),
-         description = coalesce($4, description),
-         updated_by = $5,
-         updated_at = now()
-       where id = $1
-       returning *`,
-      [
-        featureGroupId,
-        input.name?.trim() ?? null,
-        nextSlug,
-        input.description ?? null,
-        input.actorUserId
-      ]
-    );
-    return result.rows[0] === undefined ? null : mapFeatureGroup(result.rows[0]);
-  }
-
-  async deactivate(featureGroupId: string, actorUserId: string): Promise<FeatureGroupRecord | null> {
-    const result = await this.db.query<FeatureGroupRow>(
-      `update feature_groups
-       set is_active = false, updated_by = $2, updated_at = now()
-       where id = $1
-       returning *`,
-      [featureGroupId, actorUserId]
-    );
-    return result.rows[0] === undefined ? null : mapFeatureGroup(result.rows[0]);
   }
 }
 

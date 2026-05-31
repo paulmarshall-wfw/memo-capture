@@ -22,6 +22,7 @@ export interface SourceMemoRecord {
   sourceType?: SourceMemoType;
   primaryArtifactId?: string | null;
   contentHash: string | null;
+  extractedText?: string | null;
   currentTranscriptText?: string | null;
 }
 
@@ -30,6 +31,7 @@ interface SourceMemoRow extends Record<string, unknown> {
   source_type: SourceMemoType;
   primary_artifact_id: string | null;
   content_hash: string | null;
+  extracted_text: string | null;
   current_transcript_text: string | null;
 }
 
@@ -77,7 +79,7 @@ export class SourceMemoRepository {
 
   async findById(sourceMemoId: string): Promise<SourceMemoRecord | null> {
     const result = await this.db.query<SourceMemoRow>(
-      `select id, source_type, primary_artifact_id, content_hash, current_transcript_text
+      `select id, source_type, primary_artifact_id, content_hash, extracted_text, current_transcript_text
        from source_memos
        where id = $1`,
       [sourceMemoId]
@@ -91,6 +93,7 @@ export class SourceMemoRepository {
           sourceType: row.source_type,
           primaryArtifactId: row.primary_artifact_id,
           contentHash: row.content_hash,
+          extractedText: row.extracted_text,
           currentTranscriptText: row.current_transcript_text
         };
   }

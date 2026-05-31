@@ -82,11 +82,11 @@ interface WorkItem {
   id: string;
   sourceMemoId: string;
   projectId: string | null;
-  featureGroupId: string | null;
   contributorText: string | null;
   contributorId: string | null;
   title: string;
   body: string;
+  tags: string[];
   bodyFormat: string;
   workflowState: string;
   workflowItemVersion: number;
@@ -146,12 +146,6 @@ interface ProjectFormState {
   context: string;
 }
 
-interface FeatureGroup {
-  id: string;
-  name: string;
-  isActive: boolean;
-}
-
 interface Contributor {
   id: string;
   displayName: string;
@@ -170,9 +164,9 @@ interface DraftState {
   title: string;
   body: string;
   projectId: string;
-  featureGroupId: string;
   contributorId: string;
   contributorText: string;
+  tagsText: string;
 }
 
 interface ExportableSnapshot {
@@ -184,10 +178,6 @@ interface ExportableSnapshot {
     slug: string;
     name: string;
   };
-  featureGroup: {
-    id: string;
-    name: string;
-  } | null;
   contributor: {
     id: string | null;
     text: string;
@@ -263,7 +253,6 @@ interface AiSuggestion {
   title: string;
   body: string;
   tags: string[];
-  featureGroup: string | null;
   rationale: string | null;
   providerName: string | null;
   modelName: string | null;
@@ -291,7 +280,6 @@ interface SettingsSummary {
   fileTypes: FileTypeSetting[];
   extraction: {
     projectConfidenceThreshold: number;
-    featureGroupConfidenceThreshold: number;
     contributorConfidenceThreshold: number;
     tagConfidenceThreshold: number;
     updatedAt: string;
@@ -374,7 +362,6 @@ interface AuditEvent {
     originalFilename: string | null;
     originalPath: string | null;
     projectName: string | null;
-    featureGroupName: string | null;
   };
 }
 
@@ -445,10 +432,29 @@ function createDraft(item: WorkItem): DraftState {
     title: item.title,
     body: item.body,
     projectId: item.projectId ?? "",
-    featureGroupId: item.featureGroupId ?? "",
     contributorId: item.contributorId ?? "",
-    contributorText: item.contributorText ?? ""
+    contributorText: item.contributorText ?? "",
+    tagsText: item.tags.join(", ")
   };
+}
+
+function parseTagsText(value: string): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const tag of value.split(",")) {
+    const cleaned = tag.trim().replace(/\s+/g, " ");
+    const key = cleaned.toLowerCase();
+    if (cleaned === "" || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    tags.push(cleaned);
+  }
+  return tags;
+}
+
+function normalizeTagsText(value: string): string {
+  return parseTagsText(value).join(", ");
 }
 
 function createEmptyProjectForm(): ProjectFormState {
@@ -673,7 +679,6 @@ function projectWorkflowRuntimeEvents(
 interface AuditSummaryContext {
   workItemById: Map<string, WorkItem>;
   projectById: Map<string, Project>;
-  featureGroupById: Map<string, FeatureGroup>;
 }
 
 interface AuditEventSummary {
@@ -687,7 +692,6 @@ function summarizeAuditEvent(event: AuditEvent, context: AuditSummaryContext): A
   const details = uniqueCompact([
     auditEventPrimaryObject(event, context),
     auditEventProjectName(event, context),
-    auditEventFeatureGroupName(event, context),
     auditEventCountDetail(event)
   ]);
 
@@ -720,12 +724,6 @@ function auditEventLabel(event: AuditEvent): string {
       return "Project updated";
     case "project.deactivated":
       return "Project deactivated";
-    case "feature_group.created":
-      return "Group created";
-    case "feature_group.updated":
-      return "Group updated";
-    case "feature_group.deactivated":
-      return "Group deactivated";
     case "workflow.imported":
       return "Workflow imported";
     case "workflow.import_failed":
@@ -792,10 +790,6 @@ function auditEventPrimaryObject(event: AuditEvent, context: AuditSummaryContext
   if (event.subjectType === "project") {
     return auditEventProjectName(event, context);
   }
-  if (event.subjectType === "feature_group") {
-    return auditEventFeatureGroupName(event, context);
-  }
-
   const title =
     trimDisplayValue(event.display?.title) ??
     auditEventWorkItem(event, context)?.title ??
@@ -818,23 +812,6 @@ function auditEventProjectName(event: AuditEvent, context: AuditSummaryContext):
   }
   const project = context.projectById.get(workItem.projectId);
   return project === undefined ? null : `Project: ${project.name}`;
-}
-
-function auditEventFeatureGroupName(event: AuditEvent, context: AuditSummaryContext): string | null {
-  const displayName = trimDisplayValue(event.display?.featureGroupName);
-  if (displayName !== null) {
-    return `Group: ${displayName}`;
-  }
-  if (event.subjectType === "feature_group" && event.subjectId !== null) {
-    const featureGroup = context.featureGroupById.get(event.subjectId);
-    return featureGroup === undefined ? null : `Group: ${featureGroup.name}`;
-  }
-  const workItem = auditEventWorkItem(event, context);
-  if (workItem?.featureGroupId === null || workItem?.featureGroupId === undefined) {
-    return null;
-  }
-  const featureGroup = context.featureGroupById.get(workItem.featureGroupId);
-  return featureGroup === undefined ? null : `Group: ${featureGroup.name}`;
 }
 
 function auditEventWorkItem(event: AuditEvent, context: AuditSummaryContext): WorkItem | null {
@@ -1082,7 +1059,6 @@ export function App() {
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [actions, setActions] = useState<AllowedWorkflowAction[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [featureGroups, setFeatureGroups] = useState<FeatureGroup[]>([]);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [search, setSearch] = useState("");
@@ -1127,10 +1103,6 @@ export function App() {
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const workItemById = useMemo(() => new Map(workItems.map((item) => [item.id, item])), [workItems]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
-  const featureGroupById = useMemo(
-    () => new Map(featureGroups.map((featureGroup) => [featureGroup.id, featureGroup])),
-    [featureGroups]
-  );
   const contributorById = useMemo(
     () => new Map(contributors.map((contributor) => [contributor.id, contributor])),
     [contributors]
@@ -1160,13 +1132,13 @@ export function App() {
         item.contributorText ?? "",
         contributorById.get(item.contributorId ?? "")?.displayName ?? "",
         projectById.get(item.projectId ?? "")?.name ?? "",
-        featureGroupById.get(item.featureGroupId ?? "")?.name ?? ""
+        item.tags.join(" ")
       ]
         .join(" ")
         .toLowerCase()
         .includes(query)
     );
-  }, [contributorById, featureGroupById, projectById, search, workItems]);
+  }, [contributorById, projectById, search, workItems]);
   const filteredExportSnapshots = useMemo(() => {
     const query = exportSearch.trim().toLowerCase();
     if (query === "") {
@@ -1178,7 +1150,6 @@ export function App() {
         snapshot.title,
         snapshot.project.name,
         snapshot.project.slug,
-        snapshot.featureGroup?.name ?? "",
         snapshot.contributor?.text ?? ""
       ]
         .join(" ")
@@ -1201,9 +1172,9 @@ export function App() {
     (draft.title !== selectedItem.title ||
       draft.body !== selectedItem.body ||
       draft.projectId !== (selectedItem.projectId ?? "") ||
-      draft.featureGroupId !== (selectedItem.featureGroupId ?? "") ||
       draft.contributorId !== (selectedItem.contributorId ?? "") ||
-      draft.contributorText !== (selectedItem.contributorText ?? ""));
+      draft.contributorText !== (selectedItem.contributorText ?? "") ||
+      normalizeTagsText(draft.tagsText) !== selectedItem.tags.join(", "));
   const audioArtifact =
     selectedDiagnostics?.artifacts.find((artifact) => artifact.artifactKind === "original_audio_file") ?? null;
   const transcriptArtifacts =
@@ -1417,10 +1388,9 @@ export function App() {
   }, [accessToken, activeView]);
 
   async function loadWorkspace(token: string, requestedBucketId: string | null): Promise<void> {
-    const [bucketResponse, projectsResponse, featureGroupsResponse, contributorsResponse] = await Promise.all([
+    const [bucketResponse, projectsResponse, contributorsResponse] = await Promise.all([
       authedJson<{ buckets: WorkflowBucket[] }>(token, "/api/workflow/buckets"),
       authedJson<{ projects: Project[] }>(token, "/api/projects"),
-      authedJson<{ featureGroups: FeatureGroup[] }>(token, "/api/feature-groups"),
       authedJson<{ contributors: Contributor[] }>(token, "/api/contributors")
     ]);
     const orderedBuckets = [...bucketResponse.buckets].sort((left, right) => left.order - right.order);
@@ -1431,7 +1401,6 @@ export function App() {
 
     setBuckets(orderedBuckets);
     applyProjects(projectsResponse.projects);
-    setFeatureGroups(featureGroupsResponse.featureGroups);
     setContributors(contributorsResponse.contributors);
     setActiveBucketId(nextBucketId);
     setWorkItems(itemResponse.workItems);
@@ -1653,9 +1622,9 @@ export function App() {
             title: draft.title,
             body: draft.body,
             projectId: draft.projectId,
-            featureGroupId: draft.featureGroupId,
             contributorId: draft.contributorId,
-            contributorText: draft.contributorText
+            contributorText: draft.contributorText,
+            tags: parseTagsText(draft.tagsText)
           })
         }
       );
@@ -1957,7 +1926,7 @@ export function App() {
     setStatusMessage(null);
     try {
       const response = await authedJson<{
-        expandedWorkItem: { title: string; body: string; tags: string[]; featureGroup: string | null };
+        expandedWorkItem: { title: string; body: string; tags: string[] };
         suggestions: AiSuggestion[];
         providerName: string;
         modelName: string;
@@ -2448,7 +2417,7 @@ export function App() {
               <Search size={18} />
               <input
                 id="work-item-search"
-                placeholder="Title, body, project, feature group, or contributor"
+                placeholder="Title, body, project, tags, or contributor"
                 value={search}
                 onChange={(event) => setSearch(event.currentTarget.value)}
               />
@@ -2461,7 +2430,7 @@ export function App() {
               <Search size={18} />
               <input
                 id="export-search"
-                placeholder="Title, project, feature group, or contributor"
+                placeholder="Title, project, tags, or contributor"
                 value={exportSearch}
                 onChange={(event) => setExportSearch(event.currentTarget.value)}
               />
@@ -2551,11 +2520,9 @@ export function App() {
                       </div>
                       <p>{item.body}</p>
                     </div>
-                    <div className="item-meta item-meta-column" aria-label="Project, feature, and contributor">
+                    <div className="item-meta item-meta-column" aria-label="Project, tags, and contributor">
                       <span>{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
-                      {item.featureGroupId !== null ? (
-                        <span>{featureGroupById.get(item.featureGroupId)?.name ?? "Feature group"}</span>
-                      ) : null}
+                      {item.tags.length === 0 ? null : <span>{item.tags.slice(0, 3).join(", ")}</span>}
                       {item.contributorText !== null || item.contributorId !== null ? (
                         <span>
                           {item.contributorText ??
@@ -2654,19 +2621,13 @@ export function App() {
                   </div>
 
                   <div className="field-group">
-                    <label htmlFor="work-item-feature-group">Feature group</label>
-                    <select
-                      id="work-item-feature-group"
-                      value={draft.featureGroupId}
-                      onChange={(event) => updateDraft("featureGroupId", event.currentTarget.value)}
-                    >
-                      <option value="">None</option>
-                      {featureGroups.map((featureGroup) => (
-                        <option value={featureGroup.id} key={featureGroup.id}>
-                          {featureGroup.name}
-                        </option>
-                      ))}
-                    </select>
+                    <label htmlFor="work-item-tags">Tags</label>
+                    <input
+                      id="work-item-tags"
+                      value={draft.tagsText}
+                      onChange={(event) => updateDraft("tagsText", event.currentTarget.value)}
+                      placeholder="keyword, grouping, topic"
+                    />
                   </div>
                 </div>
 
@@ -2953,7 +2914,6 @@ export function App() {
                     </div>
                     <div className="item-meta">
                       <span>{snapshot.project.name}</span>
-                      {snapshot.featureGroup === null ? null : <span>{snapshot.featureGroup.name}</span>}
                       {snapshot.contributor === null ? null : <span>{snapshot.contributor.text}</span>}
                     </div>
                     <p>Snapshot {formatDate(snapshot.snapshotCreatedAt)}</p>
@@ -3629,8 +3589,7 @@ export function App() {
                 {auditEvents.map((event) => {
                   const summary = summarizeAuditEvent(event, {
                     workItemById,
-                    projectById,
-                    featureGroupById
+                    projectById
                   });
                   return (
                     <article className="audit-event-row" key={event.id} title={summary.title}>

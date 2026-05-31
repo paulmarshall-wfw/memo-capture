@@ -8,13 +8,14 @@ Core entities:
 
 - `app_users`
 - `projects`
-- `feature_groups`
 - `contributors`
 - `source_memos`
 - `work_items`
 - `work_item_snapshots`
 - `tags`
 - `work_item_tags`
+- `tag_statistics`
+- `tag_co_occurrences`
 - `artifacts`
 - `import_events`
 - `processing_jobs`

@@ -7,7 +7,7 @@ Last refreshed UTC: 2026-05-29T12:22:26Z
 
 ## Purpose
 
-Memo Capture is a cross-platform desktop application for capturing ideas from form submissions, watched-folder text files, and watched-folder audio files. Captured material is converted into reviewable work items, organized by project and optional feature group, enriched with tags, and moved through a workflow-driven review lifecycle.
+Memo Capture is a cross-platform desktop application for capturing ideas from form submissions, watched-folder text files, and watched-folder audio files. Captured material is converted into reviewable work items, organized by controlled project and flexible tags/keywords, and moved through a workflow-driven review lifecycle.
 
 The application should preserve source provenance, support AI-assisted expansion, and export accepted work items for ingestion into downstream systems.
 
@@ -26,17 +26,17 @@ Every successfully detected/imported source memo creates a work item immediately
 
 ## Classification Model
 
-The app should not require a rigid `project -> feature group -> feature name` hierarchy.
+The app should not require a rigid `project -> group -> subgroup -> feature` hierarchy.
 
 V1 classification uses:
 
 - required controlled `project`
-- optional dynamic `feature_group`
 - `work_item.title` instead of mandatory `feature_name`
-- tags/keywords for flexible grouping
+- tags/keywords for flexible grouping below project
+- derived grouping paths from tag frequency, co-occurrence, and confidence
 - optional contributor attribution
 
-Project names are controlled. Feature groups can be added dynamically from user input or memo extraction, but remain optional.
+Project names are controlled. Below project, the app uses tags/keywords and derived grouping paths instead of a canonical feature-group catalog.
 
 Contributor attribution is memo metadata, not authorization. Authenticated user identity is separate and is used for audit and backend access.
 
@@ -50,7 +50,7 @@ Supported V1 ingestion channels:
 
 Watched-folder imports always create source memo provenance first, then create the workflow work item in the appropriate initial state.
 
-Automatic extraction should produce candidate project, feature group, title, body, contributor, and tags with confidence metadata. Low-confidence or incomplete imports enter `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block promotion.
+Automatic extraction should produce candidate project, title, body, contributor, tags, and derived grouping metadata with confidence metadata. Low-confidence or incomplete imports enter `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block promotion.
 
 Promotion from `needs_review` to `memo` requires:
 
@@ -59,7 +59,7 @@ Promotion from `needs_review` to `memo` requires:
 - memo body or transcript
 - linked source memo
 
-Feature group, tags, and contributor are optional.
+Tags and contributor are optional.
 
 ## File Type Support
 
@@ -199,15 +199,13 @@ Recommended output shape:
   "expanded_work_item": {
     "title": "string",
     "body": "string",
-    "tags": ["string"],
-    "feature_group": "string | null"
+    "tags": ["string"]
   },
   "related_suggestions": [
     {
       "title": "string",
       "body": "string",
       "tags": ["string"],
-      "feature_group": "string | null",
       "rationale": "string"
     }
   ]
@@ -370,7 +368,7 @@ Backend-owned settings:
 
 - projects
 - project descriptions/context
-- feature groups
+- tag/keyword grouping thresholds
 - contributor list
 - supported file type entries and capability state
 - extraction confidence thresholds
@@ -450,7 +448,7 @@ Users need browsable buckets and list filtering/sorting.
 List rows should include:
 
 - project
-- optional feature group
+- tags/keywords
 - title
 - contributor attribution if present
 - tags/keywords
@@ -462,7 +460,6 @@ List rows should include:
 Filtering should support:
 
 - project
-- feature group
 - contributor
 - tags/keywords
 - date range
@@ -515,13 +512,13 @@ Project rules:
 - project slugs are stable identifiers separate from display names
 - if a project display name changes, historical work items show the new display name
 
-Feature group rules:
+Tag and grouping rules:
 
-- feature groups are global labels that can be reused across projects
-- users can create feature groups during ingestion review and detail editing
-- feature groups can be renamed, merged, and deactivated
-- feature group merge affects future classification only; existing work items are not rewritten
-- AI/extraction can suggest new feature groups, but cannot create them without user confirmation
+- tags are global normalized labels that can be reused across projects
+- users can edit tags during ingestion review and detail editing
+- extraction can assign noun-phrase and named-entity tags with confidence and per-item counts
+- derived grouping paths are recalculated metadata, not canonical hierarchy
+- existing feature-group assignments from earlier builds are migrated into ordinary tags
 
 Contributor rules:
 
@@ -541,7 +538,7 @@ Implementation should preserve both the displayed contributor text on the work i
 Backend audit is required for changes to:
 
 - projects
-- feature groups
+- tags/grouping metadata
 - contributors
 - file type support
 - confidence thresholds
@@ -734,7 +731,7 @@ MVP includes:
 - accepted-item Markdown bundle plus JSON Lines exports
 - immutable export batch records
 - audio playback for failed transcription recovery
-- settings UI for projects, feature groups, contributors, provider enablement, watched/archive paths
+- settings UI for projects, tag/keyword grouping, contributors, provider enablement, watched/archive paths
 - UI display of auth, object storage, and deeper export template config even when configured by seed/config files
 - basic global Jobs page from day one
 

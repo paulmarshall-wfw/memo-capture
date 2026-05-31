@@ -21,14 +21,11 @@ test("work item expansion prompt starts with freeform text and uses text-only co
       description: "Capture project synopsis.",
       context: "Internal project context."
     },
-    featureGroup: {
-      id: "feature-1",
-      name: "Capture"
-    },
     workItem: {
       id: "work-item-1",
       title: "Voice memo follow-up",
       body: "Existing work item text.",
+      tags: ["capture"],
       contributorText: "Paul"
     },
     sourceMemo: {
@@ -46,4 +43,3 @@ test("work item expansion prompt starts with freeform text and uses text-only co
   assert.match(prompt, /Stored transcript text only\./);
   assert.doesNotMatch(prompt, /Internal project context\./);
 });
-

@@ -7,7 +7,6 @@ import type { Queryable } from "../db/types.js";
 
 export interface ExportableSnapshotFilters {
   projectId?: string | null;
-  featureGroupId?: string | null;
   contributorId?: string | null;
   tag?: string | null;
   dateFrom?: string | null;
@@ -25,10 +24,6 @@ export interface ExportableSnapshotRecord {
     slug: string;
     name: string;
   };
-  featureGroup: {
-    id: string;
-    name: string;
-  } | null;
   contributor: {
     id: string | null;
     text: string;
@@ -79,10 +74,6 @@ export interface ExportSnapshotForGeneration {
     slug: string;
     name: string;
   };
-  featureGroup: {
-    id: string;
-    name: string;
-  } | null;
   contributor: {
     id: string | null;
     text: string;
@@ -103,8 +94,6 @@ interface ExportableSnapshotRow extends Record<string, unknown> {
   project_id: string;
   project_slug: string;
   project_name: string;
-  feature_group_id: string | null;
-  feature_group_name: string | null;
   contributor_id: string | null;
   contributor_text: string | null;
   already_exported: boolean;
@@ -150,8 +139,6 @@ interface ExportSnapshotGenerationRow extends Record<string, unknown> {
   project_id: string;
   project_slug: string;
   project_name: string;
-  feature_group_id: string | null;
-  feature_group_name: string | null;
   contributor_id: string | null;
   contributor_text: string | null;
   source_content_hash: string | null;
@@ -174,8 +161,6 @@ export class ExportRepository {
            accepted_snapshots.project_id,
            accepted_snapshots.project_slug,
            accepted_snapshots.project_name,
-           accepted_snapshots.feature_group_id,
-           accepted_snapshots.feature_group_name,
            accepted_snapshots.contributor_id,
            accepted_snapshots.contributor_text,
            accepted_snapshots.created_at,
@@ -201,8 +186,6 @@ export class ExportRepository {
          current_snapshots.project_id,
          current_snapshots.project_slug,
          current_snapshots.project_name,
-         current_snapshots.feature_group_id,
-         current_snapshots.feature_group_name,
          current_snapshots.contributor_id,
          current_snapshots.contributor_text,
          snapshot_export_status.accepted_snapshot_id is not null as already_exported,
@@ -211,31 +194,29 @@ export class ExportRepository {
        from current_snapshots
        left join snapshot_export_status on snapshot_export_status.accepted_snapshot_id = current_snapshots.id
        where ($1::uuid is null or current_snapshots.project_id = $1::uuid)
-         and ($2::uuid is null or current_snapshots.feature_group_id = $2::uuid)
-         and ($3::uuid is null or current_snapshots.contributor_id = $3::uuid)
-         and ($4::text is null or exists (
+         and ($2::uuid is null or current_snapshots.contributor_id = $2::uuid)
+         and ($3::text is null or exists (
            select 1
            from work_item_tags
            join tags on tags.id = work_item_tags.tag_id
            where work_item_tags.work_item_id = current_snapshots.work_item_id
-             and tags.normalized_name = lower($4::text)
+             and tags.normalized_name = lower($3::text)
          ))
-         and ($5::timestamptz is null or current_snapshots.created_at >= $5::timestamptz)
-         and ($6::timestamptz is null or current_snapshots.created_at <= $6::timestamptz)
+         and ($4::timestamptz is null or current_snapshots.created_at >= $4::timestamptz)
+         and ($5::timestamptz is null or current_snapshots.created_at <= $5::timestamptz)
          and (
-           $7::text is null
-           or $7::text = 'all'
-           or ($7::text = 'already_exported' and snapshot_export_status.accepted_snapshot_id is not null)
-           or ($7::text = 'unexported' and snapshot_export_status.accepted_snapshot_id is null)
+           $6::text is null
+           or $6::text = 'all'
+           or ($6::text = 'already_exported' and snapshot_export_status.accepted_snapshot_id is not null)
+           or ($6::text = 'unexported' and snapshot_export_status.accepted_snapshot_id is null)
          )
          and (
-           $8::text is null
-           or current_snapshots.title ilike '%' || $8::text || '%'
+           $7::text is null
+           or current_snapshots.title ilike '%' || $7::text || '%'
          )
        order by current_snapshots.created_at desc`,
       [
         nullIfEmpty(filters.projectId),
-        nullIfEmpty(filters.featureGroupId),
         nullIfEmpty(filters.contributorId),
         nullIfEmpty(filters.tag),
         nullIfEmpty(filters.dateFrom),
@@ -351,8 +332,6 @@ export class ExportRepository {
          accepted_snapshots.project_id,
          accepted_snapshots.project_slug,
          accepted_snapshots.project_name,
-         accepted_snapshots.feature_group_id,
-         accepted_snapshots.feature_group_name,
          accepted_snapshots.contributor_id,
          accepted_snapshots.contributor_text,
          accepted_snapshots.source_content_hash,
@@ -446,10 +425,6 @@ function mapExportableSnapshot(row: ExportableSnapshotRow): ExportableSnapshotRe
       slug: row.project_slug,
       name: row.project_name
     },
-    featureGroup:
-      row.feature_group_id === null || row.feature_group_name === null
-        ? null
-        : { id: row.feature_group_id, name: row.feature_group_name },
     contributor:
       row.contributor_text === null && row.contributor_id === null
         ? null
@@ -506,10 +481,6 @@ function mapGenerationSnapshot(row: ExportSnapshotGenerationRow): ExportSnapshot
       slug: row.project_slug,
       name: row.project_name
     },
-    featureGroup:
-      row.feature_group_id === null || row.feature_group_name === null
-        ? null
-        : { id: row.feature_group_id, name: row.feature_group_name },
     contributor:
       row.contributor_text === null && row.contributor_id === null
         ? null

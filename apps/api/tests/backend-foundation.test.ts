@@ -293,20 +293,8 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(session.response.status, 200);
     assert.equal(session.body.user.email, "dev@example.test");
 
-    const featureGroupPatch = await authedJson(baseUrl, "/api/feature-groups/feature-1", {
-      method: "PATCH",
-      body: JSON.stringify({ name: "Capture API", slug: "capture-api" })
-    });
-    assert.equal(featureGroupPatch.response.status, 200);
-    assert.equal(featureGroupPatch.body.featureGroup.slug, "capture-api");
-
-    const featureGroupDeactivate = await authedJson(
-      baseUrl,
-      "/api/feature-groups/feature-1/deactivate",
-      { method: "POST" }
-    );
-    assert.equal(featureGroupDeactivate.response.status, 200);
-    assert.equal(featureGroupDeactivate.body.featureGroup.isActive, false);
+    const removedFeatureGroups = await authedJson(baseUrl, "/api/feature-groups");
+    assert.equal(removedFeatureGroups.response.status, 404);
 
     const contributorPatch = await authedJson(baseUrl, "/api/contributors/contributor-1", {
       method: "PATCH",
@@ -334,9 +322,9 @@ test("basic protected capture routes expose session, catalog, work items, and fo
         title: "Captured memo updated",
         body: "Updated memo body",
         projectId: "project-1",
-        featureGroupId: "feature-1",
         contributorId: "contributor-1",
-        contributorText: "Paul"
+        contributorText: "Paul",
+        tags: ["capture-api"]
       })
     });
     assert.equal(workItemPatch.response.status, 200);
@@ -766,16 +754,6 @@ function captureRouteServices(): AppServices {
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
   };
-  const featureGroup = {
-    id: "feature-1",
-    slug: "capture-api",
-    name: "Capture API",
-    description: "",
-    isActive: true,
-    mergedIntoFeatureGroupId: null,
-    createdAt: "2026-05-29T00:00:00.000Z",
-    updatedAt: "2026-05-29T00:00:00.000Z"
-  };
   const contributor = {
     id: "contributor-1",
     displayName: "Paul Marshall",
@@ -788,11 +766,11 @@ function captureRouteServices(): AppServices {
     id: "work-item-1",
     sourceMemoId: "source-memo-1",
     projectId: "project-1",
-    featureGroupId: "feature-1",
     contributorText: "Paul",
     contributorId: "contributor-1",
     title: "Captured memo",
     body: "Useful memo body",
+    tags: ["capture-api"],
     bodyFormat: "markdown",
     workflowState: "memo",
     workflowItemVersion: 1,
@@ -808,8 +786,6 @@ function captureRouteServices(): AppServices {
     title: "Captured memo updated acceptance criteria",
     body: "Define acceptance criteria.",
     tags: ["acceptance-criteria"],
-    featureGroup: null,
-    featureGroupId: null,
     rationale: "Acceptance criteria make the idea easier to review.",
     promptVersionId: "prompt-version-1",
     providerName: "local-dev",
@@ -841,8 +817,7 @@ function captureRouteServices(): AppServices {
         expandedWorkItem: {
           title: `${workItem.title} expanded`,
           body: `${workItem.body}\n\nExpansion focus: clarify value.`,
-          tags: ["ai-expanded"],
-          featureGroup: null
+          tags: ["ai-expanded"]
         },
         suggestions: [suggestionOne],
         providerName: "local-dev",
@@ -926,10 +901,6 @@ function captureRouteServices(): AppServices {
       createProject: async () => project,
       updateProject: async () => project,
       deactivateProject: async () => ({ ...project, isActive: false }),
-      listFeatureGroups: async () => [featureGroup],
-      createFeatureGroup: async () => featureGroup,
-      updateFeatureGroup: async () => featureGroup,
-      deactivateFeatureGroup: async () => ({ ...featureGroup, isActive: false }),
       listContributors: async () => [contributor],
       createContributor: async () => contributor,
       updateContributor: async () => contributor,
@@ -943,7 +914,6 @@ function captureRouteServices(): AppServices {
             workItemId: "work-item-1",
             title: "Captured memo",
             project: { id: "project-1", slug: "memo-capture", name: "Memo Capture" },
-            featureGroup: { id: "feature-1", name: "Capture API" },
             contributor: { id: "contributor-1", text: "Paul" },
             alreadyExported: false,
             defaultChecked: true,
@@ -1103,7 +1073,6 @@ function captureRouteServices(): AppServices {
         ],
         extraction: {
           projectConfidenceThreshold: 0.7,
-          featureGroupConfidenceThreshold: 0.7,
           contributorConfidenceThreshold: 0.7,
           tagConfidenceThreshold: 0.7,
           updatedAt: "2026-05-29T00:00:00.000Z"
@@ -1569,13 +1538,13 @@ class FakeDatabase implements Database {
         id: values[0],
         source_memo_id: values[1],
         project_id: values[2],
-        feature_group_id: values[3],
-        contributor_text: values[4],
-        contributor_id: values[5],
-        title: values[6],
-        body: values[7],
-        body_format: values[8],
-        workflow_state: values[9],
+        contributor_text: values[3],
+        contributor_id: values[4],
+        title: values[5],
+        body: values[6],
+        body_format: values[7],
+        workflow_state: values[8],
+        tags: [],
         workflow_item_version: 1,
         accepted_snapshot_id: null,
         accepted_unexported_changes: false,

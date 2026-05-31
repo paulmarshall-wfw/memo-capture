@@ -42,7 +42,7 @@ Acceptance:
 Goals:
 
 - Add database client and migration runner.
-- Add repository/service structure for users, projects, feature groups, contributors, source memos, work items, artifacts, audit events, and jobs.
+- Add repository/service structure for users, projects, contributors, source memos, work items, tags, artifacts, audit events, and jobs.
 - Add request IDs and protected API route skeleton.
 - Add local-dev auth mode and OIDC validation boundary.
 
@@ -50,7 +50,7 @@ API:
 
 - health/version remain available
 - current session
-- project/feature group/contributor CRUD
+- project/contributor CRUD and tag editing
 - work item list/detail
 - form memo creation
 
@@ -206,8 +206,8 @@ Acceptance:
 Work queue:
 
 - Sidebar buckets from workflow metadata.
-- List filters for project, feature group, contributor, tags, date range, export status, workflow state, and search.
-- Detail panel with editable title/body/project/feature group/contributor/tags.
+- List filters for project, contributor, tags, date range, export status, workflow state, and search.
+- Detail panel with editable title/body/project/contributor/tags.
 - Source/provenance block.
 - Runtime-backed workflow action area.
 - AI expansion area where allowed.
@@ -216,7 +216,7 @@ Work queue:
 Settings:
 
 - Projects.
-- Feature groups.
+- Tag and keyword grouping.
 - Contributors.
 - File types.
 - Providers.

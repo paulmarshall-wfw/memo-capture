@@ -165,10 +165,6 @@ Each line in `items.jsonl`:
     "slug": "memo-capture",
     "name": "Memo Capture"
   },
-  "featureGroup": {
-    "id": "uuid",
-    "name": "Ingestion"
-  },
   "contributor": {
     "text": "Paul Marshall",
     "id": "uuid"
@@ -183,7 +179,7 @@ Each line in `items.jsonl`:
 }
 ```
 
-`featureGroup` and `contributor` can be `null`.
+`contributor` can be `null`.
 
 ## Markdown Item Shape
 
@@ -196,7 +192,6 @@ work_item_id: uuid
 source_memo_id: uuid
 project_slug: memo-capture
 project_name: Memo Capture
-feature_group: Ingestion
 contributor: Paul Marshall
 tags:
   - ingestion
@@ -220,7 +215,6 @@ Contributor inclusion is controlled by export option/template.
 Filters:
 
 - `project_id`
-- `feature_group_id`
 - `contributor_id`
 - `tag`
 - `date_from`

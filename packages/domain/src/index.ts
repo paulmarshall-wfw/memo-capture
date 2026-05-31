@@ -172,10 +172,6 @@ export const AUDIT_EVENT_NAMES = [
   "project.created",
   "project.updated",
   "project.deactivated",
-  "feature_group.created",
-  "feature_group.updated",
-  "feature_group.merged",
-  "feature_group.deactivated",
   "contributor.created",
   "contributor.updated",
   "contributor.alias_added",
@@ -233,11 +229,11 @@ export interface WorkItem {
   id: string;
   sourceMemoId: string;
   projectId: string | null;
-  featureGroupId: string | null;
   contributorText: string | null;
   contributorId: string | null;
   title: string;
   body: string;
+  tags: string[];
   bodyFormat: BodyFormat;
   workflowState: WorkItemState;
   workflowItemVersion: number;
@@ -257,8 +253,6 @@ export interface AcceptedSnapshot {
   projectId: string;
   projectSlug: string;
   projectName: string;
-  featureGroupId: string | null;
-  featureGroupName: string | null;
   contributorText: string | null;
   contributorId: string | null;
   sourceMemoId: string;

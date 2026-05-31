@@ -19,7 +19,7 @@ Keeping canonical classification, prompt, provider, and export settings in the b
 
 - projects
 - project descriptions/context
-- feature groups
+- tag and keyword grouping thresholds
 - contributors and contributor aliases
 - supported file type entries and capability state
 - extraction confidence thresholds
@@ -94,7 +94,6 @@ Required columns:
 
 - `singleton_id boolean primary key default true`
 - `project_confidence_threshold numeric not null`
-- `feature_group_confidence_threshold numeric not null`
 - `contributor_confidence_threshold numeric not null`
 - `tag_confidence_threshold numeric not null`
 - `updated_by uuid references app_users(id)`
@@ -190,7 +189,7 @@ Required columns:
 Backend audit is required for changes to:
 
 - projects
-- feature groups
+- tags and keyword grouping metadata
 - contributors
 - file type support
 - confidence thresholds
@@ -243,10 +242,6 @@ Settings:
 - `project.created`
 - `project.updated`
 - `project.deactivated`
-- `feature_group.created`
-- `feature_group.updated`
-- `feature_group.merged`
-- `feature_group.deactivated`
 - `contributor.created`
 - `contributor.updated`
 - `contributor.alias_added`
@@ -412,7 +407,7 @@ The Projects page owns project create/edit/deactivate controls. Each project exp
 
 Settings sections:
 
-- Feature groups
+- Tag and keyword grouping
 - Contributors
 - File types
 - Providers
@@ -440,5 +435,4 @@ Operations section:
 - Active file type without an implemented parser creates a `needs_review` work item and no processing jobs.
 - Prompt edit creates a new version and does not mutate old version.
 - Contributor merge does not rewrite existing work items.
-- Feature group merge does not rewrite existing work items.
 - Audit metadata redacts configured sensitive fields.

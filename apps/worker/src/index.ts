@@ -9,6 +9,7 @@ import {
   WorkerHeartbeatRepository
 } from "@memo-capture/api/src/repositories/jobs.js";
 import { ExportService } from "@memo-capture/api/src/services/exports.js";
+import { KeywordJobError, KeywordService } from "@memo-capture/api/src/services/keywords.js";
 import { ObjectStorageService } from "@memo-capture/api/src/services/object-storage.js";
 import {
   TranscriptionJobError,
@@ -21,9 +22,15 @@ const workerId = `memo-capture-worker-${randomUUID()}`;
 const pollIntervalMs = 2_000;
 const leaseSeconds = 300;
 const heartbeatIntervalMs = 15_000;
-const supportedJobKinds = ["transcribe_audio", "generate_export_batch"] satisfies ProcessingJobKind[];
+const supportedJobKinds = [
+  "transcribe_audio",
+  "extract_memo_metadata",
+  "generate_keywords",
+  "generate_export_batch"
+] satisfies ProcessingJobKind[];
 const db = createPgDatabase(config.databaseUrl, logger);
 const exportsService = new ExportService(db, config);
+const keywordService = new KeywordService(db);
 const transcriptionService = new TranscriptionService(db, new ObjectStorageService(config.objectStorage), config);
 let stopping = false;
 let lastHeartbeatAt = 0;
@@ -86,6 +93,15 @@ async function runClaimedJob(job: {
       });
     } else if (job.jobKind === "generate_export_batch" && job.exportBatchId !== null) {
       await exportsService.generateBatch(job.exportBatchId, job.id);
+    } else if (
+      (job.jobKind === "extract_memo_metadata" || job.jobKind === "generate_keywords") &&
+      job.workItemId !== null
+    ) {
+      await keywordService.runKeywordJob({
+        jobId: job.id,
+        workItemId: job.workItemId,
+        sourceMemoId: job.sourceMemoId
+      });
     } else {
       throw new NonRetryableJobError("unsupported_job", `Unsupported or malformed job ${job.jobKind}.`);
     }
@@ -191,6 +207,15 @@ function classifyFailure(error: unknown): {
   }
 
   if (error instanceof TranscriptionJobError) {
+    return {
+      errorCode: error.code,
+      userSafeErrorMessage: error.message,
+      retryable: error.retryable,
+      retryDelaySeconds: error.retryable ? 30 : 0
+    };
+  }
+
+  if (error instanceof KeywordJobError) {
     return {
       errorCode: error.code,
       userSafeErrorMessage: error.message,

@@ -6,7 +6,6 @@ import { mapWorkItem, type WorkItemRow } from "./rows.js";
 export interface WorkItemCreateInput {
   sourceMemoId: string;
   projectId: string | null;
-  featureGroupId: string | null;
   contributorText: string | null;
   contributorId: string | null;
   title: string;
@@ -25,9 +24,13 @@ export class WorkItemRepository {
     const states = input.states?.filter((state) => state.trim() !== "") ?? [];
     const limit = input.limit ?? 100;
     const result = await this.db.query<WorkItemRow>(
-      `select *
+      `select work_items.*,
+              coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
        from work_items
+       left join work_item_tags on work_item_tags.work_item_id = work_items.id
+       left join tags on tags.id = work_item_tags.tag_id
        where (cardinality($2::text[]) = 0 or workflow_state = any($2::text[]))
+       group by work_items.id
        order by updated_at desc
        limit $1`,
       [limit, states]
@@ -52,9 +55,13 @@ export class WorkItemRepository {
 
   async findById(workItemId: string): Promise<WorkItemRecord | null> {
     const result = await this.db.query<WorkItemRow>(
-      `select *
+      `select work_items.*,
+              coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
        from work_items
-       where id = $1`,
+       left join work_item_tags on work_item_tags.work_item_id = work_items.id
+       left join tags on tags.id = work_item_tags.tag_id
+       where work_items.id = $1
+       group by work_items.id`,
       [workItemId]
     );
     return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
@@ -66,7 +73,6 @@ export class WorkItemRepository {
          id,
          source_memo_id,
          project_id,
-         feature_group_id,
          contributor_text,
          contributor_id,
          title,
@@ -80,13 +86,12 @@ export class WorkItemRepository {
          created_at,
          updated_at
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, false, $11, $11, now(), now())
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, false, $10, $10, now(), now())
        returning *`,
       [
         randomUUID(),
         input.sourceMemoId,
         input.projectId,
-        input.featureGroupId,
         input.contributorText,
         input.contributorId,
         input.title,
@@ -102,7 +107,7 @@ export class WorkItemRepository {
       throw new Error("Failed to create work item.");
     }
 
-    return mapWorkItem(row);
+    return (await this.findById(row.id)) ?? mapWorkItem(row);
   }
 
   async updateWorkflowState(input: {
@@ -123,7 +128,8 @@ export class WorkItemRepository {
       [input.workItemId, input.expectedVersion, input.nextState, input.actorUserId]
     );
 
-    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+    const row = result.rows[0];
+    return row === undefined ? null : await this.findById(row.id);
   }
 
   async setAcceptedSnapshot(input: {
@@ -147,7 +153,7 @@ export class WorkItemRepository {
     if (row === undefined) {
       throw new Error("Failed to set accepted snapshot.");
     }
-    return mapWorkItem(row);
+    return (await this.findById(row.id)) ?? mapWorkItem(row);
   }
 
   async updateContent(input: {
@@ -156,7 +162,6 @@ export class WorkItemRepository {
     title: string;
     body: string;
     projectId: string | null;
-    featureGroupId: string | null;
     contributorId: string | null;
     contributorText: string | null;
     actorUserId: string;
@@ -167,15 +172,14 @@ export class WorkItemRepository {
          title = $3,
          body = $4,
          project_id = $5,
-         feature_group_id = $6,
-         contributor_id = $7,
-         contributor_text = $8,
+         contributor_id = $6,
+         contributor_text = $7,
          workflow_item_version = workflow_item_version + 1,
          accepted_unexported_changes = case
            when accepted_snapshot_id is null then accepted_unexported_changes
            else true
          end,
-         updated_by = $9,
+         updated_by = $8,
          updated_at = now()
        where id = $1 and workflow_item_version = $2
        returning *`,
@@ -185,14 +189,14 @@ export class WorkItemRepository {
         input.title,
         input.body,
         input.projectId,
-        input.featureGroupId,
         input.contributorId,
         input.contributorText,
         input.actorUserId
       ]
     );
 
-    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+    const row = result.rows[0];
+    return row === undefined ? null : await this.findById(row.id);
   }
 
   async applyTranscriptIfBodyEmpty(input: {
@@ -213,7 +217,8 @@ export class WorkItemRepository {
       [input.workItemId, input.transcriptText, input.actorUserId]
     );
 
-    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+    const row = result.rows[0];
+    return row === undefined ? null : await this.findById(row.id);
   }
 }
 
@@ -240,8 +245,6 @@ export class AcceptedSnapshotRepository {
          project_id,
          project_slug,
          project_name,
-         feature_group_id,
-         feature_group_name,
          contributor_text,
          contributor_id,
          source_memo_id,
@@ -259,8 +262,6 @@ export class AcceptedSnapshotRepository {
          projects.id,
          projects.slug,
          projects.name,
-         work_items.feature_group_id,
-         feature_groups.name,
          work_items.contributor_text,
          work_items.contributor_id,
          work_items.source_memo_id,
@@ -271,7 +272,6 @@ export class AcceptedSnapshotRepository {
        cross join next_snapshot
        join projects on projects.id = work_items.project_id
        join source_memos on source_memos.id = work_items.source_memo_id
-       left join feature_groups on feature_groups.id = work_items.feature_group_id
        where work_items.id = $1
        returning id`,
       [input.workItemId, randomUUID(), input.actorUserId]

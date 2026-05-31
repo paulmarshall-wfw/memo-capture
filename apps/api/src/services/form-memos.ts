@@ -3,13 +3,13 @@ import { DEFAULT_MEMO_WORK_ITEM_STATE } from "@memo-capture/domain";
 import type { Database, Queryable } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import { ImportEventRepository, SourceMemoRepository } from "../repositories/source-memos.js";
+import { TagRepository } from "../repositories/tags.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
 
 export interface FormMemoRequest {
   projectId: string;
-  featureGroupId?: string | null;
   title: string;
   body: string;
   contributorText?: string | null;
@@ -48,6 +48,7 @@ async function createFormMemoWithClient(
   const sourceMemos = new SourceMemoRepository(client);
   const importEvents = new ImportEventRepository(client);
   const workItems = new WorkItemRepository(client);
+  const tags = new TagRepository(client);
   const audit = new AuditRepository(client);
 
   const sourceMemo = await sourceMemos.create({
@@ -62,7 +63,6 @@ async function createFormMemoWithClient(
   const workItem = await workItems.create({
     sourceMemoId: sourceMemo.id,
     projectId: input.projectId,
-    featureGroupId: input.featureGroupId ?? null,
     contributorText: input.contributorText ?? null,
     contributorId: null,
     title: input.title,
@@ -71,6 +71,12 @@ async function createFormMemoWithClient(
     workflowState: DEFAULT_MEMO_WORK_ITEM_STATE,
     actorUserId: actor.id
   });
+  const assignedTags = await tags.setForWorkItem({
+    workItemId: workItem.id,
+    tags: input.tags ?? [],
+    actorUserId: actor.id
+  });
+  const taggedWorkItem = (await workItems.findById(workItem.id)) ?? { ...workItem, tags: assignedTags };
 
   await importEvents.create({
     sourceMemoId: sourceMemo.id,
@@ -92,16 +98,16 @@ async function createFormMemoWithClient(
     eventName: "work_item.created",
     actor,
     subjectType: "work_item",
-    subjectId: workItem.id,
+    subjectId: taggedWorkItem.id,
     requestId,
     sourceMemoId: sourceMemo.id,
-    workItemId: workItem.id,
+    workItemId: taggedWorkItem.id,
     metadata: { workflowState: DEFAULT_MEMO_WORK_ITEM_STATE }
   });
 
   return {
     sourceMemoId: sourceMemo.id,
-    workItem
+    workItem: taggedWorkItem
   };
 }
 
@@ -113,7 +119,6 @@ function parseFormMemoRequest(body: unknown): FormMemoRequest {
   const record = body as Record<string, unknown>;
   return {
     projectId: assertNonEmptyString(record.projectId, "projectId"),
-    featureGroupId: optionalString(record.featureGroupId, "featureGroupId"),
     title: assertNonEmptyString(record.title, "title"),
     body: assertNonEmptyString(record.body, "body"),
     contributorText: optionalString(record.contributorText, "contributorText"),

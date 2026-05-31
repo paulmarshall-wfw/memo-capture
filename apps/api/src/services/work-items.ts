@@ -4,6 +4,7 @@ import { AuditRepository } from "../repositories/audit.js";
 import { ArtifactRepository } from "../repositories/artifacts.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { SourceMemoArtifactRepository, SourceMemoRepository } from "../repositories/source-memos.js";
+import { TagRepository } from "../repositories/tags.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { WorkflowRepository } from "../repositories/workflows.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
@@ -51,6 +52,7 @@ export class WorkItemService {
 
     return this.db.transaction(async (client) => {
       const workItems = new WorkItemRepository(client);
+      const tags = new TagRepository(client);
       const snapshots = new AcceptedSnapshotRepository(client);
       const audit = new AuditRepository(client);
       const updated = await workItems.updateContent({
@@ -59,7 +61,6 @@ export class WorkItemService {
         title: input.title,
         body: input.body,
         projectId: input.projectId,
-        featureGroupId: input.featureGroupId,
         contributorId: input.contributorId,
         contributorText: input.contributorText,
         actorUserId: actor.id
@@ -76,9 +77,15 @@ export class WorkItemService {
           workItem: current
         });
       }
+      await tags.setForWorkItem({
+        workItemId: updated.id,
+        tags: input.tags,
+        actorUserId: actor.id
+      });
+      const tagged = (await workItems.findById(updated.id)) ?? { ...updated, tags: input.tags };
 
       const finalWorkItem = await createSnapshotForAcceptedEdit({
-        updated,
+        updated: tagged,
         workItems,
         snapshots,
         actorUserId: actor.id
@@ -168,7 +175,6 @@ export class WorkItemService {
         title: input.title ?? current.title,
         body: input.transcriptText,
         projectId: current.projectId,
-        featureGroupId: current.featureGroupId,
         contributorId: current.contributorId,
         contributorText: current.contributorText,
         actorUserId: actor.id
@@ -236,9 +242,9 @@ function parseUpdateBody(body: unknown): {
   title: string;
   body: string;
   projectId: string | null;
-  featureGroupId: string | null;
   contributorId: string | null;
   contributorText: string | null;
+  tags: string[];
 } {
   const record = parseObject(body);
   const expectedVersion = record.expectedVersion;
@@ -251,10 +257,22 @@ function parseUpdateBody(body: unknown): {
     title: assertNonEmptyString(record.title, "title"),
     body: assertNonEmptyString(record.body, "body"),
     projectId: optionalString(record.projectId, "projectId"),
-    featureGroupId: optionalString(record.featureGroupId, "featureGroupId"),
     contributorId: optionalString(record.contributorId, "contributorId"),
-    contributorText: optionalString(record.contributorText, "contributorText")
+    contributorText: optionalString(record.contributorText, "contributorText"),
+    tags: parseTags(record.tags)
   };
+}
+
+function parseTags(value: unknown): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+    throw new HttpError(400, "invalid_request", "tags must be an array of strings.");
+  }
+
+  return value.map((item) => item.trim()).filter(Boolean);
 }
 
 function parseManualTranscriptBody(body: unknown): {

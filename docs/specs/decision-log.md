@@ -63,7 +63,7 @@ Risk: Access control relies on the OIDC provider for user eligibility.
 
 ### D009: Backend Settings Are Canonical
 
-Decision: Projects, feature groups, contributors, providers, prompts, file types, thresholds, workflow activation, and export templates are backend-owned.
+Decision: Projects, tag/keyword grouping, contributors, providers, prompts, file types, thresholds, workflow activation, and export templates are backend-owned.
 
 Rationale: Prevents inconsistent classification and provider behavior across desktop clients.
 
@@ -139,13 +139,13 @@ Risk: Privacy/deletion workflows are deferred.
 
 ## Target Schema Adjustments From Bootstrap Migration
 
-### S001: Feature Groups Should Be Global
+### S001: Remove Feature Groups In Favor Of Tags
 
-Current baseline: `feature_groups` are scoped by `project_id`.
+Current baseline: `feature_groups` are present in the bootstrap schema.
 
-Target V1: feature groups are global reusable labels.
+Target V1: feature groups are removed. Below-project grouping uses tags/keywords plus derived grouping metadata.
 
-Action: Update schema before implementing feature group-dependent APIs.
+Action: Migrate existing feature-group assignments into normal tags, then remove feature-group columns, APIs, UI fields, settings, AI output fields, and export fields.
 
 ### S002: Accepted Snapshot Naming
 

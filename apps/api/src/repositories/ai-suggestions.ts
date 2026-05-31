@@ -9,8 +9,6 @@ export interface AiSuggestionRecord {
   title: string;
   body: string;
   tags: string[];
-  featureGroup: string | null;
-  featureGroupId: string | null;
   rationale: string | null;
   promptVersionId: string | null;
   providerName: string | null;
@@ -29,8 +27,6 @@ interface AiSuggestionRow extends Record<string, unknown> {
   title: string;
   body: string;
   tags: string[];
-  proposed_feature_group: string | null;
-  feature_group_id: string | null;
   rationale: string | null;
   prompt_version_id: string | null;
   provider_name: string | null;
@@ -61,7 +57,6 @@ export class AiSuggestionRepository {
     title: string;
     body: string;
     tags: string[];
-    featureGroup: string | null;
     rationale: string | null;
     promptVersionId: string;
     providerName: string;
@@ -77,7 +72,6 @@ export class AiSuggestionRepository {
          title,
          body,
          tags,
-         proposed_feature_group,
          rationale,
          prompt_version_id,
          provider_name,
@@ -86,7 +80,7 @@ export class AiSuggestionRepository {
          created_by,
          created_at
        )
-       values ($1, $2, 'pending', $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11::jsonb, $12, now())
+       values ($1, $2, 'pending', $3, $4, $5::jsonb, $6, $7, $8, $9, $10::jsonb, $11, now())
        returning *`,
       [
         randomUUID(),
@@ -94,7 +88,6 @@ export class AiSuggestionRepository {
         input.title,
         input.body,
         JSON.stringify(input.tags),
-        input.featureGroup,
         input.rationale,
         input.promptVersionId,
         input.providerName,
@@ -165,8 +158,6 @@ function mapAiSuggestion(row: AiSuggestionRow): AiSuggestionRecord {
     title: row.title,
     body: row.body,
     tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string") : [],
-    featureGroup: row.proposed_feature_group,
-    featureGroupId: row.feature_group_id,
     rationale: row.rationale,
     promptVersionId: row.prompt_version_id,
     providerName: row.provider_name,

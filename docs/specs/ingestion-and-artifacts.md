@@ -54,7 +54,7 @@ Promotion from `needs_review` to `memo` requires:
 - memo body or transcript
 - linked source memo
 
-Feature group, tags, and contributor are optional.
+Tags and contributor are optional.
 
 ## Desktop Watched-Folder Responsibilities
 
@@ -248,7 +248,6 @@ Request:
 ```json
 {
   "projectId": "uuid",
-  "featureGroupId": "uuid | null",
   "title": "string",
   "body": "string",
   "contributorText": "string | null",

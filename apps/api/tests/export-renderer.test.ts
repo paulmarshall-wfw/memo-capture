@@ -47,10 +47,6 @@ test("export renderer writes schema version to manifest, JSONL, Markdown, and bu
           slug: "memo-capture",
           name: "Memo Capture"
         },
-        featureGroup: {
-          id: "00000000-0000-4000-8000-000000000401",
-          name: "Exports"
-        },
         contributor: {
           id: null,
           text: "Paul"

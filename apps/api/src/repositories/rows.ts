@@ -44,28 +44,6 @@ export interface ProjectRecord {
   updatedAt: string;
 }
 
-export interface FeatureGroupRow extends Record<string, unknown> {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  is_active: boolean;
-  merged_into_feature_group_id: string | null;
-  created_at: Date | string;
-  updated_at: Date | string;
-}
-
-export interface FeatureGroupRecord {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  isActive: boolean;
-  mergedIntoFeatureGroupId: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface ContributorRow extends Record<string, unknown> {
   id: string;
   display_name: string;
@@ -88,11 +66,11 @@ export interface WorkItemRow extends Record<string, unknown> {
   id: string;
   source_memo_id: string;
   project_id: string | null;
-  feature_group_id: string | null;
   contributor_text: string | null;
   contributor_id: string | null;
   title: string;
   body: string;
+  tags: string[] | null;
   body_format: string;
   workflow_state: string;
   workflow_item_version: number;
@@ -129,19 +107,6 @@ export function mapProject(row: ProjectRow): ProjectRecord {
   };
 }
 
-export function mapFeatureGroup(row: FeatureGroupRow): FeatureGroupRecord {
-  return {
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    description: row.description,
-    isActive: row.is_active,
-    mergedIntoFeatureGroupId: row.merged_into_feature_group_id,
-    createdAt: toIso(row.created_at),
-    updatedAt: toIso(row.updated_at)
-  };
-}
-
 export function mapContributor(row: ContributorRow): ContributorRecord {
   return {
     id: row.id,
@@ -158,11 +123,11 @@ export function mapWorkItem(row: WorkItemRow) {
     id: row.id,
     sourceMemoId: row.source_memo_id,
     projectId: row.project_id,
-    featureGroupId: row.feature_group_id,
     contributorText: row.contributor_text,
     contributorId: row.contributor_id,
     title: row.title,
     body: row.body,
+    tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string") : [],
     bodyFormat: row.body_format,
     workflowState: row.workflow_state,
     workflowItemVersion: row.workflow_item_version,

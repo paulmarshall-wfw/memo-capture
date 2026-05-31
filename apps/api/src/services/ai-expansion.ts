@@ -2,11 +2,12 @@ import type { ApiConfig } from "../config.js";
 import type { Database } from "../db/types.js";
 import { AiSuggestionRepository, type AiSuggestionRecord } from "../repositories/ai-suggestions.js";
 import { AuditRepository } from "../repositories/audit.js";
-import { FeatureGroupRepository, ProjectRepository } from "../repositories/catalog.js";
+import { ProjectRepository } from "../repositories/catalog.js";
 import { ProcessingJobRepository } from "../repositories/jobs.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { SettingsRepository } from "../repositories/settings.js";
 import { SourceMemoRepository } from "../repositories/source-memos.js";
+import { TagRepository } from "../repositories/tags.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { HttpError } from "./errors.js";
 import {
@@ -42,13 +43,12 @@ export class AiExpansionService {
     validation: Record<string, unknown>;
   }> {
     const settings = new SettingsRepository(this.db);
-    const [prompt, providerConfig, workItem, sourceMemo, projects, featureGroups] = await Promise.all([
+    const [prompt, providerConfig, workItem, sourceMemo, projects] = await Promise.all([
       settings.getActivePrompt("work_item_expansion"),
       settings.findEnabledProvider("llm"),
       new WorkItemRepository(this.db).findById(workItemId),
       this.findSourceMemoForWorkItem(workItemId),
-      new ProjectRepository(this.db).list(),
-      new FeatureGroupRepository(this.db).list()
+      new ProjectRepository(this.db).list()
     ]);
     if (workItem === null) {
       throw new HttpError(404, "not_found", "work_item was not found.");
@@ -63,7 +63,6 @@ export class AiExpansionService {
     }
 
     const project = projects.find((candidate) => candidate.id === workItem.projectId) ?? null;
-    const featureGroup = featureGroups.find((candidate) => candidate.id === workItem.featureGroupId) ?? null;
     const context: WorkItemExpansionContext = {
       prompt: {
         name: prompt.name,
@@ -77,14 +76,11 @@ export class AiExpansionService {
         description: project?.description ?? null,
         context: project?.context ?? null
       },
-      featureGroup: {
-        id: featureGroup?.id ?? null,
-        name: featureGroup?.name ?? null
-      },
       workItem: {
         id: workItem.id,
         title: workItem.title,
         body: workItem.body,
+        tags: workItem.tags,
         contributorText: workItem.contributorText
       },
       sourceMemo
@@ -177,7 +173,6 @@ export class AiExpansionService {
           title: suggestion.title,
           body: suggestion.body,
           tags: suggestion.tags,
-          featureGroup: suggestion.featureGroup,
           rationale: suggestion.rationale,
           promptVersionId,
           providerName: output.providerName,
@@ -225,6 +220,7 @@ export class AiExpansionService {
   ): Promise<{ suggestion: AiSuggestionRecord; workItem: WorkItemRecord }> {
     return this.db.transaction(async (client) => {
       const suggestions = new AiSuggestionRepository(client);
+      const tags = new TagRepository(client);
       const suggestion = await suggestions.findById(suggestionId);
       if (suggestion === null) {
         throw new HttpError(404, "not_found", "ai_suggestion was not found.");
@@ -246,7 +242,6 @@ export class AiExpansionService {
       const workItem = await new WorkItemRepository(client).create({
         sourceMemoId: sourceMemo.id,
         projectId: parent.projectId,
-        featureGroupId: parent.featureGroupId,
         contributorText: "AI suggestion",
         contributorId: null,
         title: suggestion.title,
@@ -255,6 +250,15 @@ export class AiExpansionService {
         workflowState: "memo",
         actorUserId: actor.id
       });
+      await tags.setForWorkItem({
+        workItemId: workItem.id,
+        tags: suggestion.tags,
+        actorUserId: actor.id
+      });
+      const taggedWorkItem = (await new WorkItemRepository(client).findById(workItem.id)) ?? {
+        ...workItem,
+        tags: suggestion.tags
+      };
       const applied = await suggestions.markApplied({
         suggestionId,
         appliedWorkItemId: workItem.id,
@@ -273,10 +277,10 @@ export class AiExpansionService {
         workItemId: workItem.id,
         metadata: {
           parentWorkItemId: parent.id,
-          appliedWorkItemId: workItem.id
+          appliedWorkItemId: taggedWorkItem.id
         }
       });
-      return { suggestion: applied, workItem };
+      return { suggestion: applied, workItem: taggedWorkItem };
     });
   }
 
@@ -334,7 +338,6 @@ interface ValidExpandedWorkItem {
   title: string;
   body: string;
   tags: string[];
-  featureGroup: string | null;
 }
 
 interface ValidSuggestion extends ValidExpandedWorkItem {
@@ -382,11 +385,10 @@ function parseWorkItemShape(value: unknown, path: string, errors: string[]): Val
   const title = readRequiredString(value.title, `${path}.title`, errors);
   const body = readRequiredString(value.body, `${path}.body`, errors);
   const tags = readTags(value.tags, `${path}.tags`, errors);
-  const featureGroup = readNullableString(value.feature_group, `${path}.feature_group`, errors);
-  if (title === "" || body === "" || tags === null || featureGroup === undefined) {
+  if (title === "" || body === "" || tags === null) {
     return null;
   }
-  return { title, body, tags, featureGroup };
+  return { title, body, tags };
 }
 
 function readRequiredString(value: unknown, path: string, errors: string[]): string {
@@ -395,18 +397,6 @@ function readRequiredString(value: unknown, path: string, errors: string[]): str
     return "";
   }
   return value.trim();
-}
-
-function readNullableString(value: unknown, path: string, errors: string[]): string | null | undefined {
-  if (value === null) {
-    return null;
-  }
-  if (typeof value !== "string") {
-    errors.push(`${path} must be a string or null.`);
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
 }
 
 function readTags(value: unknown, path: string, errors: string[]): string[] | null {

@@ -45,9 +45,8 @@ would require a product decision.
 Run these checks before applying `0002_align_target_v1_schema.sql` to a
 non-empty database:
 
-- `feature_groups`: after removing `project_id`, no two rows may normalize to
-  the same global slug or name. If duplicates exist, merge or rename before
-  enforcing global uniqueness.
+- `feature_groups`: existing assignments should be convertible into normalized
+  tags before feature-group columns and tables are removed.
 - `work_item_snapshots`: every row to be converted to `accepted_snapshots` must
   have a non-null project, work item, title, and body.
 - `work_items`: existing `workflow_state` values must be one of the V1 known
@@ -63,13 +62,13 @@ non-empty database:
 | --- | --- | --- |
 | `app_users` | `oidc_subject` is globally unique; issuer and seen timestamps are absent. | Add `oidc_issuer`, `first_seen_at`, `last_seen_at`; replace global subject uniqueness with unique `(oidc_issuer, oidc_subject)`; preserve current rows with a local-dev issuer value. |
 | `projects` | No slug, context, or actor columns. | Add `slug`, `context`, `created_by`, `updated_by`; backfill slug from name; enforce unique slug and name. |
-| `feature_groups` | Scoped to `project_id` with unique `(project_id, name)`. | Remove project ownership, add slug/description/merge/actor columns, backfill slug, enforce global unique slug and name. |
+| `feature_groups` | Present as a below-project grouping table. | Convert assignments into normal tags, then remove the table and feature-group columns from the V1 contract. |
 | `contributors` | Display name only, no aliases or merge path. | Add merge/actor columns and create `contributor_aliases`; do not require global display-name uniqueness as the only identity mechanism. |
 | `artifacts` | No artifact kind, bucket, layout version, or actor; original filename is required. | Add `artifact_kind`, `bucket`, `layout_version`, `created_by`; allow original filename to be nullable for generated artifacts; add content-hash and kind/date indexes. |
 | `source_memos` | Uses `artifact_id`; lacks transcript, paths, contributor text, and update timestamp. | Rename or replace with `primary_artifact_id`; add transcript/path/contributor/update columns; create `source_memo_artifacts`. |
 | `work_items` | Lacks contributor text, body format, and current accepted snapshot pointer. | Add `contributor_text`, `body_format`, `accepted_snapshot_id`; keep `project_id` nullable so ingestion review can exist before required-field recovery. |
-| snapshots | Table is named `work_item_snapshots` and lacks export denormalization. | Rename to `accepted_snapshots`; add snapshot number, body format, project slug/name, feature group name, contributor text, source memo/hash, and unique `(work_item_id, snapshot_number)`. |
-| tags | Only raw `name`; join table lacks audit columns. | Add `normalized_name`, `created_by`, and join-table `created_at`/`created_by`; enforce unique normalized tag name. |
+| snapshots | Table is named `work_item_snapshots` and lacks export denormalization. | Rename to `accepted_snapshots`; add snapshot number, body format, project slug/name, contributor text, source memo/hash, and unique `(work_item_id, snapshot_number)`. |
+| tags | Only raw `name`; join table lacks audit columns. | Add `normalized_name`, `created_by`, join-table metadata, tag statistics, and co-occurrence metadata; enforce unique normalized tag name. |
 | `import_events` | Missing watched-folder and warning fields. | Add `watch_folder_id`, `warning_code`, and `warning_message`; keep exact duplicate linkage. |
 | possible duplicates | Missing. | Create `possible_duplicates` with open/confirmed/dismissed statuses and resolution columns. |
 | settings | Most backend settings tables are missing. | Create `file_type_settings`, `extraction_settings`, `transcription_settings`, `provider_configs`, and `export_templates`; extend prompt tables with retention and actor columns. |
@@ -81,7 +80,7 @@ non-empty database:
 ## Migration Order
 
 1. Add shared lookup-safe columns and indexes to `app_users`, `projects`,
-   `feature_groups`, `contributors`, `artifacts`, and `source_memos`.
+   `contributors`, `artifacts`, and `source_memos`.
 2. Backfill slugs, timestamps, body formats, and local-dev OIDC issuer data.
 3. Create new relationship/support tables:
    `contributor_aliases`, `source_memo_artifacts`, `possible_duplicates`,

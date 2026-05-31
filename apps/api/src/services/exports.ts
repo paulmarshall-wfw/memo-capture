@@ -22,7 +22,6 @@ export class ExportService {
     return {
       snapshots: await new ExportRepository(this.db).listExportableSnapshots({
         projectId: query.get("project_id"),
-        featureGroupId: query.get("feature_group_id"),
         contributorId: query.get("contributor_id"),
         tag: query.get("tag"),
         dateFrom: query.get("date_from"),

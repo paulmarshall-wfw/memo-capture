@@ -20,7 +20,6 @@ Primary entities:
 - `work_item`: current editable review object governed by workflow state.
 - `accepted_snapshot`: immutable exportable snapshot created at acceptance and after accepted edits.
 - `project`: required controlled classification for normal work items.
-- `feature_group`: optional reusable classification label.
 - `contributor`: optional attribution record, separate from authenticated user identity.
 - `tag`: normalized flexible keyword.
 - `artifact`: backend-managed object storage metadata.
@@ -120,36 +119,6 @@ Rules:
 - Projects are never deleted in V1; they can be deactivated.
 - Project slug is a stable identifier separate from display name.
 - Display name changes affect historical work item display.
-
-### feature_groups
-
-Optional reusable labels. Target V1 treats feature groups as global labels that can be reused across projects.
-
-Required columns:
-
-- `id uuid primary key`
-- `slug text not null`
-- `name text not null`
-- `description text not null default ''`
-- `is_active boolean not null default true`
-- `merged_into_feature_group_id uuid references feature_groups(id)`
-- timestamps and actor columns
-
-Constraints:
-
-- unique `slug`
-- unique `name`
-
-Rules:
-
-- Feature group is optional on work items.
-- Users can create feature groups during ingestion review and detail editing.
-- Merge affects future classification only; existing work items are not rewritten.
-- AI/extraction can suggest new feature groups, but cannot create them without user confirmation.
-
-Migration note:
-
-- The bootstrap migration currently scopes feature groups to `project_id`. V1 target schema should remove that requirement and make feature groups reusable globally unless a later explicit decision reverses this.
 
 ### contributors
 
@@ -264,7 +233,6 @@ Required columns:
 - `id uuid primary key`
 - `source_memo_id uuid not null references source_memos(id)`
 - `project_id uuid references projects(id)`
-- `feature_group_id uuid references feature_groups(id)`
 - `contributor_text text`
 - `contributor_id uuid references contributors(id)`
 - `title text not null default ''`
@@ -290,7 +258,6 @@ Indexes:
 
 - `workflow_state`
 - `project_id`
-- `feature_group_id`
 - `contributor_id`
 - `updated_at`
 - full text index on title/body/extracted text where supported
@@ -310,8 +277,6 @@ Required columns:
 - `project_id uuid not null references projects(id)`
 - `project_slug text not null`
 - `project_name text not null`
-- `feature_group_id uuid references feature_groups(id)`
-- `feature_group_name text`
 - `contributor_text text`
 - `contributor_id uuid references contributors(id)`
 - `source_memo_id uuid not null references source_memos(id)`
@@ -337,12 +302,15 @@ Normalized flexible grouping.
 Required columns:
 
 - `tags(id, name, normalized_name, created_at, created_by)`
-- `work_item_tags(work_item_id, tag_id, created_at, created_by)`
+- `work_item_tags(work_item_id, tag_id, assignment_source, confidence, item_count, created_at, created_by)`
+- `tag_statistics(tag_id, document_count, total_item_count, project_distribution, updated_at)`
+- `tag_co_occurrences(tag_id, co_tag_id, co_document_count, updated_at)`
 
 Constraints:
 
 - unique normalized tag name
 - primary key `(work_item_id, tag_id)`
+- derived tag statistics and co-occurrence rows are recalculated metadata, not canonical hierarchy.
 
 ### import_events
 
@@ -465,14 +433,6 @@ Create request:
 }
 ```
 
-### Feature groups
-
-- `GET /api/feature-groups`
-- `POST /api/feature-groups`
-- `PATCH /api/feature-groups/{featureGroupId}`
-- `POST /api/feature-groups/{featureGroupId}/deactivate`
-- `POST /api/feature-groups/{featureGroupId}/merge`
-
 ### Contributors
 
 - `GET /api/contributors`
@@ -499,7 +459,6 @@ List filters:
 - `bucket`
 - `workflow_state`
 - `project_id`
-- `feature_group_id`
 - `contributor_id`
 - `tag`
 - `date_from`
@@ -515,7 +474,6 @@ Patch request:
   "title": "string",
   "body": "string",
   "projectId": "uuid",
-  "featureGroupId": "uuid | null",
   "contributorText": "string | null",
   "contributorId": "uuid | null",
   "tags": ["string"]
@@ -538,7 +496,6 @@ Request:
 ```json
 {
   "projectId": "uuid",
-  "featureGroupId": "uuid | null",
   "title": "string",
   "body": "string",
   "contributorText": "string | null",

@@ -345,7 +345,6 @@ async function finalizeWatchedAudioImport(input: {
   const workItem = await workItems.create({
     sourceMemoId: sourceMemo.id,
     projectId: null,
-    featureGroupId: null,
     contributorText: null,
     contributorId: null,
     title,
@@ -470,7 +469,6 @@ async function finalizeWatchedTextImport(input: {
   const workItem = await workItems.create({
     sourceMemoId: sourceMemo.id,
     projectId: null,
-    featureGroupId: null,
     contributorText: null,
     contributorId: null,
     title,
@@ -590,7 +588,6 @@ async function finalizeUnsupportedWatchedImport(input: {
   const workItem = await workItems.create({
     sourceMemoId: sourceMemo.id,
     projectId: null,
-    featureGroupId: null,
     contributorText: null,
     contributorId: null,
     title,

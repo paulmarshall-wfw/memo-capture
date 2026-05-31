@@ -35,7 +35,6 @@ export class SettingsService {
         ? null
         : {
             projectConfidenceThreshold: toNumber(extraction.project_confidence_threshold),
-            featureGroupConfidenceThreshold: toNumber(extraction.feature_group_confidence_threshold),
             contributorConfidenceThreshold: toNumber(extraction.contributor_confidence_threshold),
             tagConfidenceThreshold: toNumber(extraction.tag_confidence_threshold),
             updatedAt: toIso(extraction.updated_at)
@@ -78,7 +77,6 @@ export class SettingsService {
       return {
         extraction: {
           projectConfidenceThreshold: toNumber(updated.project_confidence_threshold),
-          featureGroupConfidenceThreshold: toNumber(updated.feature_group_confidence_threshold),
           contributorConfidenceThreshold: toNumber(updated.contributor_confidence_threshold),
           tagConfidenceThreshold: toNumber(updated.tag_confidence_threshold),
           updatedAt: toIso(updated.updated_at)
@@ -312,10 +310,6 @@ function parseExtractionBody(body: unknown) {
   const record = parseObject(body);
   return {
     projectConfidenceThreshold: parseThreshold(record.projectConfidenceThreshold, "projectConfidenceThreshold"),
-    featureGroupConfidenceThreshold: parseThreshold(
-      record.featureGroupConfidenceThreshold,
-      "featureGroupConfidenceThreshold"
-    ),
     contributorConfidenceThreshold: parseThreshold(
       record.contributorConfidenceThreshold,
       "contributorConfidenceThreshold"
