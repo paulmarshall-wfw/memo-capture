@@ -52,6 +52,8 @@ Supported V1 ingestion channels:
 
 Watched-folder imports always create source memo provenance first, then create the workflow work item in the appropriate initial state.
 
+Watched-folder source memo provenance preserves the source file's filesystem modified timestamp as the original memo time. Work queue rows and the work item detail header should show this original file time rather than workflow processing timestamps; processing dates belong in audit, diagnostics, and logs. Legacy rows that predate this provenance can be recovered from a leading `YYYYMMDD HHMMSS` filename timestamp when that pattern exists.
+
 Automatic extraction should produce candidate project, title, body, contributor, tags, and derived grouping metadata with confidence metadata. Low-confidence or incomplete imports enter `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block promotion.
 
 Promotion from `needs_review` to `memo` requires:

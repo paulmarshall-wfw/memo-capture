@@ -74,6 +74,7 @@ export interface WorkItemRow extends Record<string, unknown> {
   workflow_item_version: number;
   accepted_snapshot_id: string | null;
   accepted_unexported_changes: boolean;
+  original_file_modified_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -130,6 +131,7 @@ export function mapWorkItem(row: WorkItemRow) {
     workflowItemVersion: row.workflow_item_version,
     acceptedSnapshotId: row.accepted_snapshot_id,
     acceptedUnexportedChanges: row.accepted_unexported_changes,
+    originalFileModifiedAt: row.original_file_modified_at == null ? null : toIso(row.original_file_modified_at),
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
   };

@@ -219,6 +219,7 @@ export interface SourceMemo {
   currentTranscriptText: string | null;
   originalPath: string | null;
   archivePath: string | null;
+  originalFileModifiedAt: string | null;
   contributorText: string | null;
   contributorId: string | null;
   createdAt: string;
@@ -239,6 +240,7 @@ export interface WorkItem {
   workflowItemVersion: number;
   acceptedSnapshotId: string | null;
   acceptedUnexportedChanges: boolean;
+  originalFileModifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

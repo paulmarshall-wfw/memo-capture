@@ -194,3 +194,13 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Added native-desktop active polling for saved enabled watched folders, processing eligible files every 5 seconds through the existing automatic import/archive path while preserving Settings as configuration rather than a manual import picker.
   Verification: `npm run typecheck`, `npm test -w @memo-capture/desktop`, `npm run build`, `npm run verify`, and `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed; the rebuilt native `Memo Capture.app` was launched, API health passed, and automatic watched-folder import produced new work items including `Butlers Cnr Rd` and `Rat check`.
   Traceability: branch `main`, HEAD `5778a78`; changed files include `apps/desktop/src/App.tsx`, `apps/desktop/tests/app-copy.test.ts`, `docs/specs/ingestion-and-artifacts.md`, `docs/specs/settings-and-audit.md`, and `docs/completed-tasks.md`.
+
+- Task: Show original memo file timestamps in work items
+  Outcome: Added source provenance for watched-file modified timestamps, carried it through upload sessions and import events, exposed it on work item API responses, sorted work items by original file time, and changed the work queue/detail panel to show the original memo time instead of workflow update time.
+  Verification: `npm run typecheck`, `npm test` outside the sandbox, `npm run build`, `npm run verify` outside the sandbox, `npm run db:migrate` outside the sandbox, and `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed. The first sandboxed `npm test` hit local API route binding `EPERM`; the first sandboxed migration hit `tsx` IPC `EPERM`; the unsandboxed reruns passed.
+  Traceability: branch `main`, base HEAD `3e4a827`; changed files include `apps/api/db/migrations/0015_original_file_modified_at.sql`, API repositories/services/tests, `packages/domain/src/index.ts`, `apps/desktop/src/App.tsx`, `docs/design/memo-capture-design-learnings.md`, `docs/specs/ingestion-and-artifacts.md`, `handoff.md`, and `docs/completed-tasks.md`.
+
+- Task: Backfill existing filename-stamped memo times
+  Outcome: Added a numbered migration that recovers original memo times from existing watched-file names that start with `YYYYMMDD HHMMSS`, correcting pre-provenance rows that had been backfilled from ingestion time.
+  Verification: `npm run db:migrate` applied `0016_backfill_original_file_time_from_filename`; database and API checks confirmed `20230726 205704-C846C071` now returns `2023-07-26T20:57:04.000Z` and `20190331 174222-7D10A0B5` returns `2019-03-31T17:42:22.000Z`.
+  Traceability: branch `main`; changed files include `apps/api/db/migrations/0016_backfill_original_file_time_from_filename.sql` and `docs/completed-tasks.md`.

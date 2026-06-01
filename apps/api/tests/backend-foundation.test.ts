@@ -11,6 +11,9 @@ import type { AppServices } from "../src/services/app.js";
 import { createAppServicesFromDatabase } from "../src/services/app.js";
 import { HttpError } from "../src/services/errors.js";
 import { createApiServer } from "../src/server.js";
+import { WorkItemRepository } from "../src/repositories/work-items.js";
+
+const originalFileModifiedAt = "2026-05-28T23:45:00.000Z";
 
 test("local-dev auth creates a fixed development session when explicitly enabled", async () => {
   const config = readApiConfig({
@@ -120,6 +123,7 @@ test("upload sessions reject inactive file type settings", async () => {
           sourceType: "watched_text_file",
           originalFilename: "memo.md",
           originalPath: "/watched/memo.md",
+          originalFileModifiedAt,
           mimeType: "text/markdown",
           byteSize: 10,
           contentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -294,6 +298,7 @@ test("enabled file types without parsers finalize into ingestion review without 
       sourceType: "watched_text_file",
       originalFilename: "memo.html",
       originalPath: "/watched/memo.html",
+      originalFileModifiedAt,
       mimeType: "text/plain",
       byteSize: body.byteLength,
       contentHash
@@ -314,6 +319,8 @@ test("enabled file types without parsers finalize into ingestion review without 
   assert.equal(finalized.initialWorkflowState, "needs_review");
   assert.deepEqual(finalized.processingJobs, []);
   assert.equal(db.processingJobs.length, 0);
+  assert.equal(db.sourceMemos[0]?.original_file_modified_at, originalFileModifiedAt);
+  assert.equal(db.workItems[0]?.original_file_modified_at, originalFileModifiedAt);
   assert.match(String(db.workItems[0]?.title), /Add file type support for \.html/);
   assert.match(String(db.workItems[0]?.body), /Parser key: none/);
 });
@@ -346,6 +353,7 @@ test("audio transcription parser finalization queues transcription jobs", async 
       sourceType: "watched_audio_file",
       originalFilename: "memo.m4a",
       originalPath: "/watched/memo.m4a",
+      originalFileModifiedAt,
       mimeType: "audio/mp4",
       byteSize: body.byteLength,
       contentHash
@@ -365,6 +373,62 @@ test("audio transcription parser finalization queues transcription jobs", async 
   assert.equal(finalized.initialWorkflowState, "needs_review");
   assert.equal(finalized.processingJobs.length, 1);
   assert.equal(db.processingJobs[0]?.job_kind, "transcribe_audio");
+});
+
+test("work item repository exposes and orders by original file modified time", async () => {
+  let capturedSql = "";
+  const queryable: Queryable = {
+    query: async <Row extends Record<string, unknown> = Record<string, unknown>>(
+      text: string
+    ): Promise<QueryResult<Row>> => {
+      capturedSql = text;
+      return rows([
+        {
+          id: "work-item-newer-original",
+          source_memo_id: "source-memo-newer-original",
+          project_id: null,
+          contributor_text: null,
+          contributor_id: null,
+          title: "Newer original",
+          body: "Body",
+          tags: [],
+          body_format: "markdown",
+          workflow_state: "needs_review",
+          workflow_item_version: 1,
+          accepted_snapshot_id: null,
+          accepted_unexported_changes: false,
+          original_file_modified_at: "2026-05-29T03:00:00.000Z",
+          created_at: "2026-05-29T00:00:00.000Z",
+          updated_at: "2026-05-29T05:00:00.000Z"
+        },
+        {
+          id: "work-item-older-original",
+          source_memo_id: "source-memo-older-original",
+          project_id: null,
+          contributor_text: null,
+          contributor_id: null,
+          title: "Older original",
+          body: "Body",
+          tags: [],
+          body_format: "markdown",
+          workflow_state: "needs_review",
+          workflow_item_version: 1,
+          accepted_snapshot_id: null,
+          accepted_unexported_changes: false,
+          original_file_modified_at: "2026-05-29T01:00:00.000Z",
+          created_at: "2026-05-29T04:00:00.000Z",
+          updated_at: "2026-05-29T06:00:00.000Z"
+        }
+      ] as unknown as Row[]);
+    }
+  };
+
+  const workItems = await new WorkItemRepository(queryable).list();
+
+  assert.match(capturedSql, /source_memos\.original_file_modified_at desc nulls last/);
+  assert.match(capturedSql, /work_items\.created_at desc/);
+  assert.equal(workItems[0]?.originalFileModifiedAt, "2026-05-29T03:00:00.000Z");
+  assert.equal(workItems[1]?.originalFileModifiedAt, "2026-05-29T01:00:00.000Z");
 });
 
 test("watched imports reject active file types when media type is unsupported", async () => {
@@ -398,6 +462,7 @@ test("watched imports reject active file types when media type is unsupported", 
           sourceType: "watched_audio_file",
           originalFilename: "memo.m4a",
           originalPath: "/watched/memo.m4a",
+          originalFileModifiedAt,
           mimeType: "audio/mp4",
           byteSize: 10,
           contentHash: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -479,6 +544,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     const workItemDetail = await authedJson(baseUrl, "/api/work-items/work-item-1");
     assert.equal(workItemDetail.response.status, 200);
     assert.equal(workItemDetail.body.workItem.title, "Captured memo");
+    assert.equal(workItemDetail.body.workItem.originalFileModifiedAt, originalFileModifiedAt);
 
     const tagSuggestions = await authedJson(baseUrl, "/api/work-items/work-item-1/tag-suggestions");
     assert.equal(tagSuggestions.response.status, 200);
@@ -723,6 +789,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
         sourceType: "watched_text_file",
         originalFilename: "memo.md",
         originalPath: "/watched/memo.md",
+        originalFileModifiedAt,
         mimeType: "text/markdown",
         byteSize: 10,
         contentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -757,6 +824,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
         sourceType: "watched_audio_file",
         originalFilename: "memo.m4a",
         originalPath: "/watched/memo.m4a",
+        originalFileModifiedAt,
         mimeType: "audio/mp4",
         byteSize: 5,
         contentHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -953,6 +1021,7 @@ function captureRouteServices(): AppServices {
     workflowItemVersion: 1,
     acceptedSnapshotId: null,
     acceptedUnexportedChanges: false,
+    originalFileModifiedAt,
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
   };
@@ -1667,13 +1736,19 @@ class FakeDatabase implements Database {
         id: values[0],
         source_type: values[1],
         primary_artifact_id: values[2],
-        content_hash: values[6]
+        content_hash: values[6],
+        original_file_modified_at: values[9]
       });
       return rows([]);
     }
 
     if (text.includes("from source_memos") && text.includes("where content_hash")) {
       const sourceMemo = this.sourceMemos.find((row) => row.content_hash === values[0]);
+      return rows(sourceMemo === undefined ? [] : [sourceMemo as Row]);
+    }
+
+    if (text.includes("from source_memos") && text.includes("where id =")) {
+      const sourceMemo = this.sourceMemos.find((row) => row.id === values[0]);
       return rows(sourceMemo === undefined ? [] : [sourceMemo as Row]);
     }
 
@@ -1855,15 +1930,16 @@ class FakeDatabase implements Database {
         source_type: values[4],
         original_filename: values[5],
         original_path: values[6],
-        mime_type: values[7],
-        byte_size: values[8],
-        content_hash: values[9],
-        object_key: values[10],
-        bucket: values[11],
-        artifact_id: values[12],
-        reserved_source_memo_id: values[13],
-        duplicate_of_source_memo_id: values[14],
-        created_by: values[15],
+        original_file_modified_at: values[7],
+        mime_type: values[8],
+        byte_size: values[9],
+        content_hash: values[10],
+        object_key: values[11],
+        bucket: values[12],
+        artifact_id: values[13],
+        reserved_source_memo_id: values[14],
+        duplicate_of_source_memo_id: values[15],
+        created_by: values[16],
         created_at: "2026-05-29T00:00:00.000Z",
         updated_at: "2026-05-29T00:00:00.000Z",
         uploaded_at: null,
@@ -1911,6 +1987,8 @@ class FakeDatabase implements Database {
         workflow_item_version: 1,
         accepted_snapshot_id: null,
         accepted_unexported_changes: false,
+        original_file_modified_at:
+          this.sourceMemos.find((sourceMemo) => sourceMemo.id === values[1])?.original_file_modified_at ?? null,
         created_at: "2026-05-29T00:00:00.000Z",
         updated_at: "2026-05-29T00:00:00.000Z"
       };
@@ -1928,7 +2006,8 @@ class FakeDatabase implements Database {
         id: values[0],
         source_memo_id: values[1],
         machine_id: values[3],
-        status: values[9]
+        original_file_modified_at: values[7],
+        status: values[10]
       });
       return rows([]);
     }

@@ -35,6 +35,7 @@ interface CreateUploadSessionRequest {
   sourceType: SourceMemoType;
   originalFilename: string;
   originalPath: string;
+  originalFileModifiedAt: string;
   mimeType: string;
   byteSize: number;
   contentHash: string;
@@ -100,6 +101,7 @@ export class ImportService {
           machineId: input.machineId,
           watchFolderId: input.watchFolderId,
           originalPath: input.originalPath,
+          originalFileModifiedAt: input.originalFileModifiedAt,
           contentHash: input.contentHash,
           duplicateOfSourceMemoId: duplicate.id,
           status: "duplicate_exact"
@@ -112,6 +114,7 @@ export class ImportService {
           sourceType: input.sourceType,
           originalFilename: input.originalFilename,
           originalPath: input.originalPath,
+          originalFileModifiedAt: input.originalFileModifiedAt,
           mimeType: input.mimeType,
           byteSize: input.byteSize,
           contentHash: input.contentHash,
@@ -141,6 +144,7 @@ export class ImportService {
         sourceType: input.sourceType,
         originalFilename: input.originalFilename,
         originalPath: input.originalPath,
+        originalFileModifiedAt: input.originalFileModifiedAt,
         mimeType: input.mimeType,
         byteSize: input.byteSize,
         contentHash: input.contentHash,
@@ -345,6 +349,7 @@ async function finalizeWatchedAudioImport(input: {
     primaryArtifactId: session.artifactId,
     contentHash: session.contentHash,
     originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
     createdBy: input.actor.id
   });
   await sourceMemoArtifacts.link({
@@ -371,6 +376,7 @@ async function finalizeWatchedAudioImport(input: {
     machineId: session.machineId,
     watchFolderId: session.watchFolderId,
     originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
     contentHash: session.contentHash,
     status: "imported"
   });
@@ -469,6 +475,7 @@ async function finalizeWatchedTextImport(input: {
     extractedText,
     contentHash: session.contentHash,
     originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
     createdBy: input.actor.id
   });
   await sourceMemoArtifacts.link({
@@ -495,6 +502,7 @@ async function finalizeWatchedTextImport(input: {
     machineId: session.machineId,
     watchFolderId: session.watchFolderId,
     originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
     contentHash: session.contentHash,
     status: "imported"
   });
@@ -588,6 +596,7 @@ async function finalizeUnsupportedWatchedImport(input: {
     primaryArtifactId: session.artifactId,
     contentHash: session.contentHash,
     originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
     createdBy: input.actor.id
   });
   await sourceMemoArtifacts.link({
@@ -614,6 +623,7 @@ async function finalizeUnsupportedWatchedImport(input: {
     machineId: session.machineId,
     watchFolderId: session.watchFolderId,
     originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
     contentHash: session.contentHash,
     status: "imported"
   });
@@ -677,6 +687,7 @@ function parseCreateUploadSessionRequest(body: unknown): CreateUploadSessionRequ
     sourceType,
     originalFilename: assertNonEmptyString(record.originalFilename, "originalFilename"),
     originalPath: assertNonEmptyString(record.originalPath, "originalPath"),
+    originalFileModifiedAt: parseIsoDateTime(record.originalFileModifiedAt, "originalFileModifiedAt"),
     mimeType: assertNonEmptyString(record.mimeType, "mimeType"),
     byteSize: parseByteSize(record.byteSize),
     contentHash: assertContentHash(record.contentHash)
@@ -711,6 +722,15 @@ function parseArchiveResultRequest(body: unknown): ArchiveResultRequest {
     status,
     warning: optionalString(record.warning, "warning")
   };
+}
+
+function parseIsoDateTime(value: unknown, fieldName: string): string {
+  const rawValue = assertNonEmptyString(value, fieldName);
+  const parsed = new Date(rawValue);
+  if (!Number.isFinite(parsed.getTime())) {
+    throw new HttpError(400, "invalid_request", `${fieldName} must be a valid date-time string.`);
+  }
+  return parsed.toISOString();
 }
 
 function parseByteSize(value: unknown): number {

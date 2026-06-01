@@ -16,6 +16,7 @@ interface ImportEventDiagnosticRow extends Record<string, unknown> {
   watch_folder_id: string | null;
   original_path: string | null;
   archive_path: string | null;
+  original_file_modified_at: Date | string | null;
   content_hash: string;
   duplicate_of_source_memo_id: string | null;
   status: string;
@@ -31,6 +32,7 @@ interface SourceMemoDiagnosticRow extends Record<string, unknown> {
   content_hash: string | null;
   original_path: string | null;
   archive_path: string | null;
+  original_file_modified_at: Date | string | null;
   contributor_text: string | null;
   current_transcript_text: string | null;
   created_at: Date | string;
@@ -307,6 +309,8 @@ export class DiagnosticsService {
           contentHash: row.content_hash,
           originalPath: row.original_path,
           archivePath: row.archive_path,
+          originalFileModifiedAt:
+            row.original_file_modified_at === null ? null : toIso(row.original_file_modified_at),
           contributorText: row.contributor_text,
           currentTranscriptText: row.current_transcript_text,
           createdAt: toIso(row.created_at),
@@ -330,6 +334,7 @@ export class DiagnosticsService {
       watchFolderId: row.watch_folder_id,
       originalPath: row.original_path,
       archivePath: row.archive_path,
+      originalFileModifiedAt: row.original_file_modified_at === null ? null : toIso(row.original_file_modified_at),
       contentHash: row.content_hash,
       duplicateOfSourceMemoId: row.duplicate_of_source_memo_id,
       status: row.status,

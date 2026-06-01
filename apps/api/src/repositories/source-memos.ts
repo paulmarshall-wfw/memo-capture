@@ -12,6 +12,7 @@ export interface SourceMemoCreateInput {
   contentHash?: string | null;
   originalPath?: string | null;
   archivePath?: string | null;
+  originalFileModifiedAt?: string | null;
   contributorText?: string | null;
   contributorId?: string | null;
   createdBy: string;
@@ -24,6 +25,7 @@ export interface SourceMemoRecord {
   contentHash: string | null;
   extractedText?: string | null;
   currentTranscriptText?: string | null;
+  originalFileModifiedAt?: string | null;
 }
 
 interface SourceMemoRow extends Record<string, unknown> {
@@ -33,6 +35,7 @@ interface SourceMemoRow extends Record<string, unknown> {
   content_hash: string | null;
   extracted_text: string | null;
   current_transcript_text: string | null;
+  original_file_modified_at: Date | string | null;
 }
 
 export class SourceMemoRepository {
@@ -51,13 +54,14 @@ export class SourceMemoRepository {
          content_hash,
          original_path,
          archive_path,
+         original_file_modified_at,
          contributor_text,
          contributor_id,
          created_by,
          created_at,
          updated_at
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())`,
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), now())`,
       [
         id,
         input.sourceType,
@@ -68,18 +72,19 @@ export class SourceMemoRepository {
         input.contentHash ?? null,
         input.originalPath ?? null,
         input.archivePath ?? null,
+        input.originalFileModifiedAt ?? null,
         input.contributorText ?? null,
         input.contributorId ?? null,
         input.createdBy
       ]
     );
 
-    return { id, contentHash: input.contentHash ?? null };
+    return { id, contentHash: input.contentHash ?? null, originalFileModifiedAt: input.originalFileModifiedAt ?? null };
   }
 
   async findById(sourceMemoId: string): Promise<SourceMemoRecord | null> {
     const result = await this.db.query<SourceMemoRow>(
-      `select id, source_type, primary_artifact_id, content_hash, extracted_text, current_transcript_text
+      `select id, source_type, primary_artifact_id, content_hash, extracted_text, current_transcript_text, original_file_modified_at
        from source_memos
        where id = $1`,
       [sourceMemoId]
@@ -94,7 +99,8 @@ export class SourceMemoRepository {
           primaryArtifactId: row.primary_artifact_id,
           contentHash: row.content_hash,
           extractedText: row.extracted_text,
-          currentTranscriptText: row.current_transcript_text
+          currentTranscriptText: row.current_transcript_text,
+          originalFileModifiedAt: row.original_file_modified_at === null ? null : toIso(row.original_file_modified_at)
         };
   }
 
@@ -138,6 +144,10 @@ export class SourceMemoRepository {
   }
 }
 
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 export class SourceMemoArtifactRepository {
   constructor(private readonly db: Queryable) {}
 
@@ -167,6 +177,7 @@ export interface ImportEventInput {
   watchFolderId?: string | null;
   originalPath?: string | null;
   archivePath?: string | null;
+  originalFileModifiedAt?: string | null;
   contentHash: string;
   duplicateOfSourceMemoId?: string | null;
   status: string;
@@ -188,6 +199,7 @@ export class ImportEventRepository {
          watch_folder_id,
          original_path,
          archive_path,
+         original_file_modified_at,
          content_hash,
          duplicate_of_source_memo_id,
          status,
@@ -195,7 +207,7 @@ export class ImportEventRepository {
          warning_message,
          created_at
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())`,
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())`,
       [
         id,
         input.sourceMemoId,
@@ -204,6 +216,7 @@ export class ImportEventRepository {
         input.watchFolderId ?? null,
         input.originalPath ?? null,
         input.archivePath ?? null,
+        input.originalFileModifiedAt ?? null,
         input.contentHash,
         input.duplicateOfSourceMemoId ?? null,
         input.status,

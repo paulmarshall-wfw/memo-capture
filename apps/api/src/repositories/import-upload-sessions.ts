@@ -9,6 +9,7 @@ export interface ImportUploadSessionInput {
   sourceType: SourceMemoType;
   originalFilename: string;
   originalPath: string;
+  originalFileModifiedAt: string;
   mimeType: string;
   byteSize: number;
   contentHash: string;
@@ -35,6 +36,7 @@ interface ImportUploadSessionRow extends Record<string, unknown> {
   source_type: SourceMemoType;
   original_filename: string;
   original_path: string;
+  original_file_modified_at: Date | string;
   mime_type: string;
   byte_size: string | number;
   content_hash: string;
@@ -63,6 +65,7 @@ export class ImportUploadSessionRepository {
          source_type,
          original_filename,
          original_path,
+         original_file_modified_at,
          mime_type,
          byte_size,
          content_hash,
@@ -75,7 +78,7 @@ export class ImportUploadSessionRepository {
          created_at,
          updated_at
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now())
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now(), now())
        returning *`,
       [
         input.id,
@@ -85,6 +88,7 @@ export class ImportUploadSessionRepository {
         input.sourceType,
         input.originalFilename,
         input.originalPath,
+        input.originalFileModifiedAt,
         input.mimeType,
         input.byteSize,
         input.contentHash,
@@ -150,6 +154,7 @@ function mapSession(row: ImportUploadSessionRow): ImportUploadSessionRecord {
     sourceType: row.source_type,
     originalFilename: row.original_filename,
     originalPath: row.original_path,
+    originalFileModifiedAt: toIso(row.original_file_modified_at),
     mimeType: row.mime_type,
     byteSize: typeof row.byte_size === "number" ? row.byte_size : Number.parseInt(row.byte_size, 10),
     contentHash: row.content_hash,

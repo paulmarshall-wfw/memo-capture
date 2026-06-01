@@ -19,6 +19,7 @@ test("tag suggestions are ranked into strong, related, and weak rows without sel
     workflowItemVersion: 1,
     acceptedSnapshotId: null,
     acceptedUnexportedChanges: false,
+    originalFileModifiedAt: "2026-05-28T23:45:00.000Z",
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
   } satisfies WorkItemRecord;

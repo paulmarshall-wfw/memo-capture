@@ -25,13 +25,15 @@ export class WorkItemRepository {
     const limit = input.limit ?? 100;
     const result = await this.db.query<WorkItemRow>(
       `select work_items.*,
+              source_memos.original_file_modified_at,
               coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
        from work_items
+       join source_memos on source_memos.id = work_items.source_memo_id
        left join work_item_tags on work_item_tags.work_item_id = work_items.id
        left join tags on tags.id = work_item_tags.tag_id
        where (cardinality($2::text[]) = 0 or workflow_state = any($2::text[]))
-       group by work_items.id
-       order by updated_at desc
+       group by work_items.id, source_memos.original_file_modified_at
+       order by source_memos.original_file_modified_at desc nulls last, work_items.created_at desc
        limit $1`,
       [limit, states]
     );
@@ -56,12 +58,14 @@ export class WorkItemRepository {
   async findById(workItemId: string): Promise<WorkItemRecord | null> {
     const result = await this.db.query<WorkItemRow>(
       `select work_items.*,
+              source_memos.original_file_modified_at,
               coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
        from work_items
+       join source_memos on source_memos.id = work_items.source_memo_id
        left join work_item_tags on work_item_tags.work_item_id = work_items.id
        left join tags on tags.id = work_item_tags.tag_id
        where work_items.id = $1
-       group by work_items.id`,
+       group by work_items.id, source_memos.original_file_modified_at`,
       [workItemId]
     );
     return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);

@@ -94,6 +94,7 @@ interface WorkItem {
   workflowItemVersion: number;
   acceptedSnapshotId: string | null;
   acceptedUnexportedChanges: boolean;
+  originalFileModifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -238,6 +239,12 @@ type ImportCandidateState = "idle" | "importing" | "imported" | "duplicate" | "e
 
 interface ImportCandidateStatus {
   state: ImportCandidateState;
+  message: string | null;
+}
+
+interface ImportCandidateResult {
+  state: Exclude<ImportCandidateState, "idle" | "importing">;
+  filename: string;
   message: string | null;
 }
 
@@ -1544,7 +1551,17 @@ export function App() {
     if (accessToken === null) {
       return;
     }
-    if (activeView !== "settings" && settingsSummary !== null) {
+    if (settingsSummary !== null) {
+      return;
+    }
+
+    void loadSettings(accessToken).catch((error) => {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
+    });
+  }, [accessToken, settingsSummary]);
+
+  useEffect(() => {
+    if (accessToken === null || activeView !== "settings") {
       return;
     }
 
@@ -2152,17 +2169,30 @@ export function App() {
       });
       setWatchedCandidates(candidates);
       setCandidateStatuses({});
+      const results: ImportCandidateResult[] = [];
       for (const candidate of candidates) {
-        await importWatchedCandidate(candidate);
+        results.push(await importWatchedCandidate(candidate));
       }
+      const importedCount = results.filter((result) => result.state === "imported").length;
+      const duplicateCount = results.filter((result) => result.state === "duplicate").length;
+      const errorResults = results.filter((result) => result.state === "error");
       setWatchedLastScanAt(new Date());
-      setWatchedLastProcessedCount(candidates.length);
+      setWatchedLastProcessedCount(importedCount + duplicateCount);
       if (mode === "manual" || candidates.length > 0) {
-        setStatusMessage(
-          mode === "auto"
-            ? `${candidates.length} watched file${candidates.length === 1 ? "" : "s"} imported automatically.`
-            : `${candidates.length} stable watched file${candidates.length === 1 ? "" : "s"} processed.`
-        );
+        if (errorResults.length > 0) {
+          const firstError = errorResults[0] ?? { state: "error", filename: "unknown file", message: null };
+          setStatusMessage(
+            `${errorResults.length} of ${candidates.length} watched file${candidates.length === 1 ? "" : "s"} failed: ${firstError.filename}${firstError.message === null ? "" : ` - ${firstError.message}`}`
+          );
+        } else {
+          const duplicateText =
+            duplicateCount === 0 ? "" : `, ${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"}`;
+          setStatusMessage(
+            mode === "auto"
+              ? `${importedCount} watched file${importedCount === 1 ? "" : "s"} imported automatically${duplicateText}.`
+              : `${importedCount} stable watched file${importedCount === 1 ? "" : "s"} imported${duplicateText}.`
+          );
+        }
       }
     } catch (error) {
       setStatusMessage(
@@ -2178,16 +2208,18 @@ export function App() {
     }
   }
 
-  async function importWatchedCandidate(candidate: WatchedFileCandidate) {
+  async function importWatchedCandidate(candidate: WatchedFileCandidate): Promise<ImportCandidateResult> {
     if (accessToken === null || machineId === null) {
-      setStatusMessage("Sign in and machine identity are required before importing watched files.");
-      return;
+      const message = "Sign in and machine identity are required before importing watched files.";
+      setStatusMessage(message);
+      return { state: "error", filename: candidate.filename, message };
     }
 
     const watchFolder = watchedFolders.find((folder) => folder.id === candidate.watchFolderId);
     if (watchFolder === undefined || watchFolder.archivePath.trim() === "") {
-      setCandidateStatus(candidate.path, "error", "Archive path is required before import.");
-      return;
+      const message = "Archive path is required before import.";
+      setCandidateStatus(candidate.path, "error", message);
+      return { state: "error", filename: candidate.filename, message };
     }
 
     setCandidateStatus(candidate.path, "importing", null);
@@ -2207,6 +2239,7 @@ export function App() {
           sourceType,
           originalFilename: candidate.filename,
           originalPath: candidate.path,
+          originalFileModifiedAt: normalizeWatchedFileModifiedAt(candidate.modifiedAt),
           mimeType: mimeTypeForExtension(candidate.extension, fileType?.mediaKind),
           byteSize: bytes.byteLength,
           contentHash
@@ -2222,7 +2255,11 @@ export function App() {
           importEventId: requireValue(uploadSession.importEventId, "Duplicate response did not include an import event.")
         });
         setCandidateStatus(candidate.path, "duplicate", "Exact duplicate archived without creating a new work item.");
-        return;
+        return {
+          state: "duplicate",
+          filename: candidate.filename,
+          message: "Exact duplicate archived without creating a new work item."
+        };
       }
 
       const upload = requireValue(uploadSession.upload, "Upload session did not include upload instructions.");
@@ -2256,8 +2293,11 @@ export function App() {
             : "Imported, finalized, and archived."
       );
       await refreshBucket();
+      return { state: "imported", filename: candidate.filename, message: null };
     } catch (error) {
-      setCandidateStatus(candidate.path, "error", error instanceof Error ? error.message : "Import failed.");
+      const message = error instanceof Error ? error.message : "Import failed.";
+      setCandidateStatus(candidate.path, "error", message);
+      return { state: "error", filename: candidate.filename, message };
     }
   }
 
@@ -3202,7 +3242,7 @@ export function App() {
 	                    aria-label={`Select ${item.title}`}
 	                  >
 	                    <span className="item-project">{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
-	                    <span className="updated-time">{formatDate(item.updatedAt)}</span>
+	                    <span className="updated-time">{formatDate(item.originalFileModifiedAt ?? item.createdAt)}</span>
 	                  </button>
                   <div className="row-action-groups" aria-label={`Workflow actions for ${item.title}`}>
                     {rowActions.length === 0 ? <span className="row-action-empty">No actions</span> : null}
@@ -3263,7 +3303,7 @@ export function App() {
 
                 <div className="detail-meta">
                   <span>Version {selectedItem.workflowItemVersion}</span>
-                  <span>Updated {formatDate(selectedItem.updatedAt)}</span>
+                  <span>Original {formatDate(selectedItem.originalFileModifiedAt ?? selectedItem.createdAt)}</span>
                   {selectedItem.acceptedUnexportedChanges ? <span>Accepted changes pending export</span> : null}
                 </div>
 
@@ -3568,6 +3608,12 @@ export function App() {
                         >
                           <Copy size={15} />
                         </button>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Original file time</dt>
+                      <dd>
+                        <span>{formatDate(selectedItem.originalFileModifiedAt ?? selectedItem.createdAt)}</span>
                       </dd>
                     </div>
                     <div>
@@ -4793,6 +4839,15 @@ function readWatchedFolderSettings(): WatchedFolderSetting[] {
   }
 }
 
+function normalizeWatchedFileModifiedAt(value: string): string {
+  const trimmed = value.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return new Date(Number(trimmed)).toISOString();
+  }
+
+  return new Date(trimmed).toISOString();
+}
+
 async function archiveImportedCandidate(input: {
   token: string;
   machineId: string;
@@ -4914,6 +4969,7 @@ function formatBytes(value: number): string {
 function formatDate(value: string): string {
   const dateValue = /^\d+$/.test(value) ? Number.parseInt(value, 10) : value;
   return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
     month: "short",
     day: "numeric",
     hour: "numeric",
