@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -142,8 +143,12 @@ interface Project {
 
 interface ProjectFormState {
   name: string;
-  slug: string;
   description: string;
+}
+
+interface NewProjectDraft {
+  id: string;
+  form: ProjectFormState;
 }
 
 interface Contributor {
@@ -491,7 +496,6 @@ function normalizeTagsForCompare(tags: string[]): string {
 function createEmptyProjectForm(): ProjectFormState {
   return {
     name: "",
-    slug: "",
     description: ""
   };
 }
@@ -499,7 +503,6 @@ function createEmptyProjectForm(): ProjectFormState {
 function createProjectForm(project: Project): ProjectFormState {
   return {
     name: project.name,
-    slug: project.slug,
     description: project.description
   };
 }
@@ -1147,10 +1150,12 @@ export function App() {
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectDrafts, setProjectDrafts] = useState<Record<string, ProjectFormState>>({});
-  const [newProjectDraft, setNewProjectDraft] = useState<ProjectFormState>(() => createEmptyProjectForm());
+  const [newProjectDrafts, setNewProjectDrafts] = useState<NewProjectDraft[]>([]);
   const [projectIdInFlight, setProjectIdInFlight] = useState<string | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [detailPanelWidth, setDetailPanelWidth] = useState(440);
+  const nextProjectDraftId = useRef(1);
+  const projectListRef = useRef<HTMLDivElement | null>(null);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const workItemById = useMemo(() => new Map(workItems.map((item) => [item.id, item])), [workItems]);
@@ -1264,7 +1269,7 @@ export function App() {
     activeView === "exports"
       ? "Accepted snapshots and generated export batches."
       : activeView === "projects"
-      ? "Project catalog, synopsis, status, and stable slug."
+      ? ""
       : activeView === "audit"
       ? "Application audit history and workflow runtime event-journal debugging."
       : activeView === "settings"
@@ -1311,6 +1316,16 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (activeView !== "projects" || newProjectDrafts.length === 0) {
+      return;
+    }
+    projectListRef.current?.scrollTo({
+      top: projectListRef.current.scrollHeight,
+      behavior: "smooth"
+    });
+  }, [activeView, newProjectDrafts.length]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -2293,8 +2308,30 @@ export function App() {
     }
   }
 
-  function updateNewProjectDraft(field: keyof ProjectFormState, value: string) {
-    setNewProjectDraft((current) => ({ ...current, [field]: value }));
+  function addNewProjectDraft() {
+    const draftId = `new-project-${nextProjectDraftId.current}`;
+    nextProjectDraftId.current += 1;
+    setNewProjectDrafts((current) => [...current, { id: draftId, form: createEmptyProjectForm() }]);
+  }
+
+  function updateNewProjectDraft(draftId: string, field: keyof ProjectFormState, value: string) {
+    setNewProjectDrafts((current) =>
+      current.map((draftProject) =>
+        draftProject.id === draftId
+          ? {
+              ...draftProject,
+              form: {
+                ...draftProject.form,
+                [field]: value
+              }
+            }
+          : draftProject
+      )
+    );
+  }
+
+  function discardNewProjectDraft(draftId: string) {
+    setNewProjectDrafts((current) => current.filter((draftProject) => draftProject.id !== draftId));
   }
 
   function updateProjectDraft(projectId: string, field: keyof ProjectFormState, value: string) {
@@ -2307,27 +2344,30 @@ export function App() {
     }));
   }
 
-  async function createProject() {
+  async function createProject(draftId: string) {
     if (accessToken === null) {
       return;
     }
-    if (newProjectDraft.name.trim() === "") {
+    const draftProject = newProjectDrafts.find((candidate) => candidate.id === draftId);
+    if (draftProject === undefined) {
+      return;
+    }
+    if (draftProject.form.name.trim() === "") {
       setStatusMessage("Project name is required.");
       return;
     }
 
-    setProjectIdInFlight("new");
+    setProjectIdInFlight(draftId);
     setStatusMessage(null);
     try {
       await authedJson(accessToken, "/api/projects", {
         method: "POST",
         body: JSON.stringify({
-          name: newProjectDraft.name,
-          slug: newProjectDraft.slug,
-          description: newProjectDraft.description
+          name: draftProject.form.name,
+          description: draftProject.form.description
         })
       });
-      setNewProjectDraft(createEmptyProjectForm());
+      discardNewProjectDraft(draftId);
       await loadProjects(accessToken);
       setStatusMessage("Project created.");
     } catch (error) {
@@ -2357,7 +2397,6 @@ export function App() {
         method: "PATCH",
         body: JSON.stringify({
           name: projectDraft.name,
-          slug: projectDraft.slug,
           description: projectDraft.description
         })
       });
@@ -2540,26 +2579,50 @@ export function App() {
       <section className="workspace" aria-label={pageTitle}>
         <header className="workspace-header">
           <div>
-            <h1>{pageTitle}</h1>
+            <div className="workspace-title-row">
+              <h1>{pageTitle}</h1>
+              {activeView === "projects" ? (
+                <div className="project-summary-row header-project-summary" aria-label="Project counts">
+                  <span>{projects.length} total</span>
+                  <span>{activeProjectCount} active</span>
+                  <span>{inactiveProjectCount} inactive</span>
+                  {newProjectDrafts.length > 0 ? <span>{newProjectDrafts.length} draft</span> : null}
+                </div>
+              ) : null}
+            </div>
             {pageDescription === "" ? null : <p>{pageDescription}</p>}
           </div>
-          <button
-            className="icon-button"
-            type="button"
-            title="Refresh current view"
-            aria-label="Refresh current view"
-            onClick={refreshCurrentView}
-          >
-            {activeView === "settings" && settingsLoading ? (
-              <RefreshCcw className="spin" size={18} />
-            ) : activeView === "projects" && projectsLoading ? (
-              <RefreshCcw className="spin" size={18} />
-            ) : activeView === "audit" && auditLoading ? (
-              <RefreshCcw className="spin" size={18} />
-            ) : (
-              <RefreshCcw size={18} />
-            )}
-          </button>
+          <div className="workspace-header-actions">
+            {activeView === "projects" ? (
+              <button
+                className="primary-button"
+                type="button"
+                title="+ Create"
+                aria-label="+ Create project"
+                onClick={addNewProjectDraft}
+              >
+                <Plus size={18} />
+                Create
+              </button>
+            ) : null}
+            <button
+              className="icon-button"
+              type="button"
+              title="Refresh current view"
+              aria-label="Refresh current view"
+              onClick={refreshCurrentView}
+            >
+              {activeView === "settings" && settingsLoading ? (
+                <RefreshCcw className="spin" size={18} />
+              ) : activeView === "projects" && projectsLoading ? (
+                <RefreshCcw className="spin" size={18} />
+              ) : activeView === "audit" && auditLoading ? (
+                <RefreshCcw className="spin" size={18} />
+              ) : (
+                <RefreshCcw size={18} />
+              )}
+            </button>
+          </div>
         </header>
 
         {statusMessage !== null ? (
@@ -3176,85 +3239,29 @@ export function App() {
           </div>
         ) : activeView === "projects" ? (
           <div className="projects-grid">
-            <section className="detail-panel project-create-panel" aria-label="Create project">
-              <div className="detail-header">
-                <div>
-                  <p className="eyebrow">Project catalog</p>
-                  <h2>New project</h2>
-                </div>
-                <FolderOpen size={22} />
-              </div>
-
-              <div className="project-editor compact-project-editor">
-                <div className="field-group">
-                  <label htmlFor="new-project-name">Name</label>
-                  <input
-                    id="new-project-name"
-                    value={newProjectDraft.name}
-                    onChange={(event) => updateNewProjectDraft("name", event.currentTarget.value)}
-                  />
-                </div>
-                <div className="field-group">
-                  <label htmlFor="new-project-slug">Slug</label>
-                  <input
-                    id="new-project-slug"
-                    placeholder="Generated from name"
-                    value={newProjectDraft.slug}
-                    onChange={(event) => updateNewProjectDraft("slug", event.currentTarget.value)}
-                  />
-                </div>
-                <div className="field-group project-editor-wide">
-                  <label htmlFor="new-project-description">Synopsis</label>
-                  <textarea
-                    id="new-project-description"
-                    value={newProjectDraft.description}
-                    onChange={(event) => updateNewProjectDraft("description", event.currentTarget.value)}
-                    rows={3}
-                  />
-                </div>
-              </div>
-
-              <div className="detail-actions">
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={projectIdInFlight !== null}
-                  onClick={() => void createProject()}
-                >
-                  {projectIdInFlight === "new" ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
-                  Create
-                </button>
-              </div>
-            </section>
-
             <section className="detail-panel projects-list-panel" aria-label="Projects">
-              <div className="project-summary-row">
-                <span>{projects.length} total</span>
-                <span>{activeProjectCount} active</span>
-                <span>{inactiveProjectCount} inactive</span>
-              </div>
-
-              {projects.length === 0 ? (
+              {projects.length === 0 && newProjectDrafts.length === 0 ? (
                 <div className="empty-detail">
                   <FolderOpen size={22} />
                   <span>No projects configured</span>
                 </div>
               ) : null}
 
-              <div className="settings-list project-page-list">
+              <div className="settings-list project-page-list" ref={projectListRef}>
                 {projects.map((project) => {
                   const projectDraft = projectDrafts[project.id] ?? createProjectForm(project);
                   return (
                     <article className="settings-row project-settings-row project-row-compact" key={project.id}>
-                      <div className="settings-row-header">
-                        <div>
-                          <div className="batch-title">
-                            <strong>{project.name}</strong>
-                            <span>{project.isActive ? "Active" : "Inactive"}</span>
-                            <span>{project.slug}</span>
-                          </div>
-                          <p>Updated {formatDate(project.updatedAt)}</p>
-                        </div>
+                      <div className="project-row-top">
+                        <input
+                          className="project-name-input"
+                          aria-label="Project name"
+                          value={projectDraft.name}
+                          onChange={(event) =>
+                            updateProjectDraft(project.id, "name", event.currentTarget.value)
+                          }
+                        />
+                        <p className="project-updated">Updated {formatDate(project.updatedAt)}</p>
                         <div className="suggestion-actions">
                           <button
                             className="row-action-button"
@@ -3277,48 +3284,79 @@ export function App() {
                               onClick={() => void deactivateProject(project.id)}
                             >
                               <CircleSlash size={16} />
-                              Deactivate
-                            </button>
-                          ) : null}
-                        </div>
+                            Deactivate
+                          </button>
+                        ) : null}
+                      </div>
                       </div>
 
-                      <div className="project-editor">
-                        <div className="field-group">
-                          <label htmlFor={`project-${project.id}-name`}>Name</label>
-                          <input
-                            id={`project-${project.id}-name`}
-                            value={projectDraft.name}
-                            onChange={(event) =>
-                              updateProjectDraft(project.id, "name", event.currentTarget.value)
-                            }
-                          />
-                        </div>
-                        <div className="field-group">
-                          <label htmlFor={`project-${project.id}-slug`}>Slug</label>
-                          <input
-                            id={`project-${project.id}-slug`}
-                            value={projectDraft.slug}
-                            onChange={(event) =>
-                              updateProjectDraft(project.id, "slug", event.currentTarget.value)
-                            }
-                          />
-                        </div>
-                        <div className="field-group project-editor-wide">
-                          <label htmlFor={`project-${project.id}-description`}>Synopsis</label>
-                          <textarea
-                            id={`project-${project.id}-description`}
-                            value={projectDraft.description}
-                            onChange={(event) =>
-                              updateProjectDraft(project.id, "description", event.currentTarget.value)
-                            }
-                            rows={3}
-                          />
-                        </div>
+                      <div className="field-group project-synopsis-field">
+                        <label htmlFor={`project-${project.id}-description`}>Synopsis</label>
+                        <textarea
+                          id={`project-${project.id}-description`}
+                          value={projectDraft.description}
+                          onChange={(event) =>
+                            updateProjectDraft(project.id, "description", event.currentTarget.value)
+                          }
+                          rows={2}
+                        />
                       </div>
                     </article>
                   );
                 })}
+
+                {newProjectDrafts.map((draftProject) => (
+                  <article className="settings-row project-settings-row project-row-compact" key={draftProject.id}>
+                    <div className="project-row-top">
+                      <input
+                        className="project-name-input"
+                        aria-label="Project name"
+                        placeholder="New project"
+                        value={draftProject.form.name}
+                        onChange={(event) =>
+                          updateNewProjectDraft(draftProject.id, "name", event.currentTarget.value)
+                        }
+                      />
+                      <p className="project-updated">Unsaved project</p>
+                      <div className="suggestion-actions">
+                        <button
+                          className="row-action-button primary"
+                          type="button"
+                          disabled={projectIdInFlight !== null}
+                          onClick={() => void createProject(draftProject.id)}
+                        >
+                          {projectIdInFlight === draftProject.id ? (
+                            <RefreshCcw className="spin" size={16} />
+                          ) : (
+                            <Save size={16} />
+                          )}
+                          Save
+                        </button>
+                        <button
+                          className="row-action-button"
+                          type="button"
+                          disabled={projectIdInFlight === draftProject.id}
+                          onClick={() => discardNewProjectDraft(draftProject.id)}
+                        >
+                          <X size={16} />
+                          Discard
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="field-group project-synopsis-field">
+                      <label htmlFor={`${draftProject.id}-description`}>Synopsis</label>
+                      <textarea
+                        id={`${draftProject.id}-description`}
+                        value={draftProject.form.description}
+                        onChange={(event) =>
+                          updateNewProjectDraft(draftProject.id, "description", event.currentTarget.value)
+                        }
+                        rows={2}
+                      />
+                    </div>
+                  </article>
+                ))}
               </div>
             </section>
           </div>

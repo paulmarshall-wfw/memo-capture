@@ -292,6 +292,20 @@ button:disabled {
   gap: 20px;
 }
 
+.workspace-header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
 .workspace-header h1 {
   margin: 0;
   font-size: 24px;
@@ -496,7 +510,7 @@ button:disabled {
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-columns: minmax(320px, 420px) minmax(560px, 1fr);
+  grid-template-columns: minmax(560px, 1fr);
   gap: 14px;
 }
 
@@ -1441,19 +1455,20 @@ button:disabled {
 }
 
 .project-settings-row {
-  gap: 12px;
-}
-
-.project-create-panel {
-  align-content: start;
+  gap: 8px;
 }
 
 .projects-list-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .project-page-list {
+  flex: 1;
   min-height: 0;
+  align-content: start;
   overflow: auto;
   padding: 2px;
 }
@@ -1462,8 +1477,11 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
+}
+
+.header-project-summary {
+  padding: 0;
+  border-bottom: 0;
 }
 
 .project-summary-row span {
@@ -1476,26 +1494,40 @@ button:disabled {
 }
 
 .project-row-compact {
-  gap: 10px;
-  padding: 10px;
+  gap: 8px;
+  padding: 8px 10px;
 }
 
-.project-editor {
+.project-row-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 420px) auto minmax(220px, 1fr);
+  align-items: center;
   gap: 10px;
 }
 
-.project-editor-wide {
-  grid-column: 1 / -1;
+.project-row-top .suggestion-actions {
+  justify-content: flex-end;
 }
 
-.project-editor textarea {
-  min-height: 92px;
+.project-name-input {
+  width: 100%;
+  min-width: 0;
+  font-weight: 680;
 }
 
-.compact-project-editor textarea {
-  min-height: 78px;
+.project-updated {
+  margin: 0 !important;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.project-synopsis-field {
+  display: grid;
+  gap: 5px;
+}
+
+.project-synopsis-field textarea {
+  min-height: 54px;
 }
 
 .watched-settings-section {
@@ -1846,6 +1878,11 @@ button:disabled {
     padding-bottom: 2px;
   }
 
+  .workspace-header {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .content-grid,
   .export-grid,
   .projects-grid,
@@ -1911,7 +1948,7 @@ button:disabled {
   .settings-table-header,
   .settings-table-row,
   .settings-inline-form,
-  .project-editor,
+  .project-row-top,
   .tag-suggestion-row {
     grid-template-columns: 1fr;
   }
@@ -1921,6 +1958,11 @@ button:disabled {
     display: grid;
   }
 
+  .workspace-header-actions,
+  .workspace-header-actions .primary-button {
+    width: 100%;
+  }
+
   .search-toolbar {
     grid-template-columns: 1fr;
   }
@@ -1928,5 +1970,9 @@ button:disabled {
   .workspace {
     max-height: none;
     overflow: visible;
+  }
+
+  .project-row-top .suggestion-actions {
+    justify-content: flex-start;
   }
 }
