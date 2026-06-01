@@ -21,6 +21,8 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /Add file type/);
   assert.match(appSource, /Remove file type/);
   assert.match(appSource, /Needs parser support/);
+  assert.match(appSource, /Active watching every/);
+  assert.match(appSource, /watchedFolderPollingIntervalMs/);
   assert.match(appSource, /label="Strong"/);
   assert.match(appSource, /label="Related"/);
   assert.match(appSource, /label="Weak"/);

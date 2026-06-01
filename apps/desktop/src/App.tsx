@@ -479,6 +479,7 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
 );
 const appVersion = "0.1.0";
 const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
+const watchedFolderPollingIntervalMs = 5000;
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const defaultNewFileTypeDraft: NewFileTypeDraft = {
   extension: "",
@@ -1193,6 +1194,8 @@ export function App() {
   const [candidateStatuses, setCandidateStatuses] = useState<Record<string, ImportCandidateStatus>>({});
   const [watchScanInFlight, setWatchScanInFlight] = useState(false);
   const [watchedSettingsSaved, setWatchedSettingsSaved] = useState(false);
+  const [watchedLastScanAt, setWatchedLastScanAt] = useState<Date | null>(null);
+  const [watchedLastProcessedCount, setWatchedLastProcessedCount] = useState(0);
   const [selectedDiagnostics, setSelectedDiagnostics] = useState<WorkItemDiagnostics | null>(null);
   const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null);
   const [audioLoadState, setAudioLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -1228,6 +1231,7 @@ export function App() {
   const [detailPanelWidth, setDetailPanelWidth] = useState(440);
   const nextProjectDraftId = useRef(1);
   const projectListRef = useRef<HTMLDivElement | null>(null);
+  const watchScanInFlightRef = useRef(false);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const workItemById = useMemo(() => new Map(workItems.map((item) => [item.id, item])), [workItems]);
@@ -1255,6 +1259,25 @@ export function App() {
     const fileTypes = settingsSummary?.fileTypes ?? [];
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
+  const watchableFolders = useMemo(
+    () =>
+      watchedFolders.filter(
+        (folder) => folder.enabled && folder.path.trim() !== "" && folder.archivePath.trim() !== ""
+      ),
+    [watchedFolders]
+  );
+  const activeFolderWatching =
+    isTauriRuntime &&
+    accessToken !== null &&
+    machineId !== null &&
+    watchedSettingsSaved &&
+    activeFileExtensions.length > 0 &&
+    watchableFolders.length > 0;
+  const watchedFolderStatus = activeFolderWatching
+    ? `Active watching every ${Math.round(watchedFolderPollingIntervalMs / 1000)}s`
+    : watchedSettingsSaved
+      ? "Watching paused"
+      : "Save to activate watching";
   const visibleTagSuggestions = useMemo(() => {
     const selectedNames = new Set((draft?.tags ?? []).map((tag) => tag.trim().toLowerCase()));
     const filterRow = (tags: string[]) => tags.filter((tag) => !selectedNames.has(tag.trim().toLowerCase()));
@@ -1421,6 +1444,7 @@ export function App() {
 
   useEffect(() => {
     setWatchedFolders(readWatchedFolderSettings());
+    setWatchedSettingsSaved(true);
     if (!isTauriRuntime) {
       return;
     }
@@ -1517,7 +1541,10 @@ export function App() {
   }, [accessToken, activeView]);
 
   useEffect(() => {
-    if (accessToken === null || activeView !== "settings") {
+    if (accessToken === null) {
+      return;
+    }
+    if (activeView !== "settings" && settingsSummary !== null) {
       return;
     }
 
@@ -1525,6 +1552,26 @@ export function App() {
       setStatusMessage(error instanceof Error ? error.message : "Unable to load settings.");
     });
   }, [accessToken, activeView]);
+
+  useEffect(() => {
+    if (!activeFolderWatching) {
+      return;
+    }
+
+    void runWatchedFolderScan("auto");
+    const interval = window.setInterval(() => {
+      void runWatchedFolderScan("auto");
+    }, watchedFolderPollingIntervalMs);
+    return () => window.clearInterval(interval);
+  }, [
+    accessToken,
+    activeFileExtensions,
+    activeFileTypeByExtension,
+    activeFolderWatching,
+    machineId,
+    watchableFolders,
+    watchedFolders
+  ]);
 
   useEffect(() => {
     if (settingsSummary === null) {
@@ -2051,27 +2098,56 @@ export function App() {
   function saveWatchedFolders() {
     localStorage.setItem(watchedSettingsStorageKey, JSON.stringify(watchedFolders));
     setWatchedSettingsSaved(true);
+    setStatusMessage("Watched folders saved. Active watching will run while this app is open.");
   }
 
   async function scanWatchedFolders() {
+    await runWatchedFolderScan("manual");
+  }
+
+  async function runWatchedFolderScan(mode: "manual" | "auto") {
     if (!isTauriRuntime) {
-      setStatusMessage("Watched-folder scanning is available in the Tauri desktop app.");
+      if (mode === "manual") {
+        setStatusMessage("Watched-folder scanning is available in the Tauri desktop app.");
+      }
       return;
     }
     if (accessToken === null || machineId === null) {
-      setStatusMessage("Sign in and machine identity are required before checking watched folders.");
+      if (mode === "manual") {
+        setStatusMessage("Sign in and machine identity are required before checking watched folders.");
+      }
       return;
     }
     if (activeFileExtensions.length === 0) {
-      setStatusMessage("Enable at least one file type before checking watched folders.");
+      if (mode === "manual") {
+        setStatusMessage("Enable at least one file type before checking watched folders.");
+      }
+      return;
+    }
+    if (mode === "auto" && !watchedSettingsSaved) {
+      return;
+    }
+    if (watchableFolders.length === 0) {
+      if (mode === "manual") {
+        setStatusMessage("Enable at least one watched folder with watched and archive paths before scanning.");
+      }
+      return;
+    }
+    if (watchScanInFlightRef.current) {
+      if (mode === "manual") {
+        setStatusMessage("Watched-folder scan is already running.");
+      }
       return;
     }
 
+    watchScanInFlightRef.current = true;
     setWatchScanInFlight(true);
-    setStatusMessage(null);
+    if (mode === "manual") {
+      setStatusMessage(null);
+    }
     try {
       const candidates = await invoke<WatchedFileCandidate[]>("scan_watched_folders", {
-        folders: watchedFolders,
+        folders: watchableFolders,
         enabledExtensions: activeFileExtensions
       });
       setWatchedCandidates(candidates);
@@ -2079,10 +2155,25 @@ export function App() {
       for (const candidate of candidates) {
         await importWatchedCandidate(candidate);
       }
-      setStatusMessage(`${candidates.length} stable watched files processed.`);
+      setWatchedLastScanAt(new Date());
+      setWatchedLastProcessedCount(candidates.length);
+      if (mode === "manual" || candidates.length > 0) {
+        setStatusMessage(
+          mode === "auto"
+            ? `${candidates.length} watched file${candidates.length === 1 ? "" : "s"} imported automatically.`
+            : `${candidates.length} stable watched file${candidates.length === 1 ? "" : "s"} processed.`
+        );
+      }
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to check watched folders.");
+      setStatusMessage(
+        error instanceof Error
+          ? mode === "auto"
+            ? `Active folder watching paused: ${error.message}`
+            : error.message
+          : "Unable to check watched folders."
+      );
     } finally {
+      watchScanInFlightRef.current = false;
       setWatchScanInFlight(false);
     }
   }
@@ -3772,7 +3863,12 @@ export function App() {
                   <div className="detail-meta">
                     <span>Machine {machineId ?? "not loaded"}</span>
                     <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled</span>
+                    <span>{watchedFolderStatus}</span>
                     <span>{activeFileExtensions.length} active file types</span>
+                    <span>
+                      Last scan {watchedLastScanAt === null ? "not run" : formatRelativeTime(watchedLastScanAt)}
+                    </span>
+                    <span>{watchedLastProcessedCount} processed last scan</span>
                     <span>{watchedSettingsSaved ? "Settings saved" : "Unsaved settings allowed"}</span>
                   </div>
 

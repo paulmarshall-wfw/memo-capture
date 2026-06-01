@@ -520,7 +520,7 @@ Settings sections:
 - Watched folders and desktop-local paths
 - System diagnostics
 
-Settings must not expose a manual per-file import queue. Watched folders own standalone file ingestion, with a Check now action allowed only when it processes eligible enabled file types automatically.
+Settings must not expose a manual per-file import queue. Watched folders own standalone file ingestion. Saved enabled watched folders are actively polled by the native desktop app while it is open, and the Check now action is allowed only when it runs the same automatic processing path for eligible enabled file types.
 
 Operations section:
 
