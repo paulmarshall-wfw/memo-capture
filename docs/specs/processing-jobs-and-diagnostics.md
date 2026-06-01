@@ -175,7 +175,7 @@ Behavior:
 - store versioned derived transcript artifact
 - enqueue extraction/classification from transcript
 
-Current implementation note: `TRANSCRIPTION_PROVIDER=disabled` records a user-visible failure that leaves the item in `needs_review`; `TRANSCRIPTION_PROVIDER=local-dev` returns a deterministic development transcript and records provider/model metadata on the job.
+Current implementation note: `TRANSCRIPTION_PROVIDER=disabled` records a user-visible failure that leaves the item in `needs_review`; `TRANSCRIPTION_PROVIDER=local-dev` returns a deterministic development transcript and records provider/model metadata on the job. `TRANSCRIPTION_PROVIDER=whisper-cpp` runs the configured `whisper-cli` in CLI mode after converting source audio to 16 kHz mono WAV with `ffmpeg`; it requires `WHISPER_CPP_BINARY`, `WHISPER_CPP_MODEL_PATH`, `WHISPER_CPP_FFMPEG_BINARY`, language, thread, and timeout configuration.
 
 Failure:
 

@@ -220,6 +220,31 @@ export class WorkItemRepository {
     const row = result.rows[0];
     return row === undefined ? null : await this.findById(row.id);
   }
+
+  async applyMetadataExtraction(input: {
+    workItemId: string;
+    title: string;
+    body: string;
+    contributorText: string | null;
+    actorUserId: string | null;
+  }): Promise<WorkItemRecord | null> {
+    const result = await this.db.query<WorkItemRow>(
+      `update work_items
+       set
+         title = $2,
+         body = $3,
+         contributor_text = coalesce(contributor_text, $4),
+         workflow_item_version = workflow_item_version + 1,
+         updated_by = coalesce($5, updated_by),
+         updated_at = now()
+       where id = $1
+       returning *`,
+      [input.workItemId, input.title, input.body, input.contributorText, input.actorUserId]
+    );
+
+    const row = result.rows[0];
+    return row === undefined ? null : await this.findById(row.id);
+  }
 }
 
 export class AcceptedSnapshotRepository {

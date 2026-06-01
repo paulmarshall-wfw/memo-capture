@@ -360,6 +360,15 @@ interface SettingsSummary {
     healthStatus: string;
     runtimeProvider: string;
     runtimeModelName: string;
+    runtimeConfiguration: {
+      mode: string;
+      binaryPath: string;
+      modelPathConfigured: boolean;
+      ffmpegPath: string;
+      language: string;
+      threads: number;
+      timeoutMs: number;
+    } | null;
     updatedAt: string;
   }[];
   prompts: {
@@ -4413,6 +4422,13 @@ export function App() {
                             Runtime {provider.runtimeProvider}; model {provider.modelName ?? provider.runtimeModelName};
                             secret {provider.secretConfigured ? "configured" : "not configured"}
                           </p>
+                          {provider.runtimeConfiguration === null ? null : (
+                            <p>
+                              {provider.runtimeConfiguration.mode}; binary {provider.runtimeConfiguration.binaryPath};
+                              model {provider.runtimeConfiguration.modelPathConfigured ? "configured" : "not configured"};
+                              timeout {provider.runtimeConfiguration.timeoutMs}ms
+                            </p>
+                          )}
                         </div>
                         <label className="toggle-row">
                           <input

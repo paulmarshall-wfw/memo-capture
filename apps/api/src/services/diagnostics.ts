@@ -1,4 +1,6 @@
 import { MEMO_CAPTURE_EXPORT_SCHEMA_VERSION } from "@memo-capture/domain";
+import { spawn } from "node:child_process";
+import { access } from "node:fs/promises";
 import type { ApiConfig } from "../config.js";
 import type { Database } from "../db/types.js";
 import { ProcessingJobRepository, type ProcessingJobRecord } from "../repositories/jobs.js";
@@ -132,8 +134,9 @@ export class DiagnosticsService {
        from provider_configs
        order by provider_kind asc, provider_name asc`
     );
+    const runtimeChecks = await Promise.all(result.rows.map((row) => this.checkRuntimeProvider(row)));
     return {
-      providers: result.rows.map((row) => ({
+      providers: result.rows.map((row, index) => ({
         id: row.id,
         providerKind: row.provider_kind,
         providerName: row.provider_name,
@@ -143,6 +146,7 @@ export class DiagnosticsService {
         secretSource: row.secret_source,
         healthStatus: row.health_status,
         lastHealthCheckAt: row.last_health_check_at === null ? null : toIso(row.last_health_check_at),
+        runtime: runtimeChecks[index] ?? null,
         updatedAt: toIso(row.updated_at)
       }))
     };
@@ -249,6 +253,40 @@ export class DiagnosticsService {
           contentHash: row.content_hash,
           activatedAt: toIso(row.activated_at)
         };
+  }
+
+  private async checkRuntimeProvider(row: ProviderHealthRow): Promise<Record<string, unknown> | null> {
+    if (row.provider_kind !== "transcription" || row.provider_name !== "whisper-cpp") {
+      return null;
+    }
+
+    const [binary, ffmpeg, model] = await Promise.all([
+      checkCommand(this.config.whisperCpp.binaryPath, ["-h"]),
+      checkCommand(this.config.whisperCpp.ffmpegPath, ["-version"]),
+      this.config.whisperCpp.modelPath.trim() === ""
+        ? Promise.resolve({ ok: false, message: "WHISPER_CPP_MODEL_PATH is not configured." })
+        : checkPath(this.config.whisperCpp.modelPath)
+    ]);
+    const ok =
+      this.config.transcription.provider === "whisper-cpp" &&
+      this.config.whisperCpp.mode === "cli" &&
+      binary.ok &&
+      ffmpeg.ok &&
+      model.ok;
+
+    return {
+      ok,
+      runtimeProvider: this.config.transcription.provider,
+      mode: this.config.whisperCpp.mode,
+      modelName: this.config.transcription.modelName,
+      binaryPath: this.config.whisperCpp.binaryPath,
+      modelPathConfigured: this.config.whisperCpp.modelPath.trim() !== "",
+      ffmpegPath: this.config.whisperCpp.ffmpegPath,
+      language: this.config.whisperCpp.language,
+      threads: this.config.whisperCpp.threads,
+      timeoutMs: this.config.whisperCpp.timeoutMs,
+      checks: { binary, ffmpeg, model }
+    };
   }
 
   private async findSourceMemo(sourceMemoId: string): Promise<Record<string, unknown> | null> {
@@ -360,4 +398,49 @@ export class DiagnosticsService {
 
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+async function checkPath(filePath: string): Promise<{ ok: boolean; message: string }> {
+  try {
+    await access(filePath);
+    return { ok: true, message: "Path is accessible." };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Path is not accessible."
+    };
+  }
+}
+
+function checkCommand(command: string, args: string[]): Promise<{ ok: boolean; message: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const stderr: Buffer[] = [];
+    let settled = false;
+    const finish = (result: { ok: boolean; message: string }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish({ ok: false, message: "Command timed out." });
+    }, 3000);
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
+    child.on("error", (error) => {
+      finish({ ok: false, message: error.message });
+    });
+    child.on("close", (code) => {
+      finish({
+        ok: code === 0,
+        message: code === 0 ? "Command is available." : Buffer.concat(stderr).toString("utf8").trim()
+      });
+    });
+  });
 }

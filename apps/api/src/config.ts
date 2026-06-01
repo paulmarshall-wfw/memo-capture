@@ -29,6 +29,7 @@ export interface ApiConfig {
   objectStorage: ObjectStorageConfig;
   llm: LlmProviderConfig;
   transcription: TranscriptionProviderConfig;
+  whisperCpp: WhisperCppConfig;
   authMode: AuthMode;
   oidc: OidcConfig;
   localDevAuth: LocalDevAuthConfig;
@@ -39,7 +40,8 @@ export interface ObjectStorageConfig {
   localRoot: string;
 }
 
-export type TranscriptionProviderMode = "disabled" | "local-dev";
+export type TranscriptionProviderMode = "disabled" | "local-dev" | "whisper-cpp";
+export type WhisperCppMode = "cli" | "server";
 
 export type LlmProviderMode = "disabled" | "local-dev";
 
@@ -51,6 +53,17 @@ export interface LlmProviderConfig {
 export interface TranscriptionProviderConfig {
   provider: TranscriptionProviderMode;
   modelName: string;
+}
+
+export interface WhisperCppConfig {
+  mode: WhisperCppMode;
+  binaryPath: string;
+  modelPath: string;
+  ffmpegPath: string;
+  language: string;
+  threads: number;
+  timeoutMs: number;
+  serverUrl: string;
 }
 
 export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -80,6 +93,16 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     transcription: {
       provider: readTranscriptionProvider(env),
       modelName: readStringEnv(env, "TRANSCRIPTION_MODEL", "memo-capture-local-dev-transcriber-v1")
+    },
+    whisperCpp: {
+      mode: readWhisperCppMode(env),
+      binaryPath: readStringEnv(env, "WHISPER_CPP_BINARY", "whisper-cli"),
+      modelPath: readStringEnv(env, "WHISPER_CPP_MODEL_PATH", ""),
+      ffmpegPath: readStringEnv(env, "WHISPER_CPP_FFMPEG_BINARY", "ffmpeg"),
+      language: readStringEnv(env, "WHISPER_CPP_LANGUAGE", "en"),
+      threads: readNumberEnv(env, "WHISPER_CPP_THREADS", 4),
+      timeoutMs: readNumberEnv(env, "WHISPER_CPP_TIMEOUT_MS", 300000),
+      serverUrl: readStringEnv(env, "WHISPER_CPP_SERVER_URL", "")
     },
     authMode,
     oidc: {
@@ -111,11 +134,20 @@ function readLlmProvider(env: NodeJS.ProcessEnv): LlmProviderMode {
 
 function readTranscriptionProvider(env: NodeJS.ProcessEnv): TranscriptionProviderMode {
   const value = readStringEnv(env, "TRANSCRIPTION_PROVIDER", "disabled");
-  if (value === "disabled" || value === "local-dev") {
+  if (value === "disabled" || value === "local-dev" || value === "whisper-cpp") {
     return value;
   }
 
-  throw new Error("TRANSCRIPTION_PROVIDER must be disabled or local-dev.");
+  throw new Error("TRANSCRIPTION_PROVIDER must be disabled, local-dev, or whisper-cpp.");
+}
+
+function readWhisperCppMode(env: NodeJS.ProcessEnv): WhisperCppMode {
+  const value = readStringEnv(env, "WHISPER_CPP_MODE", "cli");
+  if (value === "cli" || value === "server") {
+    return value;
+  }
+
+  throw new Error("WHISPER_CPP_MODE must be cli or server.");
 }
 
 function resolveLocalRoot(value: string): string {

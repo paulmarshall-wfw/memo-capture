@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { ApiConfig } from "../config.js";
+import { spawn } from "node:child_process";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import type { ApiConfig, WhisperCppConfig } from "../config.js";
 import type { Database, Queryable } from "../db/types.js";
 import { ArtifactRepository } from "../repositories/artifacts.js";
 import { ProcessingJobRepository } from "../repositories/jobs.js";
@@ -142,9 +146,12 @@ async function storeTranscriptArtifact(input: {
   });
 }
 
-function createTranscriptionProvider(config: ApiConfig): TranscriptionProvider {
+export function createTranscriptionProvider(config: ApiConfig): TranscriptionProvider {
   if (config.transcription.provider === "local-dev") {
     return new LocalDevTranscriptionProvider(config.transcription.modelName);
+  }
+  if (config.transcription.provider === "whisper-cpp") {
+    return new WhisperCppCliTranscriptionProvider(config.transcription.modelName, config.whisperCpp);
   }
 
   return new DisabledTranscriptionProvider(config.transcription.modelName);
@@ -194,4 +201,246 @@ class LocalDevTranscriptionProvider implements TranscriptionProvider {
       latencyMs: Math.max(1, Date.now() - startedAt)
     };
   }
+}
+
+class WhisperCppCliTranscriptionProvider implements TranscriptionProvider {
+  readonly providerName = "whisper-cpp";
+
+  constructor(
+    readonly modelName: string,
+    private readonly config: WhisperCppConfig
+  ) {}
+
+  async transcribe(input: {
+    audio: Buffer;
+    mimeType: string;
+    filename: string | null;
+  }): Promise<{ text: string; latencyMs: number }> {
+    if (this.config.mode !== "cli") {
+      throw new TranscriptionJobError(
+        "whisper_cpp_mode_not_supported",
+        "Whisper.cpp server mode is configured, but only CLI mode is implemented.",
+        false
+      );
+    }
+    if (this.config.modelPath.trim() === "") {
+      throw new TranscriptionJobError(
+        "whisper_cpp_model_not_configured",
+        "Whisper.cpp model path is not configured.",
+        false
+      );
+    }
+    try {
+      await access(this.config.modelPath);
+    } catch (error) {
+      throw new TranscriptionJobError(
+        "whisper_cpp_model_not_found",
+        `Whisper.cpp model path is not accessible. ${error instanceof Error ? error.message : ""}`.trim(),
+        false
+      );
+    }
+
+    const startedAt = Date.now();
+    const workDir = await mkdtemp(path.join(tmpdir(), "memo-capture-whisper-"));
+    const inputPath = path.join(workDir, `source${extensionForAudio(input.filename, input.mimeType)}`);
+    const wavPath = path.join(workDir, "audio.wav");
+    const outputBase = path.join(workDir, "transcript");
+
+    try {
+      await writeFile(inputPath, input.audio);
+      await runProcess({
+        command: this.config.ffmpegPath,
+        args: [
+          "-y",
+          "-i",
+          inputPath,
+          "-ar",
+          "16000",
+          "-ac",
+          "1",
+          "-c:a",
+          "pcm_s16le",
+          wavPath
+        ],
+        timeoutMs: this.config.timeoutMs,
+        timeoutCode: "whisper_cpp_ffmpeg_timeout",
+        failureCode: "whisper_cpp_ffmpeg_failed",
+        failureMessage: "Unable to prepare audio for Whisper.cpp."
+      });
+      await runProcess({
+        command: this.config.binaryPath,
+        args: whisperArgs({
+          modelPath: this.config.modelPath,
+          wavPath,
+          outputBase,
+          language: this.config.language,
+          threads: this.config.threads
+        }),
+        timeoutMs: this.config.timeoutMs,
+        timeoutCode: "whisper_cpp_timeout",
+        failureCode: "whisper_cpp_failed",
+        failureMessage: "Whisper.cpp transcription failed."
+      });
+
+      return {
+        text: await readWhisperTranscript(outputBase),
+        latencyMs: Math.max(1, Date.now() - startedAt)
+      };
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }
+}
+
+function whisperArgs(input: {
+  modelPath: string;
+  wavPath: string;
+  outputBase: string;
+  language: string;
+  threads: number;
+}): string[] {
+  const args = [
+    "-m",
+    input.modelPath,
+    "-f",
+    input.wavPath,
+    "-of",
+    input.outputBase,
+    "-otxt",
+    "-oj",
+    "-nt"
+  ];
+  if (input.language.trim() !== "") {
+    args.push("-l", input.language.trim());
+  }
+  if (Number.isInteger(input.threads) && input.threads > 0) {
+    args.push("-t", String(input.threads));
+  }
+  return args;
+}
+
+async function readWhisperTranscript(outputBase: string): Promise<string> {
+  const jsonText = await readOptionalText(`${outputBase}.json`);
+  const jsonTranscript = jsonText === null ? null : parseWhisperJsonTranscript(jsonText);
+  if (jsonTranscript !== null) {
+    return normalizeTranscript(jsonTranscript);
+  }
+  const textTranscript = await readOptionalText(`${outputBase}.txt`);
+  if (textTranscript !== null) {
+    return normalizeTranscript(textTranscript);
+  }
+  throw new TranscriptionJobError(
+    "whisper_cpp_transcript_missing",
+    "Whisper.cpp did not produce a transcript output file.",
+    true
+  );
+}
+
+async function readOptionalText(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function parseWhisperJsonTranscript(value: string): string | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed === null || typeof parsed !== "object") {
+      return null;
+    }
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.text === "string") {
+      return record.text;
+    }
+    if (Array.isArray(record.transcription)) {
+      const text = record.transcription
+        .map((segment) =>
+          segment !== null && typeof segment === "object" && typeof (segment as Record<string, unknown>).text === "string"
+            ? String((segment as Record<string, unknown>).text)
+            : ""
+        )
+        .join(" ")
+        .trim();
+      return text === "" ? null : text;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function extensionForAudio(filename: string | null, mimeType: string): string {
+  const extension = filename === null ? "" : path.extname(filename).toLowerCase();
+  if (/^\.[a-z0-9]{1,12}$/.test(extension)) {
+    return extension;
+  }
+  if (mimeType === "audio/mpeg") {
+    return ".mp3";
+  }
+  if (mimeType === "audio/wav" || mimeType === "audio/wave" || mimeType === "audio/x-wav") {
+    return ".wav";
+  }
+  return ".m4a";
+}
+
+function runProcess(input: {
+  command: string;
+  args: string[];
+  timeoutMs: number;
+  timeoutCode: string;
+  failureCode: string;
+  failureMessage: string;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(input.command, input.args, { stdio: ["ignore", "ignore", "pipe"] });
+    const stderr: Buffer[] = [];
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+    }, Math.max(1000, input.timeoutMs));
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(
+        new TranscriptionJobError(
+          input.failureCode,
+          `${input.failureMessage} ${error.message}`,
+          false
+        )
+      );
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (timedOut) {
+        reject(
+          new TranscriptionJobError(
+            input.timeoutCode,
+            `${input.failureMessage} The process timed out.`,
+            true
+          )
+        );
+        return;
+      }
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new TranscriptionJobError(
+          input.failureCode,
+          `${input.failureMessage} ${Buffer.concat(stderr).toString("utf8").trim()}`.trim(),
+          input.failureCode.includes("ffmpeg") ? false : true
+        )
+      );
+    });
+  });
 }

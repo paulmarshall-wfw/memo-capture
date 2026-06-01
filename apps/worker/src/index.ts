@@ -10,6 +10,7 @@ import {
 } from "@memo-capture/api/src/repositories/jobs.js";
 import { ExportService } from "@memo-capture/api/src/services/exports.js";
 import { KeywordJobError, KeywordService } from "@memo-capture/api/src/services/keywords.js";
+import { MetadataExtractionService } from "@memo-capture/api/src/services/metadata-extraction.js";
 import { ObjectStorageService } from "@memo-capture/api/src/services/object-storage.js";
 import {
   TranscriptionJobError,
@@ -31,6 +32,7 @@ const supportedJobKinds = [
 const db = createPgDatabase(config.databaseUrl, logger);
 const exportsService = new ExportService(db, config);
 const keywordService = new KeywordService(db);
+const metadataExtractionService = new MetadataExtractionService(db);
 const transcriptionService = new TranscriptionService(db, new ObjectStorageService(config.objectStorage), config);
 let stopping = false;
 let lastHeartbeatAt = 0;
@@ -93,10 +95,13 @@ async function runClaimedJob(job: {
       });
     } else if (job.jobKind === "generate_export_batch" && job.exportBatchId !== null) {
       await exportsService.generateBatch(job.exportBatchId, job.id);
-    } else if (
-      (job.jobKind === "extract_memo_metadata" || job.jobKind === "generate_keywords") &&
-      job.workItemId !== null
-    ) {
+    } else if (job.jobKind === "extract_memo_metadata" && job.workItemId !== null) {
+      await metadataExtractionService.runExtractionJob({
+        jobId: job.id,
+        workItemId: job.workItemId,
+        sourceMemoId: job.sourceMemoId
+      });
+    } else if (job.jobKind === "generate_keywords" && job.workItemId !== null) {
       await keywordService.runKeywordJob({
         jobId: job.id,
         workItemId: job.workItemId,

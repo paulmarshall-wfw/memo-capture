@@ -4,37 +4,41 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-01T06:18:00Z
+- Created timestamp UTC: 2026-06-01T06:54:00Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: implement extensible user-configurable Media type and Parser type settings, then add removal controls for media types, parser types, and file extension mappings.
+- Session scope: finish watched-folder parser routing, add the Whisper.cpp transcription provider path, and replace `extract_memo_metadata` shortcut handling with a deterministic metadata extraction boundary.
 
 ### Checkpoint Status
 
-- Git HEAD: `97d32d8`
+- Git HEAD: `24a5200`
 - Working tree before this implementation: clean
 - Working tree after this handoff refresh: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/src/repositories/settings.ts`
-  - `apps/api/src/server.ts`
-  - `apps/api/src/services/app.ts`
+  - `.env.example`
+  - `apps/api/src/config.ts`
+  - `apps/api/src/repositories/work-items.ts`
+  - `apps/api/src/services/diagnostics.ts`
   - `apps/api/src/services/imports.ts`
   - `apps/api/src/services/settings.ts`
-  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/api/src/services/transcription.ts`
   - `apps/desktop/src/App.tsx`
-  - `apps/desktop/src/styles.css`
-  - `apps/desktop/tests/app-copy.test.ts`
+  - `apps/worker/src/index.ts`
   - `docs/completed-tasks.md`
-  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/env.md`
   - `docs/specs/ingestion-and-artifacts.md`
-  - `docs/specs/settings-and-audit.md`
+  - `docs/specs/processing-jobs-and-diagnostics.md`
   - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `apps/api/db/migrations/0012_media_parser_type_settings.sql`
-  - `apps/api/db/migrations/0013_audio_parser_implementation_labels.sql`
+  - `apps/api/db/migrations/0014_whisper_cpp_transcription_provider.sql`
+  - `apps/api/src/services/import-parser-registry.ts`
+  - `apps/api/src/services/metadata-extraction.ts`
+  - `apps/api/tests/import-parser-registry.test.ts`
+  - `apps/api/tests/metadata-extraction.test.ts`
+  - `apps/api/tests/transcription-provider.test.ts`
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
@@ -54,23 +58,23 @@
   - `apps/api/src/services/work-items.ts`
   - `apps/api/src/services/imports.ts`
   - `apps/api/src/services/settings.ts`
+  - `apps/api/src/services/transcription.ts`
+  - `apps/api/src/services/metadata-extraction.ts`
   - `apps/api/src/services/workflow-runtime.ts`
   - `apps/api/src/services/workflow-debugger.ts`
   - `apps/worker/src/index.ts`
   - `apps/desktop/src/App.tsx`
-  - `apps/desktop/src/styles.css`
-  - `apps/desktop/src-tauri/tauri.conf.json`
   - `handoff.md`
 - Last verification recorded by completed-task ledger:
-  - command: `npm run typecheck`; `npm test`; `npm run build`; `npm run verify`; `npm run db:migrate`; `git diff --check`; Chrome smoke
-  - result: passed for extensible Media/Parser settings plus delete controls; route tests and verification that bind `127.0.0.1` were run outside the sandbox after sandbox `EPERM` bind failures
-  - scope: backend media/parser registries, migrations `0012` and `0013`, Settings UI registry editors, file-extension media/parser selectors, delete endpoints/actions, compact table rows, ingestion support-status behavior, tests, docs
+  - command: `npm run typecheck`; `npm test`; `npm run build`; `npm run verify`; `npm run db:migrate`; `git diff --check`
+  - result: passed for parser routing, Whisper.cpp provider boundary, deterministic metadata extraction, docs, and migration `0014`; route tests and verification that bind `127.0.0.1` were run outside the sandbox after sandbox `EPERM` bind failures
+  - scope: watched import parser registry, Whisper.cpp runtime config/provider execution, metadata extraction service, Settings/diagnostics provider readiness, tests, docs
 - Verification for this handoff refresh:
   - command: `git status --short --branch`; `git rev-parse --short HEAD`; completed-task ledger update; handoff update
   - result: passed for checkpoint/documentation inspection
-  - note: temporary API/Vite servers started for Chrome verification were stopped afterward.
+  - note: no native Tauri smoke was run in this refresh.
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: the repo was clean at `HEAD 97d32d8` before the implementation; all dirty files listed above are intentional outputs from this slice and are grounded in current Git status, verification, completed-task entries, source/docs changes, and Chrome smoke evidence.
+- Safe-to-continue basis: the repo was clean at `HEAD 24a5200` before the implementation; all dirty files listed above are intentional outputs from this slice and are grounded in current Git status, verification, completed-task entries, source/docs changes, and migration evidence.
 - Next checkpoint action: review this implementation and commit it if acceptable.
 
 ## 2. Executive Summary
@@ -86,6 +90,9 @@ Memo Capture is a Tauri desktop app with a TypeScript API, TypeScript worker, Po
 - AI expansion boundary with local-dev LLM provider, strict structured output validation, suggestions, accept/dismiss flows, provider settings, and audit records.
 - Settings, Projects, and Audit UI refinements: Projects is a primary page, watched-folder settings live under Settings, Audit is a top-level page to the right of Settings, project rows are compact list rows, and Media type / Parser type registries are user-configurable from Settings.
 - Extensible media/parser settings are now backend-owned. File extensions map to configurable media and parser records; media, parser, and file type rows can be removed from Settings when dependency rules allow it; future image/PDF/transcription-parser options can be listed with `not_supported_yet` status without code changes just to appear in Settings.
+- Watched import parser routing is centralized in the backend parser registry. Audio file types still map to the generic `audio-transcription` parser, while Whisper.cpp is selected as a transcription provider through runtime/provider configuration.
+- Whisper.cpp CLI transcription support is implemented behind `TRANSCRIPTION_PROVIDER=whisper-cpp`; it normalizes audio through `ffmpeg`, runs `whisper-cli`, stores derived transcript artifacts, and records provider/model/latency metadata through the existing job path.
+- `extract_memo_metadata` now has a deterministic metadata extraction boundary instead of being handled as keyword generation directly; it normalizes title/body, suggests contributor/project metadata for review, and writes generated tags.
 - Feature groups and durable project Context have been removed from the V1 domain/API/export/UI contract. Below-project grouping is now flat tags/keywords plus derived tag statistics/co-occurrence metadata.
 
 The app is still not feature-complete. The most important remaining gaps are a direct create-memo UI, stronger extraction/classification suggestions for projects/contributors, workflow Operations UI, global Jobs/System Diagnostics UI, fuller tag/contributor/admin management, production transcription/LLM provider integrations, production desktop auth, S3-compatible object storage, packaging/release hardening, and actual image/PDF/OCR processing.
@@ -122,13 +129,15 @@ Definition of done for the next completion push:
 - Work queue rows/details support workflow bucket loading, item selection, editing, runtime actions, tag chips, ranked tag suggestions, and improved row/detail layout from the latest UI pass.
 - Projects page is a dense primary page with project create/edit/deactivate behavior, inline draft-row creation, compact project rows, no visible slugs, and Synopsis backed by project description storage.
 - Settings contains provider, prompt, watched-folder, media type, parser type, file type, and export contract details. Watched-folder settings and scanned watched-file candidates live under Settings.
-- Media types and parser types are backend-owned user-configurable registries with support status `active`, `inactive`, or `not_supported_yet`; seeded records include media `text`, `audio`, `image`, `pdf` and parsers `plain-text`, `markdown`, `audio-transcription`, `whisper-cpp`, and `faster-whisper`.
+- Media types and parser types are backend-owned user-configurable registries with support status `active`, `inactive`, or `not_supported_yet`; seeded records include media `text`, `audio`, `image`, `pdf` and parsers `plain-text`, `markdown`, `audio-transcription`, plus deprecated provider-marker rows for `whisper-cpp` and `faster-whisper`.
 - File type settings map extensions to configurable Media type and Parser type records. Existing audio mappings migrate from parser key `audio` to visible parser key `audio-transcription`.
 - Media type delete is blocked while parser or file type rows reference that media key. Parser type delete is blocked while file type rows reference that parser key. File type rows can be deleted directly.
 - Audit page renders compact user-facing audit rows and the runtime event-journal debugger.
 - Accepted snapshots and exports work through backend-owned artifacts and export batches.
 - Watched text/audio ingestion exists through native Tauri commands and backend upload/finalize/archive-result APIs.
-- Watched import finalization uses media/parser registry status: active text parsers keep the current text extraction path, active audio plus `audio-transcription` queues `transcribe_audio`, unsupported parsers import the artifact and create a `needs_review` parser-support work item with no processing job, and unsupported media blocks watched-folder import for that extension.
+- Watched import finalization uses the backend parser registry plus media/parser setting status: active text parsers keep the current text extraction path, active audio plus `audio-transcription` queues `transcribe_audio`, unsupported parsers import the artifact and create a `needs_review` parser-support work item with no processing job, and unsupported media blocks watched-folder import for that extension.
+- `TRANSCRIPTION_PROVIDER=whisper-cpp` is implemented in CLI mode. It writes source audio to a temp directory outside the repo, converts it to 16 kHz mono WAV with `ffmpeg`, runs `whisper-cli`, reads JSON/text transcript output, stores a derived transcript artifact, updates the source memo transcript/body if appropriate, and queues metadata extraction.
+- `extract_memo_metadata` is handled by `MetadataExtractionService`, which deterministically normalizes title/body, suggests contributor and project metadata for review, and stores generated tags.
 - Audio playback, failed-transcription retry, and manual transcript recovery are implemented.
 - Backend workflow runtime operations, workflow debugger controls, and runtime journal events are implemented.
 - Local-dev AI expansion works through a deterministic provider boundary with structured JSON validation.
@@ -146,7 +155,7 @@ Definition of done for the next completion push:
 - AI expansion works through the local-dev provider boundary; production LLM provider adapters and full provider configuration are not implemented.
 - Audit event display is readable and compact, but old/sparse audit events may still fall back to generic labels and date/time only.
 - Settings exposes several configuration summaries and some editors, but many canonical settings are not editable in UI yet.
-- Parser/provider separation is explicit in the data model: `audio-transcription` is the current generic parser type retained for existing mappings; Whisper.cpp and Faster-Whisper are modeled as future specific audio transcription parser implementations and do not yet run transcription.
+- Parser/provider separation is explicit in the data model: `audio-transcription` is the file parser type retained for audio mappings; Whisper.cpp is now a transcription provider selected through runtime config and Settings diagnostics; Faster-Whisper remains a future optional provider.
 - Object storage is backend-mediated, but the current adapter is local filesystem-backed rather than S3/MinIO-backed.
 - Backend OIDC token validation exists, but desktop production sign-in/token storage/refresh is not complete.
 
@@ -248,9 +257,10 @@ Definition of done for the next completion push:
 
 #### Providers And AI/Transcription
 
-- Implement production transcription provider adapters:
-  - Whisper.cpp and Faster-Whisper provider implementations behind the generic `audio-transcription` parser direction if selected later
-  - actual external or local/NAS transcription provider support
+- Extend production transcription provider support:
+  - install/configure a real local `whisper-cli` binary and numbered model file on target machines
+  - optional future `whisper-server` mode for local/NAS transcription
+  - optional Faster-Whisper provider for GPU/NAS workloads
   - model selection/configuration
   - secret handling via environment or secure configuration
   - provider/model snapshot on job creation
@@ -318,14 +328,15 @@ Definition of done for the next completion push:
 - `npm test`: passed outside the sandbox after route tests needed local bind access.
 - `npm run build`: passed.
 - `npm run verify`: passed outside the sandbox.
-- `npm run db:migrate`: applied `0012_media_parser_type_settings` earlier in the slice, then applied `0013_audio_parser_implementation_labels` after preserving the applied `0012` checksum.
+- `npm run db:migrate`: applied `0014_whisper_cpp_transcription_provider` after a sandbox IPC `EPERM`; final rerun outside the sandbox succeeded and skipped `0001` through `0014`.
 - `git diff --check`: passed.
-- Chrome smoke of Settings: passed for Media types, Parser types, remove controls for media/parser/file rows, compact table rows, visible `Audio transcription`, visible Whisper.cpp/Faster-Whisper parser implementation rows, and file-extension media/parser selectors.
+- Tests added for parser routing, deterministic metadata extraction, and the Whisper.cpp CLI provider success/configuration/timeout/empty-output paths.
 
 ### Not Yet Verified In This Handoff Refresh
 
-- Native Tauri smoke or rebuild after the delete-control Settings UI changes.
-- Full watched-folder import through the native app after this specific registry refactor.
+- Native Tauri smoke or rebuild after the Whisper.cpp/provider diagnostics changes.
+- Real Whisper.cpp transcription against an actual installed `whisper-cli` binary and model file. This machine appears capable of running it locally (`arm64`, macOS `26.5`, Xcode Metal compiler and `ffmpeg` present), but `whisper-cli`, `whisper-server`, and `cmake` are not installed on PATH.
+- Full watched-folder text/audio import through the native app after this provider/routing refactor.
 
 ## 5. Constraints To Preserve
 
@@ -336,7 +347,7 @@ Definition of done for the next completion push:
 - Desktop clients must not connect directly to Postgres or object storage.
 - Backend settings are canonical; watched-folder and archive paths are desktop-local settings.
 - Media type and Parser type options are user-configurable registries; unsupported future options should remain visible with status instead of being hidden.
-- Parser/provider separation must be preserved: `audio-transcription` is the current generic audio parser type, while Whisper.cpp/Faster-Whisper are future specific audio transcription parser implementations.
+- Parser/provider separation must be preserved: `audio-transcription` is the current generic audio parser type, while Whisper.cpp/Faster-Whisper are transcription providers selected outside file-extension parser mapping.
 - Workflow actions, buckets, visibility, terminality, and reopen behavior should come from the active workflow definition wherever possible.
 - The app stores only the active workflow definition bundle; rollback requires re-importing a known-good external bundle.
 - V1 blocks workflow activations that require app-code migrations.

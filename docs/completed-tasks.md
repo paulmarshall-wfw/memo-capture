@@ -174,3 +174,13 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Rebuilt the macOS Tauri `.app` bundle after adding media/parser/file type removal controls.
   Verification: `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed and produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app` with timestamp `Jun 1 16:21:40 2026`.
   Traceability: branch `main`, base HEAD `97d32d8`; changed files include `docs/completed-tasks.md`, with native build output under `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+
+- Task: Complete watched-folder parser routing and add Whisper.cpp transcription provider
+  Outcome: Centralized watched import parser routing, clarified audio-transcription as the file parser and Whisper.cpp as the transcription provider, added a `whisper-cpp` CLI provider that normalizes audio through `ffmpeg`, stores transcript artifacts through the existing job flow, replaced `extract_memo_metadata` shortcut handling with a deterministic metadata extraction service, surfaced Whisper.cpp runtime readiness in Settings/diagnostics, and documented the new provider configuration.
+  Verification: `npm run typecheck` passed; `npm test` passed outside the sandbox after route tests needed local bind access; `npm run build` passed; `npm run verify` passed outside the sandbox; `npm run db:migrate` applied `0014_whisper_cpp_transcription_provider`; `git diff --check` passed.
+  Traceability: branch `main`, base HEAD `24a5200`; changed files include `apps/api/db/migrations/0014_whisper_cpp_transcription_provider.sql`, `apps/api/src/services/import-parser-registry.ts`, `apps/api/src/services/transcription.ts`, `apps/api/src/services/metadata-extraction.ts`, `apps/api/src/services/imports.ts`, `apps/api/src/services/diagnostics.ts`, `apps/api/src/config.ts`, `apps/worker/src/index.ts`, `apps/desktop/src/App.tsx`, API tests, `.env.example`, `docs/env.md`, `docs/specs/ingestion-and-artifacts.md`, `docs/specs/processing-jobs-and-diagnostics.md`, and `docs/completed-tasks.md`.
+
+- Task: Rebuild native Memo Capture app after Whisper.cpp provider work
+  Outcome: Rebuilt the macOS Tauri `.app` bundle after the watched-folder parser routing and Whisper.cpp provider implementation.
+  Verification: `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed and produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app` with timestamp `Jun 1 17:07:58 2026`.
+  Traceability: branch `main`, base HEAD `24a5200`; changed files include `docs/completed-tasks.md`, with native build output under `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.

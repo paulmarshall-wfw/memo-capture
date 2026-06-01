@@ -552,6 +552,18 @@ function serializeProvider(provider: ProviderConfigRow, config: ApiConfig): Reco
     healthStatus: provider.health_status,
     runtimeProvider,
     runtimeModelName,
+    runtimeConfiguration:
+      provider.provider_kind === "transcription" && provider.provider_name === "whisper-cpp"
+        ? {
+            mode: config.whisperCpp.mode,
+            binaryPath: config.whisperCpp.binaryPath,
+            modelPathConfigured: config.whisperCpp.modelPath.trim() !== "",
+            ffmpegPath: config.whisperCpp.ffmpegPath,
+            language: config.whisperCpp.language,
+            threads: config.whisperCpp.threads,
+            timeoutMs: config.whisperCpp.timeoutMs
+          }
+        : null,
     lastHealthCheckAt: provider.last_health_check_at === null ? null : toIso(provider.last_health_check_at),
     updatedAt: toIso(provider.updated_at)
   };

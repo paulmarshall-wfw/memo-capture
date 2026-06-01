@@ -23,6 +23,11 @@ import {
 import { WorkItemRepository } from "../repositories/work-items.js";
 import type { ObjectStorageService } from "./object-storage.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
+import {
+  resolveWatchedImportParser,
+  type ActiveWatchedFileType,
+  type WatchedImportParserHandler
+} from "./import-parser-registry.js";
 
 interface CreateUploadSessionRequest {
   machineId: string;
@@ -214,11 +219,12 @@ export class ImportService {
         sourceType: session.sourceType,
         originalFilename: session.originalFilename
       });
-      const finalize = hasImplementedParser(support)
-        ? session.sourceType === "watched_audio_file"
-          ? finalizeWatchedAudioImport
-          : finalizeWatchedTextImport
-        : finalizeUnsupportedWatchedImport;
+      const finalize = finalizerForHandler(
+        resolveWatchedImportParser({
+          support,
+          sourceType: session.sourceType
+        })
+      );
 
       return finalize({
         client,
@@ -726,12 +732,6 @@ async function assertSupportedWatchedImport(db: Queryable, input: CreateUploadSe
   await assertActiveWatchedFileType(db, input);
 }
 
-interface ActiveWatchedFileType {
-  fileType: FileTypeSettingRow;
-  mediaType: MediaTypeSettingRow;
-  parserType: ParserTypeSettingRow | null;
-}
-
 async function assertActiveWatchedFileType(
   db: Queryable,
   input: Pick<CreateUploadSessionRequest, "sourceType" | "originalFilename">
@@ -759,14 +759,14 @@ async function assertActiveWatchedFileType(
   return { fileType, mediaType, parserType };
 }
 
-function hasImplementedParser(input: ActiveWatchedFileType): boolean {
-  if (input.parserType === null || input.parserType.capability_state !== "active") {
-    return false;
+function finalizerForHandler(handler: WatchedImportParserHandler | null) {
+  if (handler === "audio-transcription") {
+    return finalizeWatchedAudioImport;
   }
-  if (input.fileType.media_kind === "audio") {
-    return input.parserType.parser_key === "audio-transcription";
+  if (handler === "text") {
+    return finalizeWatchedTextImport;
   }
-  return input.fileType.media_kind === "text" && ["markdown", "plain-text"].includes(input.parserType.parser_key);
+  return finalizeUnsupportedWatchedImport;
 }
 
 function buildUnsupportedFileTypeBody(
