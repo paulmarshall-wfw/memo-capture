@@ -220,7 +220,7 @@ Input:
 
 - work item fields
 - source memo/body
-- project context
+- project synopsis
 - prompt version
 
 Output:

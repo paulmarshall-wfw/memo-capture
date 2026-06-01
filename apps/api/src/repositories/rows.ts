@@ -27,7 +27,6 @@ export interface ProjectRow extends Record<string, unknown> {
   slug: string;
   name: string;
   description: string;
-  context: string;
   is_active: boolean;
   created_at: Date | string;
   updated_at: Date | string;
@@ -38,7 +37,6 @@ export interface ProjectRecord {
   slug: string;
   name: string;
   description: string;
-  context: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -100,7 +98,6 @@ export function mapProject(row: ProjectRow): ProjectRecord {
     slug: row.slug,
     name: row.name,
     description: row.description,
-    context: row.context,
     isActive: row.is_active,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)

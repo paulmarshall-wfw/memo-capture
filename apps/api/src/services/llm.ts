@@ -12,7 +12,6 @@ export interface WorkItemExpansionContext {
     id: string | null;
     name: string | null;
     description: string | null;
-    context: string | null;
   };
   workItem: {
     id: string;

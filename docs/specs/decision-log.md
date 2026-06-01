@@ -325,7 +325,7 @@ Default assumption: add a lightweight `worker_heartbeats` table if diagnostics n
 - Unsupported configured file types remain inactive until parser support exists.
 - V1 has no delete or privacy purge path.
 - Local desktop cache uses OS-user protection only.
-- Object keys may expose sanitized filename/project context for operator debugging.
+- Object keys may expose sanitized filename/project slug or name for operator debugging.
 - The app does not expose active workflow bundle download.
 
 ## Review Cadence

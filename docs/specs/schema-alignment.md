@@ -61,7 +61,7 @@ non-empty database:
 | Area | Bootstrap state | Target migration action |
 | --- | --- | --- |
 | `app_users` | `oidc_subject` is globally unique; issuer and seen timestamps are absent. | Add `oidc_issuer`, `first_seen_at`, `last_seen_at`; replace global subject uniqueness with unique `(oidc_issuer, oidc_subject)`; preserve current rows with a local-dev issuer value. |
-| `projects` | No slug, context, or actor columns. | Add `slug`, `context`, `created_by`, `updated_by`; backfill slug from name; enforce unique slug and name. |
+| `projects` | No slug or actor columns. | Add `slug`, `created_by`, `updated_by`; backfill slug from name; enforce unique slug and name. |
 | `feature_groups` | Present as a below-project grouping table. | Convert assignments into normal tags, then remove the table and feature-group columns from the V1 contract. |
 | `contributors` | Display name only, no aliases or merge path. | Add merge/actor columns and create `contributor_aliases`; do not require global display-name uniqueness as the only identity mechanism. |
 | `artifacts` | No artifact kind, bucket, layout version, or actor; original filename is required. | Add `artifact_kind`, `bucket`, `layout_version`, `created_by`; allow original filename to be nullable for generated artifacts; add content-hash and kind/date indexes. |

@@ -18,8 +18,7 @@ test("work item expansion prompt starts with freeform text and uses text-only co
     project: {
       id: "project-1",
       name: "Memo Capture",
-      description: "Capture project synopsis.",
-      context: "Internal project context."
+      description: "Capture project synopsis."
     },
     workItem: {
       id: "work-item-1",
@@ -41,5 +40,5 @@ test("work item expansion prompt starts with freeform text and uses text-only co
   assert.match(prompt, /Project synopsis:\nCapture project synopsis\./);
   assert.match(prompt, /Source type: watched_audio_file/);
   assert.match(prompt, /Stored transcript text only\./);
-  assert.doesNotMatch(prompt, /Internal project context\./);
+  assert.doesNotMatch(prompt, /Project context/);
 });

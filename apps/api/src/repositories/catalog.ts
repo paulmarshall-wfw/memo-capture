@@ -14,7 +14,6 @@ export interface ProjectInput {
   name: string;
   slug?: string | null | undefined;
   description?: string | null | undefined;
-  context?: string | null | undefined;
   actorUserId: string;
 }
 
@@ -22,7 +21,6 @@ export interface ProjectPatchInput {
   name?: string | undefined;
   slug?: string | null | undefined;
   description?: string | undefined;
-  context?: string | undefined;
   actorUserId: string;
 }
 
@@ -45,20 +43,18 @@ export class ProjectRepository {
          slug,
          name,
          description,
-         context,
          created_by,
          updated_by,
          created_at,
          updated_at
        )
-       values ($1, $2, $3, $4, $5, $6, $6, now(), now())
+       values ($1, $2, $3, $4, $5, $5, now(), now())
        returning *`,
       [
         randomUUID(),
         normalizeSlug(input.slug ?? input.name),
         input.name.trim(),
         input.description ?? "",
-        input.context ?? "",
         input.actorUserId
       ]
     );
@@ -73,8 +69,7 @@ export class ProjectRepository {
          name = coalesce($2, name),
          slug = coalesce($3, slug),
          description = coalesce($4, description),
-         context = coalesce($5, context),
-         updated_by = $6,
+         updated_by = $5,
          updated_at = now()
        where id = $1
        returning *`,
@@ -83,7 +78,6 @@ export class ProjectRepository {
         input.name?.trim() ?? null,
         nextSlug,
         input.description ?? null,
-        input.context ?? null,
         input.actorUserId
       ]
     );

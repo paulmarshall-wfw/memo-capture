@@ -18,7 +18,7 @@ Keeping canonical classification, prompt, provider, and export settings in the b
 ## Backend-Owned Settings
 
 - projects
-- project descriptions/context
+- project descriptions/synopses
 - tag and keyword grouping thresholds
 - contributors and contributor aliases
 - supported file type entries and capability state
@@ -403,7 +403,7 @@ Primary navigation pages:
 - Settings
 - Audit
 
-The Projects page owns project create/edit/deactivate controls. Each project exposes name, slug, Synopsis, context, active state, and updated timestamp. Synopsis is stored on the existing project description field.
+The Projects page owns project create/edit/deactivate controls. Each project exposes name, slug, Synopsis, active state, and updated timestamp. Synopsis is stored on the existing project description field.
 
 Settings sections:
 

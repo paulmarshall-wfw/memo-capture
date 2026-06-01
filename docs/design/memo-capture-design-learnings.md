@@ -188,7 +188,7 @@ AI expansion sends structured context to the configured LLM service:
 
 - base prompt
 - prompt version
-- project context
+- project synopsis
 - current work-item fields
 - source memo/body as appropriate
 
@@ -369,7 +369,7 @@ Backend settings are canonical.
 Backend-owned settings:
 
 - projects
-- project descriptions/context
+- project descriptions/synopses
 - tag/keyword grouping thresholds
 - contributor list
 - supported file type entries and capability state
@@ -845,7 +845,7 @@ Initial focused specs:
 - Unsupported file types can be configured but must remain inactive until parser support exists.
 - V1 has no delete or privacy purge path, so managed content retention is intentionally strict.
 - Local desktop cache uses OS-user protection only.
-- Object keys may expose sanitized filename/project context for operator debugging.
+- Object keys may expose sanitized filename/project slug or name for operator debugging.
 - The app does not retain old workflow bundle bodies and does not expose active bundle download; operators must preserve workflow bundles outside the app.
 
 ## Remaining Spec Work

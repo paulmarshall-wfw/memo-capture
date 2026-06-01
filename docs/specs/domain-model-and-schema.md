@@ -102,7 +102,6 @@ Required columns:
 - `slug text not null`
 - `name text not null`
 - `description text not null default ''`
-- `context text not null default ''`
 - `is_active boolean not null default true`
 - `created_by uuid references app_users(id)`
 - `updated_by uuid references app_users(id)`
@@ -429,8 +428,7 @@ Create request:
 {
   "name": "Memo Capture",
   "slug": "memo-capture",
-  "description": "string",
-  "context": "string"
+  "description": "string"
 }
 ```
 

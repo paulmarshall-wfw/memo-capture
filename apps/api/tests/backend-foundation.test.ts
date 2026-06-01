@@ -756,7 +756,6 @@ function captureRouteServices(): AppServices {
     slug: "memo-capture",
     name: "Memo Capture",
     description: "",
-    context: "",
     isActive: true,
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"

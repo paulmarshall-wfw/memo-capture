@@ -160,8 +160,7 @@ function parseProjectCreateBody(body: unknown) {
   return {
     name: assertNonEmptyString(record.name, "name"),
     slug: optionalString(record.slug, "slug"),
-    description: optionalString(record.description, "description") ?? "",
-    context: optionalString(record.context, "context") ?? ""
+    description: optionalString(record.description, "description") ?? ""
   };
 }
 
@@ -171,8 +170,7 @@ function parseProjectPatchBody(body: unknown) {
     name: record.name === undefined ? undefined : assertNonEmptyString(record.name, "name"),
     slug: record.slug === undefined ? undefined : optionalString(record.slug, "slug"),
     description:
-      record.description === undefined ? undefined : optionalString(record.description, "description") ?? "",
-    context: record.context === undefined ? undefined : optionalString(record.context, "context") ?? ""
+      record.description === undefined ? undefined : optionalString(record.description, "description") ?? ""
   };
 }
 

@@ -73,8 +73,7 @@ export class AiExpansionService {
       project: {
         id: project?.id ?? null,
         name: project?.name ?? null,
-        description: project?.description ?? null,
-        context: project?.context ?? null
+        description: project?.description ?? null
       },
       workItem: {
         id: workItem.id,

@@ -136,7 +136,6 @@ interface Project {
   slug: string;
   name: string;
   description: string;
-  context: string;
   isActive: boolean;
   updatedAt: string;
 }
@@ -145,7 +144,6 @@ interface ProjectFormState {
   name: string;
   slug: string;
   description: string;
-  context: string;
 }
 
 interface Contributor {
@@ -494,8 +492,7 @@ function createEmptyProjectForm(): ProjectFormState {
   return {
     name: "",
     slug: "",
-    description: "",
-    context: ""
+    description: ""
   };
 }
 
@@ -503,8 +500,7 @@ function createProjectForm(project: Project): ProjectFormState {
   return {
     name: project.name,
     slug: project.slug,
-    description: project.description,
-    context: project.context
+    description: project.description
   };
 }
 
@@ -1268,7 +1264,7 @@ export function App() {
     activeView === "exports"
       ? "Accepted snapshots and generated export batches."
       : activeView === "projects"
-      ? "Project catalog, synopsis, slug, and context."
+      ? "Project catalog, synopsis, status, and stable slug."
       : activeView === "audit"
       ? "Application audit history and workflow runtime event-journal debugging."
       : activeView === "settings"
@@ -2328,8 +2324,7 @@ export function App() {
         body: JSON.stringify({
           name: newProjectDraft.name,
           slug: newProjectDraft.slug,
-          description: newProjectDraft.description,
-          context: newProjectDraft.context
+          description: newProjectDraft.description
         })
       });
       setNewProjectDraft(createEmptyProjectForm());
@@ -2363,8 +2358,7 @@ export function App() {
         body: JSON.stringify({
           name: projectDraft.name,
           slug: projectDraft.slug,
-          description: projectDraft.description,
-          context: projectDraft.context
+          description: projectDraft.description
         })
       });
       await loadProjects(accessToken);
@@ -3218,15 +3212,6 @@ export function App() {
                     rows={3}
                   />
                 </div>
-                <div className="field-group project-editor-wide">
-                  <label htmlFor="new-project-context">Context</label>
-                  <textarea
-                    id="new-project-context"
-                    value={newProjectDraft.context}
-                    onChange={(event) => updateNewProjectDraft("context", event.currentTarget.value)}
-                    rows={4}
-                  />
-                </div>
               </div>
 
               <div className="detail-actions">
@@ -3328,17 +3313,6 @@ export function App() {
                               updateProjectDraft(project.id, "description", event.currentTarget.value)
                             }
                             rows={3}
-                          />
-                        </div>
-                        <div className="field-group project-editor-wide">
-                          <label htmlFor={`project-${project.id}-context`}>Context</label>
-                          <textarea
-                            id={`project-${project.id}-context`}
-                            value={projectDraft.context}
-                            onChange={(event) =>
-                              updateProjectDraft(project.id, "context", event.currentTarget.value)
-                            }
-                            rows={4}
                           />
                         </div>
                       </div>
