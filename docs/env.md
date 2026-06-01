@@ -48,10 +48,10 @@ See `.env.example` for the current non-secret template.
 - `TRANSCRIPTION_PROVIDER`: configured transcription provider. Supported values are `disabled`, `local-dev`, and `whisper-cpp`. Use `whisper-cpp` for local V1 transcription once the binary and model are configured.
 - `TRANSCRIPTION_MODEL`: model label recorded on transcription jobs, such as `base.en`.
 - `WHISPER_CPP_MODE`: `cli` for the current implementation. `server` is reserved for a future `whisper-server` adapter.
-- `WHISPER_CPP_BINARY`: path or command name for `whisper-cli`.
+- `WHISPER_CPP_BINARY`: path or command name for the Whisper.cpp CLI binary, such as `/opt/homebrew/bin/whisper-cpp`.
 - `WHISPER_CPP_MODEL_PATH`: path to the numbered/explicit Whisper model file, for example `ggml-base.en.bin`.
 - `WHISPER_CPP_FFMPEG_BINARY`: path or command name for `ffmpeg`, used to normalize audio before transcription.
-- `WHISPER_CPP_LANGUAGE`: language passed to `whisper-cli`, defaulting to `en`.
-- `WHISPER_CPP_THREADS`: thread count passed to `whisper-cli`.
+- `WHISPER_CPP_LANGUAGE`: language passed to the Whisper.cpp CLI, defaulting to `en`.
+- `WHISPER_CPP_THREADS`: thread count passed to the Whisper.cpp CLI.
 - `WHISPER_CPP_TIMEOUT_MS`: timeout for audio normalization and transcription subprocesses.
 - `WHISPER_CPP_SERVER_URL`: reserved for future server mode.

@@ -184,3 +184,8 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Rebuilt the macOS Tauri `.app` bundle after the watched-folder parser routing and Whisper.cpp provider implementation.
   Verification: `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed and produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app` with timestamp `Jun 1 17:07:58 2026`.
   Traceability: branch `main`, base HEAD `24a5200`; changed files include `docs/completed-tasks.md`, with native build output under `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+
+- Task: Set up local Whisper.cpp runtime
+  Outcome: Installed local build/audio tooling, cloned `whisper.cpp` pinned to `v1.8.5`, built it with Metal support for Apple Silicon, downloaded the `ggml-base.en.bin` model, and added PATH-accessible `whisper-cpp` and `whisper-cpp-server` commands.
+  Verification: `cmake 4.3.3` and `ffmpeg 8.1.1` were available; `whisper.cpp` built at commit `f24588a`; `ggml-base.en.bin` SHA256 was `a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002`; `whisper-cpp -m models/ggml-base.en.bin -f samples/jfk.wav -otxt` transcribed the JFK sample successfully with Metal on the M2 Max.
+  Traceability: branch `main`, HEAD `7fb5d8a`; repo change is this `docs/completed-tasks.md` entry, with local runtime installed under `/Users/paulmarshall/Software Development/whisper.cpp` and symlinks under `/opt/homebrew/bin/`.

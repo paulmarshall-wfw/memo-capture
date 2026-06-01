@@ -48,8 +48,16 @@ const baseEnv = {
   MEMO_CAPTURE_LOCAL_DEV_AUTH_DISPLAY_NAME: "Local Dev User",
   LLM_PROVIDER: "disabled",
   LLM_MODEL: "memo-capture-local-dev-expander-v1",
-  TRANSCRIPTION_PROVIDER: "disabled",
-  TRANSCRIPTION_MODEL: "memo-capture-local-dev-transcriber-v1"
+  TRANSCRIPTION_PROVIDER: "whisper-cpp",
+  TRANSCRIPTION_MODEL: "base.en",
+  WHISPER_CPP_MODE: "cli",
+  WHISPER_CPP_BINARY: "/opt/homebrew/bin/whisper-cpp",
+  WHISPER_CPP_MODEL_PATH: "/Users/paulmarshall/Software Development/whisper.cpp/models/ggml-base.en.bin",
+  WHISPER_CPP_FFMPEG_BINARY: "/opt/homebrew/bin/ffmpeg",
+  WHISPER_CPP_LANGUAGE: "en",
+  WHISPER_CPP_THREADS: "4",
+  WHISPER_CPP_TIMEOUT_MS: "300000",
+  WHISPER_CPP_SERVER_URL: ""
 };
 
 function log(message) {
