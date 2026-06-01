@@ -28,3 +28,11 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /label="Weak"/);
   assert.doesNotMatch(appSource, />\s*Import\s*</);
 });
+
+test("watched imports use filesystem creation time before modified time", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+
+  assert.match(appSource, /createdAt: string;/);
+  assert.match(appSource, /originalFileModifiedAt: normalizeWatchedFileTimestamp\(candidate\.createdAt, candidate\.modifiedAt\)/);
+  assert.doesNotMatch(appSource, /parseTimestampPrefixedFilename/);
+});

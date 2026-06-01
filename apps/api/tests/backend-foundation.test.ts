@@ -138,6 +138,52 @@ test("upload sessions reject inactive file type settings", async () => {
   );
 });
 
+test("exact duplicate imports repair source memo original time when creation time is earlier", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  seedMediaParserRegistry(db);
+  db.fileTypes.push({
+    id: "file-type-m4a",
+    extension: ".m4a",
+    media_kind: "audio",
+    capability_state: "active",
+    parser_key: "audio-transcription",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  db.sourceMemos.push({
+    id: "source-existing",
+    source_type: "watched_audio_file",
+    primary_artifact_id: null,
+    content_hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    original_file_modified_at: "2024-03-15T09:18:00.000Z"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const duplicate = await services.imports.createUploadSession(
+    {
+      machineId: "machine-1",
+      watchFolderId: "watch-1",
+      sourceType: "watched_audio_file",
+      originalFilename: "memo.m4a",
+      originalPath: "/watched/memo.m4a",
+      originalFileModifiedAt: "2023-07-28T17:26:15.000Z",
+      mimeType: "audio/mp4",
+      byteSize: 10,
+      contentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    session.user,
+    "request-1"
+  );
+
+  assert.equal(duplicate.status, "duplicate_exact");
+  assert.equal(db.sourceMemos[0]?.original_file_modified_at, "2023-07-28T17:26:15.000Z");
+  assert.equal(db.workItems.length, 0);
+});
+
 test("settings service creates configurable file types with audit", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -1750,6 +1796,18 @@ class FakeDatabase implements Database {
     if (text.includes("from source_memos") && text.includes("where id =")) {
       const sourceMemo = this.sourceMemos.find((row) => row.id === values[0]);
       return rows(sourceMemo === undefined ? [] : [sourceMemo as Row]);
+    }
+
+    if (text.includes("update source_memos") && text.includes("original_file_modified_at = $2")) {
+      const sourceMemo = this.sourceMemos.find((row) => row.id === values[0]);
+      if (
+        sourceMemo !== undefined &&
+        (sourceMemo.original_file_modified_at === null ||
+          new Date(String(sourceMemo.original_file_modified_at)).getTime() > new Date(String(values[1])).getTime())
+      ) {
+        sourceMemo.original_file_modified_at = values[1];
+      }
+      return rows([]);
     }
 
     if (text.includes("from media_type_settings") && text.includes("where id =")) {

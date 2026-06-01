@@ -232,6 +232,7 @@ interface WatchedFileCandidate {
   filename: string;
   extension: string;
   byteSize: number;
+  createdAt: string;
   modifiedAt: string;
 }
 
@@ -2239,7 +2240,7 @@ export function App() {
           sourceType,
           originalFilename: candidate.filename,
           originalPath: candidate.path,
-          originalFileModifiedAt: normalizeWatchedFileModifiedAt(candidate.modifiedAt),
+          originalFileModifiedAt: normalizeWatchedFileTimestamp(candidate.createdAt, candidate.modifiedAt),
           mimeType: mimeTypeForExtension(candidate.extension, fileType?.mediaKind),
           byteSize: bytes.byteLength,
           contentHash
@@ -4839,13 +4840,26 @@ function readWatchedFolderSettings(): WatchedFolderSetting[] {
   }
 }
 
-function normalizeWatchedFileModifiedAt(value: string): string {
+function normalizeWatchedFileTimestamp(value: string, fallbackValue?: string): string {
   const trimmed = value.trim();
-  if (/^\d+$/.test(trimmed)) {
-    return new Date(Number(trimmed)).toISOString();
+  const parsedValue = parseTimestampValue(trimmed);
+  if (parsedValue !== null) {
+    return parsedValue;
   }
 
-  return new Date(trimmed).toISOString();
+  if (fallbackValue !== undefined) {
+    return normalizeWatchedFileTimestamp(fallbackValue);
+  }
+
+  return new Date(0).toISOString();
+}
+
+function parseTimestampValue(value: string): string | null {
+  if (value === "") {
+    return null;
+  }
+  const date = /^\d+$/.test(value) ? new Date(Number(value)) : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 async function archiveImportedCandidate(input: {

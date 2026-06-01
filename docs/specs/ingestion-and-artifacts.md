@@ -138,15 +138,13 @@ The backend creates an upload/import session first.
 
 1. Desktop detects stable supported file.
 2. Desktop computes content hash.
-3. Desktop calls create upload session with filename, original path, content hash, byte size, MIME type, and the file's filesystem modified timestamp.
+3. Desktop calls create upload session with filename, original path, content hash, byte size, MIME type, and the file's filesystem creation timestamp, falling back to modified timestamp only when creation time is unavailable.
 4. Backend checks exact duplicate by content hash.
 5. Backend returns duplicate result or upload authorization.
 6. Desktop uploads artifact.
 7. Desktop calls finalize.
 
-The source file modified timestamp is stored as source memo provenance. Work queue rows and the work item detail header display this original memo time; workflow processing timestamps remain available through audit, diagnostics, and logs.
-
-Existing watched-folder imports created before this provenance field may be backfilled from a leading `YYYYMMDD HHMMSS` filename timestamp when one is present; new watched imports should use the filesystem modified timestamp supplied by the desktop scanner.
+The source file creation timestamp is stored as source memo provenance. Work queue rows and the work item detail header display this original memo time; workflow processing timestamps remain available through audit, diagnostics, and logs.
 8. Backend verifies object metadata/hash.
 9. Backend creates artifact, source memo, import event, work item, and processing jobs.
 10. Desktop archives original after backend confirms managed artifact storage.

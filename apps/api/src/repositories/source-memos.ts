@@ -118,6 +118,22 @@ export class SourceMemoRepository {
     return row === undefined ? null : { id: row.id, contentHash: row.content_hash };
   }
 
+  async updateOriginalFileTimeIfEarlier(input: {
+    sourceMemoId: string;
+    originalFileModifiedAt: string;
+  }): Promise<void> {
+    await this.db.query(
+      `update source_memos
+       set original_file_modified_at = $2, updated_at = now()
+       where id = $1
+         and (
+           original_file_modified_at is null
+           or original_file_modified_at > $2::timestamptz
+         )`,
+      [input.sourceMemoId, input.originalFileModifiedAt]
+    );
+  }
+
   async updateArchivePath(input: { sourceMemoId: string; archivePath: string | null }): Promise<void> {
     await this.db.query(
       `update source_memos

@@ -27,6 +27,7 @@ struct WatchedFileCandidate {
     filename: String,
     extension: String,
     byte_size: u64,
+    created_at: String,
     modified_at: String,
 }
 
@@ -185,6 +186,12 @@ fn scan_folder(
             .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
             .map(|value| format_unix_millis(value.as_millis()))
             .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string());
+        let created_at = metadata
+            .created()
+            .ok()
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .map(|value| format_unix_millis(value.as_millis()))
+            .unwrap_or_else(|| modified_at.clone());
         candidates.push(WatchedFileCandidate {
             watch_folder_id: folder.id.clone(),
             path: entry_path.to_string_lossy().to_string(),
@@ -197,6 +204,7 @@ fn scan_folder(
                 .map(|value| format!(".{}", value.to_string_lossy().to_lowercase()))
                 .unwrap_or_default(),
             byte_size: metadata.len(),
+            created_at,
             modified_at,
         });
     }

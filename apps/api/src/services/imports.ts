@@ -96,6 +96,10 @@ export class ImportService {
       const sessionId = randomUUID();
 
       if (duplicate !== null) {
+        await sourceMemos.updateOriginalFileTimeIfEarlier({
+          sourceMemoId: duplicate.id,
+          originalFileModifiedAt: input.originalFileModifiedAt
+        });
         const importEvent = await importEvents.create({
           sourceMemoId: duplicate.id,
           machineId: input.machineId,
