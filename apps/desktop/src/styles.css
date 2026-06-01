@@ -1368,6 +1368,12 @@ button:disabled {
   gap: 12px;
 }
 
+.detail-count {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 760;
+}
+
 .settings-table {
   display: grid;
   overflow: hidden;
@@ -1399,10 +1405,10 @@ button:disabled {
 .settings-table-header,
 .settings-table-row {
   display: grid;
-  grid-template-columns: minmax(90px, 0.7fr) minmax(90px, 0.7fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, auto);
+  grid-template-columns: minmax(90px, 0.7fr) minmax(90px, 0.7fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(78px, auto);
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 6px 10px;
 }
 
 .settings-table-header {
@@ -1416,11 +1422,47 @@ button:disabled {
 .settings-table-row {
   border-top: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .settings-table-row strong {
   color: var(--text);
+}
+
+.settings-table-row input,
+.settings-table-row select {
+  min-width: 0;
+  min-height: 28px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.settings-table-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.settings-table .icon-only {
+  width: 30px;
+  min-height: 30px;
+}
+
+.registry-form {
+  grid-template-columns: minmax(110px, 0.6fr) minmax(130px, 0.8fr) minmax(180px, 1.2fr) minmax(150px, 0.8fr) auto;
+}
+
+.parser-form {
+  grid-template-columns: minmax(130px, 0.8fr) minmax(130px, 0.8fr) minmax(170px, 1fr) minmax(130px, 0.7fr) minmax(140px, 0.7fr) auto;
+}
+
+.registry-table {
+  margin-bottom: 18px;
+}
+
+.parser-registry-table .settings-table-header,
+.parser-registry-table .settings-table-row {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(130px, 0.8fr) minmax(170px, 1fr) minmax(120px, 0.7fr) minmax(130px, 0.7fr) minmax(78px, auto);
 }
 
 .prompt-editor-list {

@@ -154,3 +154,23 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Reworked the Projects page into a single dense scrollable project list, moved create into the page header, hid project slugs from the UI, added inline draft-row creation, and tightened project rows so counts sit beside the page title while project name and updated time share the row header.
   Verification: `npm run typecheck -w @memo-capture/desktop` passed; `npm run build` passed; `npm run verify` passed before the final row-tightening pass; `git diff --check -- apps/desktop/src/App.tsx apps/desktop/src/styles.css` passed; Chrome smoke confirmed the single list surface, no slug labels, draft-row creation, and project save flow; `npm run tauri:build -w @memo-capture/desktop -- --bundles app` rebuilt `Memo Capture.app`.
   Traceability: branch `main`, base HEAD `e33019d`; changed files include `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, and `docs/completed-tasks.md`.
+
+- Task: Make media and parser settings configurable and extensible
+  Outcome: Added backend-owned media and parser registries, seeded text/audio/image/pdf and plain-text/markdown/audio-transcription/future transcription provider options, migrated legacy audio parser mappings to `audio-transcription`, exposed editable Settings UI sections, and made watched import processing respect media/parser support status and compatibility.
+  Verification: `npm run typecheck` passed; `npm test` passed outside the sandbox after route tests needed local bind access; `npm run build` passed; `npm run verify` passed outside the sandbox; `npm run db:migrate` applied `0012_media_parser_type_settings`; `git diff --check` passed; Chrome smoke confirmed Settings renders Media types, Parser types, Audio transcription, Whisper.cpp, Faster-Whisper, and file-extension media/parser selectors.
+  Traceability: branch `main`, base HEAD `97d32d8`; changed files include `apps/api/db/migrations/0012_media_parser_type_settings.sql`, settings repositories/services/routes, import finalization, backend and desktop tests, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `docs/design/memo-capture-design-learnings.md`, `docs/specs/ingestion-and-artifacts.md`, `docs/specs/settings-and-audit.md`, and `docs/completed-tasks.md`.
+
+- Task: Rebuild native Memo Capture app
+  Outcome: Rebuilt the macOS Tauri `.app` bundle after the media/parser settings implementation.
+  Verification: `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed and produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app` with timestamp `Jun 1 15:54:32 2026`.
+  Traceability: branch `main`, base HEAD `97d32d8`; changed files include `docs/completed-tasks.md`, with native build output under `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+
+- Task: Add removal controls for media, parser, and file types
+  Outcome: Added delete APIs and Settings UI remove actions for media types, parser types, and file extension mappings; tightened Settings table rows; and clarified Whisper.cpp/Faster-Whisper as specific future audio transcription parser implementations.
+  Verification: `npm run typecheck`, `npm test`, `npm run build`, `npm run verify`, `npm run db:migrate`, and `git diff --check` passed; Chrome smoke confirmed remove controls for media/parser/file rows and compact Settings tables.
+  Traceability: branch `main`, base HEAD `97d32d8`; changed files include `apps/api/db/migrations/0013_audio_parser_implementation_labels.sql`, settings repositories/services/routes, API and desktop tests, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `docs/design/memo-capture-design-learnings.md`, `docs/specs/ingestion-and-artifacts.md`, `docs/specs/settings-and-audit.md`, `handoff.md`, and `docs/completed-tasks.md`.
+
+- Task: Rebuild native Memo Capture app after settings delete controls
+  Outcome: Rebuilt the macOS Tauri `.app` bundle after adding media/parser/file type removal controls.
+  Verification: `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed and produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app` with timestamp `Jun 1 16:21:40 2026`.
+  Traceability: branch `main`, base HEAD `97d32d8`; changed files include `docs/completed-tasks.md`, with native build output under `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.

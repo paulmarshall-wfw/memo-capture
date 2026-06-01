@@ -81,8 +81,15 @@ export interface SettingsOperations {
   updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  createMediaType(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateMediaType(mediaTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  deleteMediaType(mediaTypeId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  createParserType(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateParserType(parserTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  deleteParserType(parserTypeId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createFileType(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateFileType(fileTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  deleteFileType(fileTypeId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createPromptVersion(promptDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
 }
 

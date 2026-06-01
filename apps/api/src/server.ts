@@ -246,6 +246,16 @@ function matchProtectedRoute(
       services.settings.createFileType(await readJsonBody(context.request), session.user, context.requestId);
   }
 
+  if (method === "POST" && pathname === "/api/settings/media-types") {
+    return async (context, session) =>
+      services.settings.createMediaType(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  if (method === "POST" && pathname === "/api/settings/parser-types") {
+    return async (context, session) =>
+      services.settings.createParserType(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
   if (method === "PATCH" && pathname === "/api/settings/extraction") {
     return async (context, session) =>
       services.settings.updateExtraction(await readJsonBody(context.request), session.user, context.requestId);
@@ -273,6 +283,52 @@ function matchProtectedRoute(
       services.settings.updateFileType(
         decodeURIComponent(fileTypePatchMatch[1] ?? ""),
         await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+  if (method === "DELETE" && fileTypePatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.deleteFileType(
+        decodeURIComponent(fileTypePatchMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const mediaTypePatchMatch = /^\/api\/settings\/media-types\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && mediaTypePatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateMediaType(
+        decodeURIComponent(mediaTypePatchMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+  if (method === "DELETE" && mediaTypePatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.deleteMediaType(
+        decodeURIComponent(mediaTypePatchMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const parserTypePatchMatch = /^\/api\/settings\/parser-types\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && parserTypePatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateParserType(
+        decodeURIComponent(parserTypePatchMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+  if (method === "DELETE" && parserTypePatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.deleteParserType(
+        decodeURIComponent(parserTypePatchMatch[1] ?? ""),
         session.user,
         context.requestId
       );
@@ -708,7 +764,7 @@ function readDebuggerItemRef(searchParams: URLSearchParams):
 function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,PUT,PATCH,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
     "access-control-allow-headers": "authorization,content-type,x-request-id",
     "access-control-expose-headers": "content-disposition,x-request-id"
   };

@@ -65,7 +65,7 @@ Tags and contributor are optional.
 
 ## File Type Support
 
-The settings model should support adding/removing configured file type entries. V1 supports text and audio media kinds, with parser selection tracked separately from whether the extension is active.
+The settings model should support adding and editing user-configurable media types, parser types, and file type entries. V1 supports text and audio media, while image and PDF media are represented for future support. Parser selection is tracked separately from whether an extension is active.
 
 Active text formats in V1:
 
@@ -79,7 +79,9 @@ Active audio formats in V1:
 - `.mp3`
 - `.wav`
 
-Inactive configured types are not scanned or accepted. Active configured types with no implemented parser are accepted into managed storage, then create a `needs_review` work item prompting parser support instead of queuing text extraction or transcription.
+Inactive configured file types are not scanned or accepted. Active file types whose media type is not supported are rejected before upload. Active configured types with no active implemented parser are accepted into managed storage, then create a `needs_review` work item prompting parser support instead of queuing text extraction or transcription.
+
+Seeded parser types include `plain-text`, `markdown`, `audio-transcription`, `whisper-cpp`, and `faster-whisper`. `audio-transcription` is retained for current audio mappings, but the intended direction is that Whisper.cpp and Faster-Whisper are specific audio transcription parser implementations that can replace the generic row once runtime support exists and file type mappings are updated. Parser rows are removable when no file type depends on them.
 
 ## Watched Folder Handling
 

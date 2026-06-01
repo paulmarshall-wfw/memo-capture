@@ -21,7 +21,9 @@ Keeping canonical classification, prompt, provider, and export settings in the b
 - project descriptions/synopses
 - tag and keyword grouping thresholds
 - contributors and contributor aliases
-- supported file type entries and capability state
+- user-configurable media type entries and capability state
+- user-configurable parser type entries and capability state
+- supported file type entries and extension mapping state
 - extraction confidence thresholds
 - transcription retry count
 - prompt definitions, prompt versions, and prompt context controls
@@ -45,6 +47,52 @@ Desktop-local settings do not need backend audit in V1.
 
 ## Settings Tables
 
+### media_type_settings
+
+Required columns:
+
+- `id uuid primary key`
+- `media_key text not null unique`
+- `display_name text not null`
+- `description text`
+- `capability_state text not null`
+- `created_by uuid references app_users(id)`
+- `updated_by uuid references app_users(id)`
+- timestamps
+
+Seeded media types:
+
+- `text`
+- `audio`
+- `image`
+- `pdf`
+
+Media types are user-configurable and extensible. Status indicates whether the media type is currently supported by watched-folder ingestion and processing.
+
+### parser_type_settings
+
+Required columns:
+
+- `id uuid primary key`
+- `parser_key text not null unique`
+- `display_name text not null`
+- `description text`
+- `media_key text not null references media_type_settings(media_key)`
+- `capability_state text not null`
+- `created_by uuid references app_users(id)`
+- `updated_by uuid references app_users(id)`
+- timestamps
+
+Seeded parser types:
+
+- `plain-text`
+- `markdown`
+- `audio-transcription`
+- `whisper-cpp` as a future specific audio transcription parser implementation
+- `faster-whisper` as a future specific audio transcription parser implementation
+
+Parser types are user-configurable, extensible, and removable when no file type depends on them. Status indicates whether that parser can currently drive processing. The generic `audio-transcription` parser is retained for current audio mappings but can be removed after file types move to specific implementations.
+
 ### file_type_settings
 
 Required columns:
@@ -66,12 +114,16 @@ Capability states:
 
 Rules:
 
-- V1 media kinds are `text` and `audio`.
+- File type rows map extensions to user-configured media and parser types.
 - Implemented text parser keys: `plain-text`, `markdown`.
-- Implemented audio parser key: `audio`.
+- Implemented audio parser key: `audio-transcription`.
+- Whisper.cpp and Faster-Whisper are modeled as parser implementations for audio transcription, not hidden provider choices.
 - Default active text: `.txt`, `.md`, `.markdown`.
 - Default active audio: `.m4a`, `.mp3`, `.wav`.
-- File type capability state is authoritative for watched-folder scanning and watched import upload-session validation.
+- File type capability state is authoritative for whether an extension is scanned.
+- Media type capability state is authoritative for whether that media class is accepted.
+- Parser type capability state is authoritative for whether processing jobs are queued.
+- File type rows can be deleted directly. Media and parser type rows can be deleted only after dependent file type/parser references are removed.
 - Inactive file types are not scanned, uploaded, finalized, or accepted by watched-folder import paths.
 - Active file types without an implemented parser are stored as managed artifacts and create `needs_review` work items that prompt parser support; they do not enqueue extraction or transcription jobs.
 
@@ -191,6 +243,8 @@ Backend audit is required for changes to:
 - projects
 - tags and keyword grouping metadata
 - contributors
+- media type support
+- parser type support
 - file type support
 - confidence thresholds
 - prompts
@@ -247,6 +301,10 @@ Settings:
 - `contributor.alias_added`
 - `contributor.merged`
 - `contributor.deactivated`
+- `media_type_settings.created`
+- `media_type_settings.updated`
+- `parser_type_settings.created`
+- `parser_type_settings.updated`
 - `file_type_setting.updated`
 - `extraction_settings.updated`
 - `transcription_settings.updated`
@@ -318,6 +376,44 @@ Use structured redaction:
 
 Response includes backend settings, prompt metadata, file type settings, redacted provider/auth status, and runtime provider availability. It never returns provider secrets.
 
+Response includes `mediaTypes`, `parserTypes`, and `fileTypes`.
+
+### Create media type setting
+
+`POST /api/settings/media-types`
+
+Creates a user-configurable media type with key, display name, description, and capability state.
+
+### Update media type setting
+
+`PATCH /api/settings/media-types/{mediaTypeSettingId}`
+
+Updates a media type key, display name, description, or capability state.
+
+### Delete media type setting
+
+`DELETE /api/settings/media-types/{mediaTypeSettingId}`
+
+Deletes a media type only when no parser types or file type settings reference it.
+
+### Create parser type setting
+
+`POST /api/settings/parser-types`
+
+Creates a user-configurable parser type with key, display name, description, compatible media type, and capability state.
+
+### Update parser type setting
+
+`PATCH /api/settings/parser-types/{parserTypeSettingId}`
+
+Updates a parser type key, display name, description, compatible media type, or capability state.
+
+### Delete parser type setting
+
+`DELETE /api/settings/parser-types/{parserTypeSettingId}`
+
+Deletes a parser type only when no file type settings reference it.
+
 ### Update extraction settings
 
 `PATCH /api/settings/extraction`
@@ -339,6 +435,14 @@ Creates a configured extension with media kind, capability state, and optional p
 ### Update file type setting
 
 `PATCH /api/settings/file-types/{fileTypeSettingId}`
+
+Updates extension mapping media type, parser type, and capability state.
+
+### Delete file type setting
+
+`DELETE /api/settings/file-types/{fileTypeSettingId}`
+
+Deletes an extension mapping.
 
 ### List provider configs
 

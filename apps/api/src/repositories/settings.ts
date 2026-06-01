@@ -10,6 +10,25 @@ export interface FileTypeSettingRow extends Record<string, unknown> {
   updated_at: Date | string;
 }
 
+export interface MediaTypeSettingRow extends Record<string, unknown> {
+  id: string;
+  media_key: string;
+  display_name: string;
+  description: string | null;
+  capability_state: string;
+  updated_at: Date | string;
+}
+
+export interface ParserTypeSettingRow extends Record<string, unknown> {
+  id: string;
+  parser_key: string;
+  display_name: string;
+  description: string | null;
+  media_key: string;
+  capability_state: string;
+  updated_at: Date | string;
+}
+
 export interface ExtractionSettingsRow extends Record<string, unknown> {
   project_confidence_threshold: string | number;
   contributor_confidence_threshold: string | number;
@@ -51,6 +70,252 @@ export interface PromptDefinitionRow extends Record<string, unknown> {
 export class SettingsRepository {
   constructor(private readonly db: Queryable) {}
 
+  async listMediaTypes(): Promise<MediaTypeSettingRow[]> {
+    const result = await this.db.query<MediaTypeSettingRow>(
+      `select id, media_key, display_name, description, capability_state, updated_at
+       from media_type_settings
+       order by display_name asc, media_key asc`
+    );
+    return result.rows;
+  }
+
+  async findMediaTypeByKey(mediaKey: string): Promise<MediaTypeSettingRow | null> {
+    const result = await this.db.query<MediaTypeSettingRow>(
+      `select id, media_key, display_name, description, capability_state, updated_at
+       from media_type_settings
+       where lower(media_key) = lower($1)
+       limit 1`,
+      [mediaKey]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findMediaTypeById(mediaTypeId: string): Promise<MediaTypeSettingRow | null> {
+    const result = await this.db.query<MediaTypeSettingRow>(
+      `select id, media_key, display_name, description, capability_state, updated_at
+       from media_type_settings
+       where id = $1
+       limit 1`,
+      [mediaTypeId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async createMediaType(input: {
+    mediaKey: string;
+    displayName: string;
+    description: string | null;
+    capabilityState: string;
+    actorUserId: string;
+  }): Promise<MediaTypeSettingRow> {
+    const result = await this.db.query<MediaTypeSettingRow>(
+      `insert into media_type_settings (
+         id,
+         media_key,
+         display_name,
+         description,
+         capability_state,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at
+       )
+       values ($1, $2, $3, $4, $5, $6, $6, now(), now())
+       returning id, media_key, display_name, description, capability_state, updated_at`,
+      [
+        randomUUID(),
+        input.mediaKey,
+        input.displayName,
+        input.description,
+        input.capabilityState,
+        input.actorUserId
+      ]
+    );
+    return requiredRow(result.rows[0], "media type setting creation failed");
+  }
+
+  async updateMediaType(input: {
+    mediaTypeId: string;
+    mediaKey: string;
+    displayName: string;
+    description: string | null;
+    capabilityState: string;
+    actorUserId: string;
+  }): Promise<MediaTypeSettingRow | null> {
+    const result = await this.db.query<MediaTypeSettingRow>(
+      `update media_type_settings
+       set
+         media_key = $2,
+         display_name = $3,
+         description = $4,
+         capability_state = $5,
+         updated_by = $6,
+         updated_at = now()
+       where id = $1
+       returning id, media_key, display_name, description, capability_state, updated_at`,
+      [
+        input.mediaTypeId,
+        input.mediaKey,
+        input.displayName,
+        input.description,
+        input.capabilityState,
+        input.actorUserId
+      ]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async countFileTypesForMediaKey(mediaKey: string): Promise<number> {
+    const result = await this.db.query<{ count: string | number }>(
+      `select count(*)::int as count
+       from file_type_settings
+       where media_kind = $1`,
+      [mediaKey]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async countParserTypesForMediaKey(mediaKey: string): Promise<number> {
+    const result = await this.db.query<{ count: string | number }>(
+      `select count(*)::int as count
+       from parser_type_settings
+       where media_key = $1`,
+      [mediaKey]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async deleteMediaType(mediaTypeId: string): Promise<MediaTypeSettingRow | null> {
+    const result = await this.db.query<MediaTypeSettingRow>(
+      `delete from media_type_settings
+       where id = $1
+       returning id, media_key, display_name, description, capability_state, updated_at`,
+      [mediaTypeId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listParserTypes(): Promise<ParserTypeSettingRow[]> {
+    const result = await this.db.query<ParserTypeSettingRow>(
+      `select id, parser_key, display_name, description, media_key, capability_state, updated_at
+       from parser_type_settings
+       order by media_key asc, display_name asc, parser_key asc`
+    );
+    return result.rows;
+  }
+
+  async findParserTypeByKey(parserKey: string): Promise<ParserTypeSettingRow | null> {
+    const result = await this.db.query<ParserTypeSettingRow>(
+      `select id, parser_key, display_name, description, media_key, capability_state, updated_at
+       from parser_type_settings
+       where lower(parser_key) = lower($1)
+       limit 1`,
+      [parserKey]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findParserTypeById(parserTypeId: string): Promise<ParserTypeSettingRow | null> {
+    const result = await this.db.query<ParserTypeSettingRow>(
+      `select id, parser_key, display_name, description, media_key, capability_state, updated_at
+       from parser_type_settings
+       where id = $1
+       limit 1`,
+      [parserTypeId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async createParserType(input: {
+    parserKey: string;
+    displayName: string;
+    description: string | null;
+    mediaKey: string;
+    capabilityState: string;
+    actorUserId: string;
+  }): Promise<ParserTypeSettingRow> {
+    const result = await this.db.query<ParserTypeSettingRow>(
+      `insert into parser_type_settings (
+         id,
+         parser_key,
+         display_name,
+         description,
+         media_key,
+         capability_state,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at
+       )
+       values ($1, $2, $3, $4, $5, $6, $7, $7, now(), now())
+       returning id, parser_key, display_name, description, media_key, capability_state, updated_at`,
+      [
+        randomUUID(),
+        input.parserKey,
+        input.displayName,
+        input.description,
+        input.mediaKey,
+        input.capabilityState,
+        input.actorUserId
+      ]
+    );
+    return requiredRow(result.rows[0], "parser type setting creation failed");
+  }
+
+  async updateParserType(input: {
+    parserTypeId: string;
+    parserKey: string;
+    displayName: string;
+    description: string | null;
+    mediaKey: string;
+    capabilityState: string;
+    actorUserId: string;
+  }): Promise<ParserTypeSettingRow | null> {
+    const result = await this.db.query<ParserTypeSettingRow>(
+      `update parser_type_settings
+       set
+         parser_key = $2,
+         display_name = $3,
+         description = $4,
+         media_key = $5,
+         capability_state = $6,
+         updated_by = $7,
+         updated_at = now()
+       where id = $1
+       returning id, parser_key, display_name, description, media_key, capability_state, updated_at`,
+      [
+        input.parserTypeId,
+        input.parserKey,
+        input.displayName,
+        input.description,
+        input.mediaKey,
+        input.capabilityState,
+        input.actorUserId
+      ]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async countFileTypesForParserKey(parserKey: string): Promise<number> {
+    const result = await this.db.query<{ count: string | number }>(
+      `select count(*)::int as count
+       from file_type_settings
+       where parser_key = $1`,
+      [parserKey]
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async deleteParserType(parserTypeId: string): Promise<ParserTypeSettingRow | null> {
+    const result = await this.db.query<ParserTypeSettingRow>(
+      `delete from parser_type_settings
+       where id = $1
+       returning id, parser_key, display_name, description, media_key, capability_state, updated_at`,
+      [parserTypeId]
+    );
+    return result.rows[0] ?? null;
+  }
+
   async listFileTypes(): Promise<FileTypeSettingRow[]> {
     const result = await this.db.query<FileTypeSettingRow>(
       `select id, extension, media_kind, capability_state, parser_key, updated_at
@@ -67,6 +332,17 @@ export class SettingsRepository {
        where lower(extension) = lower($1)
        limit 1`,
       [extension]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findFileTypeById(fileTypeId: string): Promise<FileTypeSettingRow | null> {
+    const result = await this.db.query<FileTypeSettingRow>(
+      `select id, extension, media_kind, capability_state, parser_key, updated_at
+       from file_type_settings
+       where id = $1
+       limit 1`,
+      [fileTypeId]
     );
     return result.rows[0] ?? null;
   }
@@ -106,15 +382,32 @@ export class SettingsRepository {
 
   async updateFileType(input: {
     fileTypeId: string;
+    mediaKind: string;
     capabilityState: string;
+    parserKey: string | null;
     actorUserId: string;
   }): Promise<FileTypeSettingRow | null> {
     const result = await this.db.query<FileTypeSettingRow>(
       `update file_type_settings
-       set capability_state = $2, updated_by = $3, updated_at = now()
+       set
+         media_kind = $2,
+         capability_state = $3,
+         parser_key = $4,
+         updated_by = $5,
+         updated_at = now()
        where id = $1
        returning id, extension, media_kind, capability_state, parser_key, updated_at`,
-      [input.fileTypeId, input.capabilityState, input.actorUserId]
+      [input.fileTypeId, input.mediaKind, input.capabilityState, input.parserKey, input.actorUserId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async deleteFileType(fileTypeId: string): Promise<FileTypeSettingRow | null> {
+    const result = await this.db.query<FileTypeSettingRow>(
+      `delete from file_type_settings
+       where id = $1
+       returning id, extension, media_kind, capability_state, parser_key, updated_at`,
+      [fileTypeId]
     );
     return result.rows[0] ?? null;
   }

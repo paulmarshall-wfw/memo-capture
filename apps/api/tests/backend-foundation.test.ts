@@ -140,8 +140,17 @@ test("settings service creates configurable file types with audit", async () => 
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
   });
   const db = new FakeDatabase();
+  seedMediaParserRegistry(db);
   const services = createAppServicesFromDatabase(config, db);
   const session = await services.auth.createLocalDevSession();
+  db.fileTypes.push({
+    id: "file-type-md",
+    extension: ".md",
+    media_kind: "text",
+    capability_state: "active",
+    parser_key: "markdown",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
 
   const created = await services.settings.createFileType(
     {
@@ -177,22 +186,83 @@ test("settings service creates configurable file types with audit", async () => 
       error.code === "file_type_exists"
   );
 
+  const mediaType = await services.settings.createMediaType(
+    {
+      mediaKey: "document",
+      displayName: "Document",
+      description: "Future document imports",
+      capabilityState: "not_supported_yet"
+    },
+    session.user,
+    "request-3"
+  ) as { mediaType: { mediaKey: string; capabilityState: string } };
+  assert.equal(mediaType.mediaType.mediaKey, "document");
+  assert.equal(mediaType.mediaType.capabilityState, "not_supported_yet");
+
+  const parserType = await services.settings.createParserType(
+    {
+      parserKey: "pdf-text",
+      displayName: "PDF text",
+      description: "Future PDF parser",
+      mediaKey: "document",
+      capabilityState: "not_supported_yet"
+    },
+    session.user,
+    "request-4"
+  ) as { parserType: { parserKey: string; mediaKey: string } };
+  assert.equal(parserType.parserType.parserKey, "pdf-text");
+  assert.equal(parserType.parserType.mediaKey, "document");
+
   await assert.rejects(
     () =>
       services.settings.createFileType(
         {
           extension: ".pdf",
           mediaKind: "document",
-          parserKey: null,
+          parserKey: "markdown",
           capabilityState: "inactive"
         },
         session.user,
-        "request-3"
+        "request-5"
       ),
     (error: unknown) =>
       error instanceof HttpError &&
       error.statusCode === 400 &&
       error.code === "invalid_request"
+  );
+
+  await assert.rejects(
+    () => services.settings.deleteParserType("parser-markdown", session.user, "request-6"),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "parser_type_in_use"
+  );
+
+  const deletedFileType = await services.settings.deleteFileType(
+    "file-type-md",
+    session.user,
+    "request-7"
+  ) as { deleted: boolean; fileType: { extension: string } };
+  assert.equal(deletedFileType.deleted, true);
+  assert.equal(deletedFileType.fileType.extension, ".md");
+  assert.equal(db.auditEvents.at(-1)?.event_name, "file_type_settings.deleted");
+
+  const deletedParserType = await services.settings.deleteParserType(
+    "parser-markdown",
+    session.user,
+    "request-8"
+  ) as { deleted: boolean; parserType: { parserKey: string } };
+  assert.equal(deletedParserType.deleted, true);
+  assert.equal(deletedParserType.parserType.parserKey, "markdown");
+  assert.equal(db.auditEvents.at(-1)?.event_name, "parser_type_settings.deleted");
+
+  await assert.rejects(
+    () => services.settings.deleteMediaType("media-text", session.user, "request-9"),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "media_type_in_use"
   );
 });
 
@@ -203,6 +273,7 @@ test("enabled file types without parsers finalize into ingestion review without 
     OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
   });
   const db = new FakeDatabase();
+  seedMediaParserRegistry(db);
   db.fileTypes.push({
     id: "file-type-html",
     extension: ".html",
@@ -245,6 +316,100 @@ test("enabled file types without parsers finalize into ingestion review without 
   assert.equal(db.processingJobs.length, 0);
   assert.match(String(db.workItems[0]?.title), /Add file type support for \.html/);
   assert.match(String(db.workItems[0]?.body), /Parser key: none/);
+});
+
+test("audio transcription parser finalization queues transcription jobs", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedMediaParserRegistry(db);
+  db.fileTypes.push({
+    id: "file-type-m4a",
+    extension: ".m4a",
+    media_kind: "audio",
+    capability_state: "active",
+    parser_key: "audio-transcription",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  const body = Buffer.from("audio bytes", "utf8");
+  const contentHash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+
+  const uploadSession = await services.imports.createUploadSession(
+    {
+      machineId: "machine-1",
+      watchFolderId: "watch-1",
+      sourceType: "watched_audio_file",
+      originalFilename: "memo.m4a",
+      originalPath: "/watched/memo.m4a",
+      mimeType: "audio/mp4",
+      byteSize: body.byteLength,
+      contentHash
+    },
+    session.user,
+    "request-1"
+  );
+  await services.imports.uploadSessionArtifact(uploadSession.sessionId, body);
+
+  const finalized = await services.imports.finalizeUploadSession(
+    uploadSession.sessionId,
+    { machineId: "machine-1", archivePlanned: true },
+    session.user,
+    "request-2"
+  );
+
+  assert.equal(finalized.initialWorkflowState, "needs_review");
+  assert.equal(finalized.processingJobs.length, 1);
+  assert.equal(db.processingJobs[0]?.job_kind, "transcribe_audio");
+});
+
+test("watched imports reject active file types when media type is unsupported", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  seedMediaParserRegistry(db);
+  const audioMedia = db.mediaTypes.find((row) => row.media_key === "audio");
+  if (audioMedia !== undefined) {
+    audioMedia.capability_state = "not_supported_yet";
+  }
+  db.fileTypes.push({
+    id: "file-type-m4a",
+    extension: ".m4a",
+    media_kind: "audio",
+    capability_state: "active",
+    parser_key: "audio-transcription",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  await assert.rejects(
+    () =>
+      services.imports.createUploadSession(
+        {
+          machineId: "machine-1",
+          watchFolderId: "watch-1",
+          sourceType: "watched_audio_file",
+          originalFilename: "memo.m4a",
+          originalPath: "/watched/memo.m4a",
+          mimeType: "audio/mp4",
+          byteSize: 10,
+          contentHash: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        session.user,
+        "request-1"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 400 &&
+      error.code === "unsupported_file_type"
+  );
 });
 
 test("protected routes require authorization and include a request id", async () => {
@@ -462,6 +627,12 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(fileTypeCreate.response.status, 200);
     assert.equal(fileTypeCreate.body.fileType.extension, ".html");
     assert.equal(fileTypeCreate.body.fileType.capabilityState, "active");
+
+    const fileTypeDelete = await authedJson(baseUrl, "/api/settings/file-types/file-type-html", {
+      method: "DELETE"
+    });
+    assert.equal(fileTypeDelete.response.status, 200);
+    assert.equal(fileTypeDelete.body.deleted, true);
 
     const promptVersion = await authedJson(baseUrl, "/api/settings/prompts/prompt-1/versions", {
       method: "POST",
@@ -1067,6 +1238,27 @@ function captureRouteServices(): AppServices {
     } as unknown as AppServices["jobs"],
     settings: {
       getSummary: async () => ({
+        mediaTypes: [
+          {
+            id: "media-text",
+            mediaKey: "text",
+            displayName: "Text",
+            description: "Text files",
+            capabilityState: "active",
+            updatedAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
+        parserTypes: [
+          {
+            id: "parser-markdown",
+            parserKey: "markdown",
+            displayName: "Markdown",
+            description: "Markdown parser",
+            mediaKey: "text",
+            capabilityState: "active",
+            updatedAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
         fileTypes: [
           {
             id: "file-type-md",
@@ -1122,6 +1314,12 @@ function captureRouteServices(): AppServices {
         ],
         auth: { mode: "local-dev", oidcConfigured: false }
       }),
+      createMediaType: async (body: unknown) => ({ mediaType: body }),
+      updateMediaType: async (_id: string, body: unknown) => ({ mediaType: body }),
+      deleteMediaType: async (id: string) => ({ deleted: true, mediaType: { id } }),
+      createParserType: async (body: unknown) => ({ parserType: body }),
+      updateParserType: async (_id: string, body: unknown) => ({ parserType: body }),
+      deleteParserType: async (id: string) => ({ deleted: true, parserType: { id } }),
       updateExtraction: async () => ({ extraction: { projectConfidenceThreshold: 0.8 } }),
       updateTranscription: async () => ({ transcription: { maxRetryAttempts: 4 } }),
       updateFileType: async () => {
@@ -1155,6 +1353,7 @@ function captureRouteServices(): AppServices {
           }
         };
       },
+      deleteFileType: async (id: string) => ({ deleted: true, fileType: { id } }),
       updateProvider: async () => ({
         provider: {
           id: "provider-1",
@@ -1416,6 +1615,8 @@ async function authedJson(
 
 class FakeDatabase implements Database {
   readonly users: FakeUserRow[] = [];
+  readonly mediaTypes: Record<string, unknown>[] = [];
+  readonly parserTypes: Record<string, unknown>[] = [];
   readonly fileTypes: Record<string, unknown>[] = [];
   readonly importUploadSessions: Record<string, unknown>[] = [];
   readonly sourceMemos: Record<string, unknown>[] = [];
@@ -1476,10 +1677,147 @@ class FakeDatabase implements Database {
       return rows(sourceMemo === undefined ? [] : [sourceMemo as Row]);
     }
 
+    if (text.includes("from media_type_settings") && text.includes("where id =")) {
+      const mediaType = this.mediaTypes.find((row) => row.id === values[0]);
+      return rows(mediaType === undefined ? [] : [mediaType as Row]);
+    }
+
+    if (text.includes("from media_type_settings") && text.includes("where lower(media_key)")) {
+      const mediaKey = String(values[0]).toLowerCase();
+      const mediaType = this.mediaTypes.find((row) => String(row.media_key).toLowerCase() === mediaKey);
+      return rows(mediaType === undefined ? [] : [mediaType as Row]);
+    }
+
+    if (text.includes("from file_type_settings") && text.includes("where media_kind =")) {
+      const count = this.fileTypes.filter((row) => row.media_kind === values[0]).length;
+      return rows([{ count }] as unknown as Row[]);
+    }
+
+    if (text.includes("from parser_type_settings") && text.includes("where media_key =")) {
+      const count = this.parserTypes.filter((row) => row.media_key === values[0]).length;
+      return rows([{ count }] as unknown as Row[]);
+    }
+
+    if (text.includes("delete from media_type_settings")) {
+      const index = this.mediaTypes.findIndex((row) => row.id === values[0]);
+      if (index === -1) {
+        return rows([]);
+      }
+      const [row] = this.mediaTypes.splice(index, 1);
+      return rows([row as Row]);
+    }
+
+    if (text.includes("from media_type_settings")) {
+      return rows([...this.mediaTypes] as Row[]);
+    }
+
+    if (text.includes("insert into media_type_settings")) {
+      const row = {
+        id: values[0],
+        media_key: values[1],
+        display_name: values[2],
+        description: values[3],
+        capability_state: values[4],
+        created_by: values[5],
+        updated_by: values[5],
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.mediaTypes.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("update media_type_settings")) {
+      const row = this.mediaTypes.find((mediaType) => mediaType.id === values[0]);
+      if (row !== undefined) {
+        row.media_key = values[1];
+        row.display_name = values[2];
+        row.description = values[3];
+        row.capability_state = values[4];
+        row.updated_by = values[5];
+      }
+      return rows(row === undefined ? [] : [row as Row]);
+    }
+
+    if (text.includes("from parser_type_settings") && text.includes("where id =")) {
+      const parserType = this.parserTypes.find((row) => row.id === values[0]);
+      return rows(parserType === undefined ? [] : [parserType as Row]);
+    }
+
+    if (text.includes("from parser_type_settings") && text.includes("where lower(parser_key)")) {
+      const parserKey = String(values[0]).toLowerCase();
+      const parserType = this.parserTypes.find((row) => String(row.parser_key).toLowerCase() === parserKey);
+      return rows(parserType === undefined ? [] : [parserType as Row]);
+    }
+
+    if (text.includes("from file_type_settings") && text.includes("where parser_key =")) {
+      const count = this.fileTypes.filter((row) => row.parser_key === values[0]).length;
+      return rows([{ count }] as unknown as Row[]);
+    }
+
+    if (text.includes("delete from parser_type_settings")) {
+      const index = this.parserTypes.findIndex((row) => row.id === values[0]);
+      if (index === -1) {
+        return rows([]);
+      }
+      const [row] = this.parserTypes.splice(index, 1);
+      return rows([row as Row]);
+    }
+
+    if (text.includes("from parser_type_settings")) {
+      return rows([...this.parserTypes] as Row[]);
+    }
+
+    if (text.includes("insert into parser_type_settings")) {
+      const row = {
+        id: values[0],
+        parser_key: values[1],
+        display_name: values[2],
+        description: values[3],
+        media_key: values[4],
+        capability_state: values[5],
+        created_by: values[6],
+        updated_by: values[6],
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.parserTypes.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("update parser_type_settings")) {
+      const row = this.parserTypes.find((parserType) => parserType.id === values[0]);
+      if (row !== undefined) {
+        row.parser_key = values[1];
+        row.display_name = values[2];
+        row.description = values[3];
+        row.media_key = values[4];
+        row.capability_state = values[5];
+        row.updated_by = values[6];
+      }
+      return rows(row === undefined ? [] : [row as Row]);
+    }
+
+    if (text.includes("delete from file_type_settings")) {
+      const index = this.fileTypes.findIndex((row) => row.id === values[0]);
+      if (index === -1) {
+        return rows([]);
+      }
+      const [row] = this.fileTypes.splice(index, 1);
+      return rows([row as Row]);
+    }
+
     if (text.includes("from file_type_settings") && text.includes("where lower(extension)")) {
       const extension = String(values[0]).toLowerCase();
       const fileType = this.fileTypes.find((row) => String(row.extension).toLowerCase() === extension);
       return rows(fileType === undefined ? [] : [fileType as Row]);
+    }
+
+    if (text.includes("from file_type_settings") && text.includes("where id =")) {
+      const fileType = this.fileTypes.find((row) => row.id === values[0]);
+      return rows(fileType === undefined ? [] : [fileType as Row]);
+    }
+
+    if (text.includes("from file_type_settings")) {
+      return rows([...this.fileTypes] as Row[]);
     }
 
     if (text.includes("insert into file_type_settings")) {
@@ -1495,6 +1833,17 @@ class FakeDatabase implements Database {
       };
       this.fileTypes.push(row);
       return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("update file_type_settings")) {
+      const row = this.fileTypes.find((fileType) => fileType.id === values[0]);
+      if (row !== undefined) {
+        row.media_kind = values[1];
+        row.capability_state = values[2];
+        row.parser_key = values[3];
+        row.updated_by = values[4];
+      }
+      return rows(row === undefined ? [] : [row as Row]);
     }
 
     if (text.includes("insert into import_upload_sessions")) {
@@ -1625,6 +1974,56 @@ interface FakeUserRow extends Record<string, unknown> {
   last_seen_at: string;
   created_at: string;
   updated_at: string;
+}
+
+function seedMediaParserRegistry(db: FakeDatabase): void {
+  db.mediaTypes.push(
+    {
+      id: "media-text",
+      media_key: "text",
+      display_name: "Text",
+      description: "Text files",
+      capability_state: "active",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      id: "media-audio",
+      media_key: "audio",
+      display_name: "Audio",
+      description: "Audio files",
+      capability_state: "active",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
+  db.parserTypes.push(
+    {
+      id: "parser-markdown",
+      parser_key: "markdown",
+      display_name: "Markdown",
+      description: "Markdown parser",
+      media_key: "text",
+      capability_state: "active",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      id: "parser-plain-text",
+      parser_key: "plain-text",
+      display_name: "Plain text",
+      description: "Plain text parser",
+      media_key: "text",
+      capability_state: "active",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      id: "parser-audio-transcription",
+      parser_key: "audio-transcription",
+      display_name: "Audio transcription",
+      description: "Audio transcription parser",
+      media_key: "audio",
+      capability_state: "active",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
 }
 
 function rows<Row extends Record<string, unknown>>(resultRows: Row[]): QueryResult<Row> {

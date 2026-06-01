@@ -51,7 +51,6 @@ type ThemeMode = "light" | "dark";
 type WorkQueueSyncState = "idle" | "syncing" | "connected" | "error";
 type WorkflowRuntimeEventFilter = "journal" | keyof WorkflowEventViews;
 type SettingsSectionId = "watched" | "file-types" | "prompts" | "providers" | "export" | "diagnostics";
-type FileTypeMediaKind = "text" | "audio";
 type FileTypeCapabilityState = "active" | "inactive" | "not_supported_yet";
 
 interface SessionResponse {
@@ -277,23 +276,65 @@ interface AiSuggestion {
   createdAt: string;
 }
 
+interface MediaTypeSetting {
+  id: string;
+  mediaKey: string;
+  displayName: string;
+  description: string | null;
+  capabilityState: FileTypeCapabilityState;
+  updatedAt: string;
+}
+
+interface ParserTypeSetting {
+  id: string;
+  parserKey: string;
+  displayName: string;
+  description: string | null;
+  mediaKey: string;
+  capabilityState: FileTypeCapabilityState;
+  updatedAt: string;
+}
+
 interface FileTypeSetting {
   id: string;
   extension: string;
   mediaKind: string;
-  capabilityState: string;
+  capabilityState: FileTypeCapabilityState;
   parserKey: string | null;
   updatedAt: string;
 }
 
+interface MediaTypeDraft {
+  mediaKey: string;
+  displayName: string;
+  description: string;
+  capabilityState: FileTypeCapabilityState;
+}
+
+interface ParserTypeDraft {
+  parserKey: string;
+  displayName: string;
+  description: string;
+  mediaKey: string;
+  capabilityState: FileTypeCapabilityState;
+}
+
+interface FileTypeDraft {
+  mediaKind: string;
+  parserKey: string;
+  capabilityState: FileTypeCapabilityState;
+}
+
 interface NewFileTypeDraft {
   extension: string;
-  mediaKind: FileTypeMediaKind;
+  mediaKind: string;
   parserKey: string;
   capabilityState: FileTypeCapabilityState;
 }
 
 interface SettingsSummary {
+  mediaTypes: MediaTypeSetting[];
+  parserTypes: ParserTypeSetting[];
   fileTypes: FileTypeSetting[];
   extraction: {
     projectConfidenceThreshold: number;
@@ -435,6 +476,19 @@ const defaultNewFileTypeDraft: NewFileTypeDraft = {
   mediaKind: "text",
   parserKey: "",
   capabilityState: "inactive"
+};
+const defaultNewMediaTypeDraft: MediaTypeDraft = {
+  mediaKey: "",
+  displayName: "",
+  description: "",
+  capabilityState: "not_supported_yet"
+};
+const defaultNewParserTypeDraft: ParserTypeDraft = {
+  parserKey: "",
+  displayName: "",
+  description: "",
+  mediaKey: "text",
+  capabilityState: "not_supported_yet"
 };
 const primaryNavigation: { id: ActiveView; label: string }[] = [
   { id: "work-items", label: "Work queue" },
@@ -1143,8 +1197,17 @@ export function App() {
   const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
   const [promptIdInFlight, setPromptIdInFlight] = useState<string | null>(null);
   const [fileTypeIdInFlight, setFileTypeIdInFlight] = useState<string | null>(null);
+  const [mediaTypeIdInFlight, setMediaTypeIdInFlight] = useState<string | null>(null);
+  const [parserTypeIdInFlight, setParserTypeIdInFlight] = useState<string | null>(null);
   const [newFileTypeDraft, setNewFileTypeDraft] = useState<NewFileTypeDraft>(defaultNewFileTypeDraft);
+  const [newMediaTypeDraft, setNewMediaTypeDraft] = useState<MediaTypeDraft>(defaultNewMediaTypeDraft);
+  const [newParserTypeDraft, setNewParserTypeDraft] = useState<ParserTypeDraft>(defaultNewParserTypeDraft);
+  const [mediaTypeDrafts, setMediaTypeDrafts] = useState<Record<string, MediaTypeDraft>>({});
+  const [parserTypeDrafts, setParserTypeDrafts] = useState<Record<string, ParserTypeDraft>>({});
+  const [fileTypeDrafts, setFileTypeDrafts] = useState<Record<string, FileTypeDraft>>({});
   const [fileTypeCreateInFlight, setFileTypeCreateInFlight] = useState(false);
+  const [mediaTypeCreateInFlight, setMediaTypeCreateInFlight] = useState(false);
+  const [parserTypeCreateInFlight, setParserTypeCreateInFlight] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditFilter, setAuditFilter] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -1164,12 +1227,20 @@ export function App() {
     () => new Map(contributors.map((contributor) => [contributor.id, contributor])),
     [contributors]
   );
+  const mediaTypeByKey = useMemo(() => {
+    const mediaTypes = settingsSummary?.mediaTypes ?? [];
+    return new Map(mediaTypes.map((mediaType) => [mediaType.mediaKey, mediaType]));
+  }, [settingsSummary]);
   const activeFileExtensions = useMemo(
     () =>
       settingsSummary?.fileTypes
-        .filter((fileType) => fileType.capabilityState === "active")
+        .filter(
+          (fileType) =>
+            fileType.capabilityState === "active" &&
+            mediaTypeByKey.get(fileType.mediaKind)?.capabilityState === "active"
+        )
         .map((fileType) => fileType.extension) ?? [],
-    [settingsSummary]
+    [mediaTypeByKey, settingsSummary]
   );
   const activeFileTypeByExtension = useMemo(() => {
     const fileTypes = settingsSummary?.fileTypes ?? [];
@@ -1611,7 +1682,47 @@ export function App() {
     setStatusMessage(null);
     try {
       const settingsResponse = await authedJson<SettingsSummary>(token, "/api/settings");
-      setSettingsSummary(normalizeSettingsSummary(settingsResponse));
+      const normalized = normalizeSettingsSummary(settingsResponse);
+      setSettingsSummary(normalized);
+      setMediaTypeDrafts(
+        Object.fromEntries(
+          normalized.mediaTypes.map((mediaType) => [
+            mediaType.id,
+            {
+              mediaKey: mediaType.mediaKey,
+              displayName: mediaType.displayName,
+              description: mediaType.description ?? "",
+              capabilityState: mediaType.capabilityState
+            }
+          ])
+        )
+      );
+      setParserTypeDrafts(
+        Object.fromEntries(
+          normalized.parserTypes.map((parserType) => [
+            parserType.id,
+            {
+              parserKey: parserType.parserKey,
+              displayName: parserType.displayName,
+              description: parserType.description ?? "",
+              mediaKey: parserType.mediaKey,
+              capabilityState: parserType.capabilityState
+            }
+          ])
+        )
+      );
+      setFileTypeDrafts(
+        Object.fromEntries(
+          normalized.fileTypes.map((fileType) => [
+            fileType.id,
+            {
+              mediaKind: fileType.mediaKind,
+              parserKey: fileType.parserKey ?? "",
+              capabilityState: fileType.capabilityState
+            }
+          ])
+        )
+      );
     } finally {
       setSettingsLoading(false);
     }
@@ -2038,10 +2149,10 @@ export function App() {
       setCandidateStatus(
         candidate.path,
         "imported",
-        sourceType === "watched_audio_file"
-          ? "Audio imported and queued for transcription."
-          : finalized.processingJobs.length === 0
-            ? "Imported for review. Parser support is still needed."
+        finalized.processingJobs.length === 0
+          ? "Imported for review. Parser support is still needed."
+          : sourceType === "watched_audio_file"
+            ? "Audio imported and queued for transcription."
             : "Imported, finalized, and archived."
       );
       await refreshBucket();
@@ -2216,6 +2327,49 @@ export function App() {
     }
   }
 
+  function updateMediaTypeDraft<Field extends keyof MediaTypeDraft>(
+    mediaTypeId: string,
+    field: Field,
+    value: MediaTypeDraft[Field]
+  ) {
+    setMediaTypeDrafts((current) => ({
+      ...current,
+      [mediaTypeId]: {
+        ...(current[mediaTypeId] ?? defaultNewMediaTypeDraft),
+        [field]: value
+      }
+    }));
+  }
+
+  function updateParserTypeDraft<Field extends keyof ParserTypeDraft>(
+    parserTypeId: string,
+    field: Field,
+    value: ParserTypeDraft[Field]
+  ) {
+    setParserTypeDrafts((current) => ({
+      ...current,
+      [parserTypeId]: {
+        ...(current[parserTypeId] ?? defaultNewParserTypeDraft),
+        [field]: value
+      }
+    }));
+  }
+
+  function updateFileTypeDraft<Field extends keyof FileTypeDraft>(
+    fileTypeId: string,
+    field: Field,
+    value: FileTypeDraft[Field]
+  ) {
+    setFileTypeDrafts((current) => ({
+      ...current,
+      [fileTypeId]: {
+        ...(current[fileTypeId] ?? { mediaKind: "text", parserKey: "", capabilityState: "inactive" }),
+        [field]: value,
+        ...(field === "mediaKind" ? { parserKey: "" } : {})
+      }
+    }));
+  }
+
   function updateNewFileTypeDraft<Field extends keyof NewFileTypeDraft>(
     field: Field,
     value: NewFileTypeDraft[Field]
@@ -2227,6 +2381,173 @@ export function App() {
       }
       return next;
     });
+  }
+
+  function updateNewMediaTypeDraft<Field extends keyof MediaTypeDraft>(field: Field, value: MediaTypeDraft[Field]) {
+    setNewMediaTypeDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateNewParserTypeDraft<Field extends keyof ParserTypeDraft>(
+    field: Field,
+    value: ParserTypeDraft[Field]
+  ) {
+    setNewParserTypeDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function createMediaType() {
+    if (accessToken === null) {
+      return;
+    }
+    setMediaTypeCreateInFlight(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/media-types", {
+        method: "POST",
+        body: JSON.stringify(newMediaTypeDraft)
+      });
+      setNewMediaTypeDraft(defaultNewMediaTypeDraft);
+      await loadSettings(accessToken);
+      setStatusMessage("Media type added.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to add media type.");
+    } finally {
+      setMediaTypeCreateInFlight(false);
+    }
+  }
+
+  async function saveMediaType(mediaTypeId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    const draft = mediaTypeDrafts[mediaTypeId];
+    if (draft === undefined) {
+      return;
+    }
+    setMediaTypeIdInFlight(mediaTypeId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/media-types/${encodeURIComponent(mediaTypeId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(draft)
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Media type saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save media type.");
+    } finally {
+      setMediaTypeIdInFlight(null);
+    }
+  }
+
+  async function deleteMediaType(mediaType: MediaTypeSetting) {
+    if (accessToken === null || !window.confirm(`Remove media type "${mediaType.displayName}"?`)) {
+      return;
+    }
+    setMediaTypeIdInFlight(mediaType.id);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/media-types/${encodeURIComponent(mediaType.id)}`, {
+        method: "DELETE"
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Media type removed.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to remove media type.");
+    } finally {
+      setMediaTypeIdInFlight(null);
+    }
+  }
+
+  async function createParserType() {
+    if (accessToken === null) {
+      return;
+    }
+    setParserTypeCreateInFlight(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/parser-types", {
+        method: "POST",
+        body: JSON.stringify(newParserTypeDraft)
+      });
+      setNewParserTypeDraft(defaultNewParserTypeDraft);
+      await loadSettings(accessToken);
+      setStatusMessage("Parser type added.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to add parser type.");
+    } finally {
+      setParserTypeCreateInFlight(false);
+    }
+  }
+
+  async function saveParserType(parserTypeId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    const draft = parserTypeDrafts[parserTypeId];
+    if (draft === undefined) {
+      return;
+    }
+    setParserTypeIdInFlight(parserTypeId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/parser-types/${encodeURIComponent(parserTypeId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(draft)
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Parser type saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save parser type.");
+    } finally {
+      setParserTypeIdInFlight(null);
+    }
+  }
+
+  async function deleteParserType(parserType: ParserTypeSetting) {
+    if (accessToken === null || !window.confirm(`Remove parser type "${parserType.displayName}"?`)) {
+      return;
+    }
+    setParserTypeIdInFlight(parserType.id);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/parser-types/${encodeURIComponent(parserType.id)}`, {
+        method: "DELETE"
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Parser type removed.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to remove parser type.");
+    } finally {
+      setParserTypeIdInFlight(null);
+    }
+  }
+
+  async function saveFileType(fileTypeId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    const draft = fileTypeDrafts[fileTypeId];
+    if (draft === undefined) {
+      return;
+    }
+    setFileTypeIdInFlight(fileTypeId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/file-types/${encodeURIComponent(fileTypeId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          mediaKind: draft.mediaKind,
+          parserKey: draft.parserKey === "" ? null : draft.parserKey,
+          capabilityState: draft.capabilityState
+        })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("File type saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save file type.");
+    } finally {
+      setFileTypeIdInFlight(null);
+    }
   }
 
   async function createFileType() {
@@ -2257,6 +2578,25 @@ export function App() {
       setStatusMessage(error instanceof Error ? error.message : "Unable to add file type.");
     } finally {
       setFileTypeCreateInFlight(false);
+    }
+  }
+
+  async function deleteFileType(fileType: FileTypeSetting) {
+    if (accessToken === null || !window.confirm(`Remove file type "${fileType.extension}"?`)) {
+      return;
+    }
+    setFileTypeIdInFlight(fileType.id);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/file-types/${encodeURIComponent(fileType.id)}`, {
+        method: "DELETE"
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("File type removed.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to remove file type.");
+    } finally {
+      setFileTypeIdInFlight(null);
     }
   }
 
@@ -3533,6 +3873,308 @@ export function App() {
                 </section>
               ) : activeSettingsSection === "file-types" ? (
                 <section className="detail-section" aria-label="File types">
+                  <div className="settings-row-header">
+                    <div className="section-title">
+                      <Settings size={18} />
+                      <h3>Media types</h3>
+                    </div>
+                    <span className="detail-count">{settingsSummary.mediaTypes.length} configured</span>
+                  </div>
+                  <form
+                    className="settings-inline-form registry-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void createMediaType();
+                    }}
+                  >
+                    <label>
+                      Key
+                      <input
+                        value={newMediaTypeDraft.mediaKey}
+                        onChange={(event) => updateNewMediaTypeDraft("mediaKey", event.currentTarget.value)}
+                        placeholder="document"
+                      />
+                    </label>
+                    <label>
+                      Name
+                      <input
+                        value={newMediaTypeDraft.displayName}
+                        onChange={(event) => updateNewMediaTypeDraft("displayName", event.currentTarget.value)}
+                        placeholder="Document"
+                      />
+                    </label>
+                    <label>
+                      Description
+                      <input
+                        value={newMediaTypeDraft.description}
+                        onChange={(event) => updateNewMediaTypeDraft("description", event.currentTarget.value)}
+                        placeholder="Future document imports"
+                      />
+                    </label>
+                    <label>
+                      Status
+                      <select
+                        value={newMediaTypeDraft.capabilityState}
+                        onChange={(event) =>
+                          updateNewMediaTypeDraft(
+                            "capabilityState",
+                            event.currentTarget.value as FileTypeCapabilityState
+                          )
+                        }
+                      >
+                        <option value="active">active</option>
+                        <option value="inactive">inactive</option>
+                        <option value="not_supported_yet">not supported yet</option>
+                      </select>
+                    </label>
+                    <button className="secondary-button" type="submit" disabled={mediaTypeCreateInFlight}>
+                      <Plus size={16} />
+                      Add media
+                    </button>
+                  </form>
+                  <div className="settings-table registry-table">
+                    <div className="settings-table-header">
+                      <span>Key</span>
+                      <span>Name</span>
+                      <span>Description</span>
+                      <span>Status</span>
+                      <span>Actions</span>
+                    </div>
+                    {settingsSummary.mediaTypes.map((mediaType) => {
+                      const draft = mediaTypeDrafts[mediaType.id] ?? {
+                        mediaKey: mediaType.mediaKey,
+                        displayName: mediaType.displayName,
+                        description: mediaType.description ?? "",
+                        capabilityState: mediaType.capabilityState
+                      };
+                      return (
+                        <div className="settings-table-row" key={mediaType.id}>
+                          <input
+                            value={draft.mediaKey}
+                            onChange={(event) => updateMediaTypeDraft(mediaType.id, "mediaKey", event.currentTarget.value)}
+                          />
+                          <input
+                            value={draft.displayName}
+                            onChange={(event) =>
+                              updateMediaTypeDraft(mediaType.id, "displayName", event.currentTarget.value)
+                            }
+                          />
+                          <input
+                            value={draft.description}
+                            onChange={(event) =>
+                              updateMediaTypeDraft(mediaType.id, "description", event.currentTarget.value)
+                            }
+                          />
+                          <select
+                            value={draft.capabilityState}
+                            onChange={(event) =>
+                              updateMediaTypeDraft(
+                                mediaType.id,
+                                "capabilityState",
+                                event.currentTarget.value as FileTypeCapabilityState
+                              )
+                            }
+                          >
+                            <option value="active">active</option>
+                            <option value="inactive">inactive</option>
+                            <option value="not_supported_yet">not supported yet</option>
+                          </select>
+                          <div className="settings-table-actions">
+                            <button
+                              className="secondary-button icon-only"
+                              type="button"
+                              title="Save media type"
+                              aria-label="Save media type"
+                              disabled={mediaTypeIdInFlight === mediaType.id}
+                              onClick={() => void saveMediaType(mediaType.id)}
+                            >
+                              <Save size={15} />
+                            </button>
+                            <button
+                              className="row-action-button danger icon-only"
+                              type="button"
+                              title="Remove media type"
+                              aria-label="Remove media type"
+                              disabled={mediaTypeIdInFlight === mediaType.id}
+                              onClick={() => void deleteMediaType(mediaType)}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="settings-row-header">
+                    <div className="section-title">
+                      <Settings size={18} />
+                      <h3>Parser types</h3>
+                    </div>
+                    <span className="detail-count">{settingsSummary.parserTypes.length} configured</span>
+                  </div>
+                  <form
+                    className="settings-inline-form parser-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void createParserType();
+                    }}
+                  >
+                    <label>
+                      Key
+                      <input
+                        value={newParserTypeDraft.parserKey}
+                        onChange={(event) => updateNewParserTypeDraft("parserKey", event.currentTarget.value)}
+                        placeholder="whisper-cpp"
+                      />
+                    </label>
+                    <label>
+                      Name
+                      <input
+                        value={newParserTypeDraft.displayName}
+                        onChange={(event) => updateNewParserTypeDraft("displayName", event.currentTarget.value)}
+                        placeholder="Whisper.cpp"
+                      />
+                    </label>
+                    <label>
+                      Description
+                      <input
+                        value={newParserTypeDraft.description}
+                        onChange={(event) => updateNewParserTypeDraft("description", event.currentTarget.value)}
+                        placeholder="Transcribe audio files"
+                      />
+                    </label>
+                    <label>
+                      Media
+                      <select
+                        value={newParserTypeDraft.mediaKey}
+                        onChange={(event) => updateNewParserTypeDraft("mediaKey", event.currentTarget.value)}
+                      >
+                        {settingsSummary.mediaTypes.map((mediaType) => (
+                          <option value={mediaType.mediaKey} key={mediaType.id}>
+                            {mediaType.displayName} ({mediaType.capabilityState})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Status
+                      <select
+                        value={newParserTypeDraft.capabilityState}
+                        onChange={(event) =>
+                          updateNewParserTypeDraft(
+                            "capabilityState",
+                            event.currentTarget.value as FileTypeCapabilityState
+                          )
+                        }
+                      >
+                        <option value="active">active</option>
+                        <option value="inactive">inactive</option>
+                        <option value="not_supported_yet">not supported yet</option>
+                      </select>
+                    </label>
+                    <button className="secondary-button" type="submit" disabled={parserTypeCreateInFlight}>
+                      <Plus size={16} />
+                      Add parser
+                    </button>
+                  </form>
+                  <div className="settings-table registry-table parser-registry-table">
+                    <div className="settings-table-header">
+                      <span>Key</span>
+                      <span>Name</span>
+                      <span>Description</span>
+                      <span>Media</span>
+                      <span>Status</span>
+                      <span>Actions</span>
+                    </div>
+                    {settingsSummary.parserTypes.map((parserType) => {
+                      const draft = parserTypeDrafts[parserType.id] ?? {
+                        parserKey: parserType.parserKey,
+                        displayName: parserType.displayName,
+                        description: parserType.description ?? "",
+                        mediaKey: parserType.mediaKey,
+                        capabilityState: parserType.capabilityState
+                      };
+                      return (
+                        <div className="settings-table-row" key={parserType.id}>
+                          <input
+                            value={draft.parserKey}
+                            onChange={(event) =>
+                              updateParserTypeDraft(parserType.id, "parserKey", event.currentTarget.value)
+                            }
+                          />
+                          <input
+                            value={draft.displayName}
+                            onChange={(event) =>
+                              updateParserTypeDraft(parserType.id, "displayName", event.currentTarget.value)
+                            }
+                          />
+                          <input
+                            value={draft.description}
+                            onChange={(event) =>
+                              updateParserTypeDraft(parserType.id, "description", event.currentTarget.value)
+                            }
+                          />
+                          <select
+                            value={draft.mediaKey}
+                            onChange={(event) =>
+                              updateParserTypeDraft(parserType.id, "mediaKey", event.currentTarget.value)
+                            }
+                          >
+                            {settingsSummary.mediaTypes.map((mediaType) => (
+                              <option value={mediaType.mediaKey} key={mediaType.id}>
+                                {mediaType.displayName} ({mediaType.capabilityState})
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={draft.capabilityState}
+                            onChange={(event) =>
+                              updateParserTypeDraft(
+                                parserType.id,
+                                "capabilityState",
+                                event.currentTarget.value as FileTypeCapabilityState
+                              )
+                            }
+                          >
+                            <option value="active">active</option>
+                            <option value="inactive">inactive</option>
+                            <option value="not_supported_yet">not supported yet</option>
+                          </select>
+                          <div className="settings-table-actions">
+                            <button
+                              className="secondary-button icon-only"
+                              type="button"
+                              title="Save parser type"
+                              aria-label="Save parser type"
+                              disabled={parserTypeIdInFlight === parserType.id}
+                              onClick={() => void saveParserType(parserType.id)}
+                            >
+                              <Save size={15} />
+                            </button>
+                            <button
+                              className="row-action-button danger icon-only"
+                              type="button"
+                              title="Remove parser type"
+                              aria-label="Remove parser type"
+                              disabled={parserTypeIdInFlight === parserType.id}
+                              onClick={() => void deleteParserType(parserType)}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="settings-row-header">
+                    <div className="section-title">
+                      <FolderInput size={18} />
+                      <h3>File extension mappings</h3>
+                    </div>
+                    <span className="detail-count">{settingsSummary.fileTypes.length} configured</span>
+                  </div>
                   <form
                     className="settings-inline-form file-type-form"
                     onSubmit={(event) => {
@@ -3552,12 +4194,13 @@ export function App() {
                       Media
                       <select
                         value={newFileTypeDraft.mediaKind}
-                        onChange={(event) =>
-                          updateNewFileTypeDraft("mediaKind", event.currentTarget.value as FileTypeMediaKind)
-                        }
+                        onChange={(event) => updateNewFileTypeDraft("mediaKind", event.currentTarget.value)}
                       >
-                        <option value="text">text</option>
-                        <option value="audio">audio</option>
+                        {settingsSummary.mediaTypes.map((mediaType) => (
+                          <option value={mediaType.mediaKey} key={mediaType.id}>
+                            {mediaType.displayName} ({mediaType.capabilityState})
+                          </option>
+                        ))}
                       </select>
                     </label>
                     <label>
@@ -3567,14 +4210,13 @@ export function App() {
                         onChange={(event) => updateNewFileTypeDraft("parserKey", event.currentTarget.value)}
                       >
                         <option value="">Needs parser support</option>
-                        {newFileTypeDraft.mediaKind === "text" ? (
-                          <>
-                            <option value="plain-text">plain-text</option>
-                            <option value="markdown">markdown</option>
-                          </>
-                        ) : (
-                          <option value="audio">audio</option>
-                        )}
+                        {settingsSummary.parserTypes
+                          .filter((parserType) => parserType.mediaKey === newFileTypeDraft.mediaKind)
+                          .map((parserType) => (
+                            <option value={parserType.parserKey} key={parserType.id}>
+                              {parserType.displayName} ({parserType.capabilityState})
+                            </option>
+                          ))}
                       </select>
                     </label>
                     <label>
@@ -3604,25 +4246,79 @@ export function App() {
                       <span>Media</span>
                       <span>Parser</span>
                       <span>Status</span>
-                      <span>Active</span>
+                      <span>Actions</span>
                     </div>
-                    {settingsSummary.fileTypes.map((fileType) => (
-                      <div className="settings-table-row" key={fileType.id}>
-                        <strong>{fileType.extension}</strong>
-                        <span>{fileType.mediaKind}</span>
-                        <span>{fileType.parserKey ?? "none"}</span>
-                        <span>{fileType.capabilityState}</span>
-                        <label className="toggle-row">
-                          <input
-                            type="checkbox"
-                            checked={fileType.capabilityState === "active"}
-                            disabled={fileTypeIdInFlight === fileType.id}
-                            onChange={(event) => void toggleFileType(fileType.id, event.currentTarget.checked)}
-                          />
-                          Enabled
-                        </label>
-                      </div>
-                    ))}
+                    {settingsSummary.fileTypes.map((fileType) => {
+                      const draft = fileTypeDrafts[fileType.id] ?? {
+                        mediaKind: fileType.mediaKind,
+                        parserKey: fileType.parserKey ?? "",
+                        capabilityState: fileType.capabilityState
+                      };
+                      return (
+                        <div className="settings-table-row" key={fileType.id}>
+                          <strong>{fileType.extension}</strong>
+                          <select
+                            value={draft.mediaKind}
+                            onChange={(event) => updateFileTypeDraft(fileType.id, "mediaKind", event.currentTarget.value)}
+                          >
+                            {settingsSummary.mediaTypes.map((mediaType) => (
+                              <option value={mediaType.mediaKey} key={mediaType.id}>
+                                {mediaType.displayName} ({mediaType.capabilityState})
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={draft.parserKey}
+                            onChange={(event) => updateFileTypeDraft(fileType.id, "parserKey", event.currentTarget.value)}
+                          >
+                            <option value="">Needs parser support</option>
+                            {settingsSummary.parserTypes
+                              .filter((parserType) => parserType.mediaKey === draft.mediaKind)
+                              .map((parserType) => (
+                                <option value={parserType.parserKey} key={parserType.id}>
+                                  {parserType.displayName} ({parserType.capabilityState})
+                                </option>
+                              ))}
+                          </select>
+                          <select
+                            value={draft.capabilityState}
+                            onChange={(event) =>
+                              updateFileTypeDraft(
+                                fileType.id,
+                                "capabilityState",
+                                event.currentTarget.value as FileTypeCapabilityState
+                              )
+                            }
+                          >
+                            <option value="inactive">inactive</option>
+                            <option value="active">active</option>
+                            <option value="not_supported_yet">not supported yet</option>
+                          </select>
+                          <div className="settings-table-actions">
+                            <button
+                              className="secondary-button icon-only"
+                              type="button"
+                              title="Save file type"
+                              aria-label="Save file type"
+                              disabled={fileTypeIdInFlight === fileType.id}
+                              onClick={() => void saveFileType(fileType.id)}
+                            >
+                              <Save size={15} />
+                            </button>
+                            <button
+                              className="row-action-button danger icon-only"
+                              type="button"
+                              title="Remove file type"
+                              aria-label="Remove file type"
+                              disabled={fileTypeIdInFlight === fileType.id}
+                              onClick={() => void deleteFileType(fileType)}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </section>
               ) : activeSettingsSection === "prompts" ? (
@@ -3913,6 +4609,8 @@ async function requestJson<Result>(path: string, init: RequestInit = {}): Promis
 function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
   return {
     ...summary,
+    mediaTypes: Array.isArray(summary.mediaTypes) ? summary.mediaTypes : [],
+    parserTypes: Array.isArray(summary.parserTypes) ? summary.parserTypes : [],
     fileTypes: Array.isArray(summary.fileTypes) ? summary.fileTypes : [],
     providers: Array.isArray(summary.providers) ? summary.providers : [],
     prompts: Array.isArray(summary.prompts)

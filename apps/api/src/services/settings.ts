@@ -2,7 +2,13 @@ import type { ApiConfig } from "../config.js";
 import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import type { AppUserRecord } from "../repositories/rows.js";
-import { SettingsRepository, type PromptDefinitionRow, type ProviderConfigRow } from "../repositories/settings.js";
+import {
+  SettingsRepository,
+  type MediaTypeSettingRow,
+  type ParserTypeSettingRow,
+  type PromptDefinitionRow,
+  type ProviderConfigRow
+} from "../repositories/settings.js";
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
 import { normalizePromptContextConfig } from "./llm.js";
 
@@ -14,7 +20,9 @@ export class SettingsService {
 
   async getSummary(): Promise<Record<string, unknown>> {
     const settings = new SettingsRepository(this.db);
-    const [fileTypes, extraction, transcription, providers, prompts] = await Promise.all([
+    const [mediaTypes, parserTypes, fileTypes, extraction, transcription, providers, prompts] = await Promise.all([
+      settings.listMediaTypes(),
+      settings.listParserTypes(),
       settings.listFileTypes(),
       settings.getExtractionSettings(),
       settings.getTranscriptionSettings(),
@@ -23,14 +31,9 @@ export class SettingsService {
     ]);
 
     return {
-      fileTypes: fileTypes.map((row) => ({
-        id: row.id,
-        extension: row.extension,
-        mediaKind: row.media_kind,
-        capabilityState: row.capability_state,
-        parserKey: row.parser_key,
-        updatedAt: toIso(row.updated_at)
-      })),
+      mediaTypes: mediaTypes.map(serializeMediaType),
+      parserTypes: parserTypes.map(serializeParserType),
+      fileTypes: fileTypes.map(serializeFileType),
       extraction: extraction === null
         ? null
         : {
@@ -156,6 +159,7 @@ export class SettingsService {
       if (existing !== null) {
         throw new HttpError(409, "file_type_exists", "A file type setting already exists for this extension.");
       }
+      await validateMediaParserSelection(settings, input.mediaKind, input.parserKey);
       const fileType = await settings.createFileType({ ...input, actorUserId: actor.id });
       await audit.record({
         eventName: "file_type_settings.created",
@@ -184,7 +188,17 @@ export class SettingsService {
     return this.db.transaction(async (client) => {
       const settings = new SettingsRepository(client);
       const audit = new AuditRepository(client);
-      const fileType = await settings.updateFileType({ fileTypeId, ...input, actorUserId: actor.id });
+      const current = await settings.findFileTypeById(fileTypeId);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "file_type_settings row was not found.");
+      }
+      const update = {
+        mediaKind: input.mediaKind ?? current.media_kind,
+        capabilityState: input.capabilityState ?? current.capability_state,
+        parserKey: input.parserKey === undefined ? current.parser_key : input.parserKey
+      };
+      await validateMediaParserSelection(settings, update.mediaKind, update.parserKey);
+      const fileType = await settings.updateFileType({ fileTypeId, ...update, actorUserId: actor.id });
       if (fileType === null) {
         throw new HttpError(404, "not_found", "file_type_settings row was not found.");
       }
@@ -197,10 +211,224 @@ export class SettingsService {
         metadata: {
           extension: fileType.extension,
           mediaKind: fileType.media_kind,
-          capabilityState: fileType.capability_state
+          capabilityState: fileType.capability_state,
+          parserKey: fileType.parser_key
         }
       });
       return { fileType: serializeFileType(fileType) };
+    });
+  }
+
+  async deleteFileType(
+    fileTypeId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const fileType = await settings.deleteFileType(fileTypeId);
+      if (fileType === null) {
+        throw new HttpError(404, "not_found", "file_type_settings row was not found.");
+      }
+      await audit.record({
+        eventName: "file_type_settings.deleted",
+        actor,
+        subjectType: "file_type_settings",
+        subjectId: fileType.id,
+        requestId,
+        metadata: serializeFileType(fileType)
+      });
+      return { deleted: true, fileType: serializeFileType(fileType) };
+    });
+  }
+
+  async createMediaType(
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseMediaTypeBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findMediaTypeByKey(input.mediaKey);
+      if (existing !== null) {
+        throw new HttpError(409, "media_type_exists", "A media type already exists for this key.");
+      }
+      const mediaType = await settings.createMediaType({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "media_type_settings.created",
+        actor,
+        subjectType: "media_type_settings",
+        subjectId: mediaType.id,
+        requestId,
+        metadata: serializeMediaType(mediaType)
+      });
+      return { mediaType: serializeMediaType(mediaType) };
+    });
+  }
+
+  async updateMediaType(
+    mediaTypeId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseMediaTypeBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findMediaTypeByKey(input.mediaKey);
+      if (existing !== null && existing.id !== mediaTypeId) {
+        throw new HttpError(409, "media_type_exists", "A media type already exists for this key.");
+      }
+      const mediaType = await settings.updateMediaType({ mediaTypeId, ...input, actorUserId: actor.id });
+      if (mediaType === null) {
+        throw new HttpError(404, "not_found", "media_type_settings row was not found.");
+      }
+      await audit.record({
+        eventName: "media_type_settings.updated",
+        actor,
+        subjectType: "media_type_settings",
+        subjectId: mediaType.id,
+        requestId,
+        metadata: serializeMediaType(mediaType)
+      });
+      return { mediaType: serializeMediaType(mediaType) };
+    });
+  }
+
+  async deleteMediaType(
+    mediaTypeId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const current = await settings.findMediaTypeById(mediaTypeId);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "media_type_settings row was not found.");
+      }
+      const [fileTypeCount, parserTypeCount] = await Promise.all([
+        settings.countFileTypesForMediaKey(current.media_key),
+        settings.countParserTypesForMediaKey(current.media_key)
+      ]);
+      if (fileTypeCount > 0 || parserTypeCount > 0) {
+        throw new HttpError(
+          409,
+          "media_type_in_use",
+          "Remove file type and parser type references before deleting this media type."
+        );
+      }
+      const mediaType = await settings.deleteMediaType(mediaTypeId);
+      if (mediaType === null) {
+        throw new HttpError(404, "not_found", "media_type_settings row was not found.");
+      }
+      await audit.record({
+        eventName: "media_type_settings.deleted",
+        actor,
+        subjectType: "media_type_settings",
+        subjectId: mediaType.id,
+        requestId,
+        metadata: serializeMediaType(mediaType)
+      });
+      return { deleted: true, mediaType: serializeMediaType(mediaType) };
+    });
+  }
+
+  async createParserType(
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseParserTypeBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findParserTypeByKey(input.parserKey);
+      if (existing !== null) {
+        throw new HttpError(409, "parser_type_exists", "A parser type already exists for this key.");
+      }
+      await requireMediaType(settings, input.mediaKey);
+      const parserType = await settings.createParserType({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "parser_type_settings.created",
+        actor,
+        subjectType: "parser_type_settings",
+        subjectId: parserType.id,
+        requestId,
+        metadata: serializeParserType(parserType)
+      });
+      return { parserType: serializeParserType(parserType) };
+    });
+  }
+
+  async updateParserType(
+    parserTypeId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseParserTypeBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findParserTypeByKey(input.parserKey);
+      if (existing !== null && existing.id !== parserTypeId) {
+        throw new HttpError(409, "parser_type_exists", "A parser type already exists for this key.");
+      }
+      await requireMediaType(settings, input.mediaKey);
+      const parserType = await settings.updateParserType({ parserTypeId, ...input, actorUserId: actor.id });
+      if (parserType === null) {
+        throw new HttpError(404, "not_found", "parser_type_settings row was not found.");
+      }
+      await audit.record({
+        eventName: "parser_type_settings.updated",
+        actor,
+        subjectType: "parser_type_settings",
+        subjectId: parserType.id,
+        requestId,
+        metadata: serializeParserType(parserType)
+      });
+      return { parserType: serializeParserType(parserType) };
+    });
+  }
+
+  async deleteParserType(
+    parserTypeId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const current = await settings.findParserTypeById(parserTypeId);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "parser_type_settings row was not found.");
+      }
+      const fileTypeCount = await settings.countFileTypesForParserKey(current.parser_key);
+      if (fileTypeCount > 0) {
+        throw new HttpError(
+          409,
+          "parser_type_in_use",
+          "Remove file type references before deleting this parser type."
+        );
+      }
+      const parserType = await settings.deleteParserType(parserTypeId);
+      if (parserType === null) {
+        throw new HttpError(404, "not_found", "parser_type_settings row was not found.");
+      }
+      await audit.record({
+        eventName: "parser_type_settings.deleted",
+        actor,
+        subjectType: "parser_type_settings",
+        subjectId: parserType.id,
+        requestId,
+        metadata: serializeParserType(parserType)
+      });
+      return { deleted: true, parserType: serializeParserType(parserType) };
     });
   }
 
@@ -248,6 +476,29 @@ export class SettingsService {
       };
     });
   }
+}
+
+function serializeMediaType(row: MediaTypeSettingRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    mediaKey: row.media_key,
+    displayName: row.display_name,
+    description: row.description,
+    capabilityState: row.capability_state,
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function serializeParserType(row: ParserTypeSettingRow): Record<string, unknown> {
+  return {
+    id: row.id,
+    parserKey: row.parser_key,
+    displayName: row.display_name,
+    description: row.description,
+    mediaKey: row.media_key,
+    capabilityState: row.capability_state,
+    updatedAt: toIso(row.updated_at)
+  };
 }
 
 function serializeFileType(row: {
@@ -349,39 +600,47 @@ function parseFileTypeBody(body: unknown) {
   if (typeof record.active === "boolean") {
     return { capabilityState: record.active ? "active" : "inactive" };
   }
-  const capabilityState = assertNonEmptyString(record.capabilityState, "capabilityState");
-  if (!["active", "inactive", "not_supported_yet"].includes(capabilityState)) {
-    throw new HttpError(
-      400,
-      "invalid_request",
-      "capabilityState must be active, inactive, or not_supported_yet."
-    );
-  }
-  return { capabilityState };
+  return {
+    mediaKind: record.mediaKind === undefined ? undefined : parseConfigKey(record.mediaKind, "mediaKind"),
+    capabilityState:
+      record.capabilityState === undefined ? undefined : parseCapabilityState(record.capabilityState),
+    parserKey: record.parserKey === undefined ? undefined : parseParserKey(record.parserKey)
+  };
 }
 
 function parseCreateFileTypeBody(body: unknown) {
   const record = parseObject(body);
   const extension = normalizeExtension(assertNonEmptyString(record.extension, "extension"));
-  const mediaKind = assertNonEmptyString(record.mediaKind, "mediaKind");
-  if (mediaKind !== "text" && mediaKind !== "audio") {
-    throw new HttpError(400, "invalid_request", "mediaKind must be text or audio.");
-  }
+  const mediaKind = parseConfigKey(record.mediaKind, "mediaKind");
   const capabilityState =
     typeof record.active === "boolean"
       ? record.active ? "active" : "inactive"
       : record.capabilityState === undefined
         ? "inactive"
-        : assertNonEmptyString(record.capabilityState, "capabilityState");
-  if (!["active", "inactive", "not_supported_yet"].includes(capabilityState)) {
-    throw new HttpError(
-      400,
-      "invalid_request",
-      "capabilityState must be active, inactive, or not_supported_yet."
-    );
-  }
+        : parseCapabilityState(record.capabilityState);
   const parserKey = parseParserKey(record.parserKey);
   return { extension, mediaKind, capabilityState, parserKey };
+}
+
+function parseMediaTypeBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    mediaKey: parseConfigKey(record.mediaKey, "mediaKey"),
+    displayName: assertNonEmptyString(record.displayName, "displayName"),
+    description: record.description === undefined ? null : optionalString(record.description, "description"),
+    capabilityState: parseCapabilityState(record.capabilityState)
+  };
+}
+
+function parseParserTypeBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    parserKey: parseConfigKey(record.parserKey, "parserKey"),
+    displayName: assertNonEmptyString(record.displayName, "displayName"),
+    description: record.description === undefined ? null : optionalString(record.description, "description"),
+    mediaKey: parseConfigKey(record.mediaKey, "mediaKey"),
+    capabilityState: parseCapabilityState(record.capabilityState)
+  };
 }
 
 function normalizeExtension(value: string): string {
@@ -404,14 +663,60 @@ function parseParserKey(value: unknown): string | null {
   if (typeof value !== "string") {
     throw new HttpError(400, "invalid_request", "parserKey must be a string when provided.");
   }
-  const parserKey = value.trim().toLowerCase();
-  if (parserKey === "" || parserKey === "none") {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed === "" || trimmed === "none") {
     return null;
   }
+  return parseConfigKey(trimmed, "parserKey");
+}
+
+function parseConfigKey(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new HttpError(400, "invalid_request", `${field} must be a string.`);
+  }
+  const parserKey = value.trim().toLowerCase();
   if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(parserKey)) {
-    throw new HttpError(400, "invalid_request", "parserKey contains unsupported characters.");
+    throw new HttpError(400, "invalid_request", `${field} contains unsupported characters.`);
   }
   return parserKey;
+}
+
+function parseCapabilityState(value: unknown): string {
+  const capabilityState = assertNonEmptyString(value, "capabilityState");
+  if (!["active", "inactive", "not_supported_yet"].includes(capabilityState)) {
+    throw new HttpError(
+      400,
+      "invalid_request",
+      "capabilityState must be active, inactive, or not_supported_yet."
+    );
+  }
+  return capabilityState;
+}
+
+async function requireMediaType(settings: SettingsRepository, mediaKey: string): Promise<MediaTypeSettingRow> {
+  const mediaType = await settings.findMediaTypeByKey(mediaKey);
+  if (mediaType === null) {
+    throw new HttpError(400, "invalid_request", "mediaKind must reference a configured media type.");
+  }
+  return mediaType;
+}
+
+async function validateMediaParserSelection(
+  settings: SettingsRepository,
+  mediaKey: string,
+  parserKey: string | null
+): Promise<void> {
+  await requireMediaType(settings, mediaKey);
+  if (parserKey === null) {
+    return;
+  }
+  const parserType = await settings.findParserTypeByKey(parserKey);
+  if (parserType === null) {
+    throw new HttpError(400, "invalid_request", "parserKey must reference a configured parser type.");
+  }
+  if (parserType.media_key !== mediaKey) {
+    throw new HttpError(400, "invalid_request", "parserKey is not compatible with the selected media type.");
+  }
 }
 
 function parsePromptVersionBody(body: unknown) {

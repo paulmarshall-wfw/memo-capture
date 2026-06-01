@@ -14,7 +14,12 @@ import {
   SourceMemoArtifactRepository,
   SourceMemoRepository
 } from "../repositories/source-memos.js";
-import { SettingsRepository, type FileTypeSettingRow } from "../repositories/settings.js";
+import {
+  SettingsRepository,
+  type FileTypeSettingRow,
+  type MediaTypeSettingRow,
+  type ParserTypeSettingRow
+} from "../repositories/settings.js";
 import { WorkItemRepository } from "../repositories/work-items.js";
 import type { ObjectStorageService } from "./object-storage.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
@@ -205,11 +210,11 @@ export class ImportService {
         throw new HttpError(409, "upload_session_not_finalizable", "Upload session is not ready to finalize.");
       }
 
-      const fileType = await assertActiveWatchedFileType(client, {
+      const support = await assertActiveWatchedFileType(client, {
         sourceType: session.sourceType,
         originalFilename: session.originalFilename
       });
-      const finalize = hasImplementedParser(fileType)
+      const finalize = hasImplementedParser(support)
         ? session.sourceType === "watched_audio_file"
           ? finalizeWatchedAudioImport
           : finalizeWatchedTextImport
@@ -219,7 +224,7 @@ export class ImportService {
         client,
         objectStorage: this.objectStorage,
         session,
-        fileType,
+        fileType: support.fileType,
         actor,
         requestId,
         archivePlanned: input.archivePlanned
@@ -721,12 +726,19 @@ async function assertSupportedWatchedImport(db: Queryable, input: CreateUploadSe
   await assertActiveWatchedFileType(db, input);
 }
 
+interface ActiveWatchedFileType {
+  fileType: FileTypeSettingRow;
+  mediaType: MediaTypeSettingRow;
+  parserType: ParserTypeSettingRow | null;
+}
+
 async function assertActiveWatchedFileType(
   db: Queryable,
   input: Pick<CreateUploadSessionRequest, "sourceType" | "originalFilename">
-): Promise<FileTypeSettingRow> {
+): Promise<ActiveWatchedFileType> {
   const extension = extensionFromFilename(input.originalFilename);
-  const fileType = extension === null ? null : await new SettingsRepository(db).findFileTypeByExtension(extension);
+  const settings = new SettingsRepository(db);
+  const fileType = extension === null ? null : await settings.findFileTypeByExtension(extension);
   const expectedMediaKind = input.sourceType === "watched_audio_file" ? "audio" : "text";
   if (
     fileType === null ||
@@ -735,14 +747,26 @@ async function assertActiveWatchedFileType(
   ) {
     throw new HttpError(400, "unsupported_file_type", "Watched import does not support this file extension.");
   }
-  return fileType;
+  const mediaType = await settings.findMediaTypeByKey(fileType.media_kind);
+  if (mediaType === null || mediaType.capability_state !== "active") {
+    throw new HttpError(400, "unsupported_file_type", "Watched import does not support this media type.");
+  }
+  const parserType =
+    fileType.parser_key === null ? null : await settings.findParserTypeByKey(fileType.parser_key);
+  if (parserType !== null && parserType.media_key !== fileType.media_kind) {
+    throw new HttpError(400, "unsupported_file_type", "Watched import parser is not compatible with this media type.");
+  }
+  return { fileType, mediaType, parserType };
 }
 
-function hasImplementedParser(fileType: FileTypeSettingRow): boolean {
-  if (fileType.media_kind === "audio") {
-    return fileType.parser_key === "audio";
+function hasImplementedParser(input: ActiveWatchedFileType): boolean {
+  if (input.parserType === null || input.parserType.capability_state !== "active") {
+    return false;
   }
-  return fileType.media_kind === "text" && ["markdown", "plain-text"].includes(fileType.parser_key ?? "");
+  if (input.fileType.media_kind === "audio") {
+    return input.parserType.parser_key === "audio-transcription";
+  }
+  return input.fileType.media_kind === "text" && ["markdown", "plain-text"].includes(input.parserType.parser_key);
 }
 
 function buildUnsupportedFileTypeBody(

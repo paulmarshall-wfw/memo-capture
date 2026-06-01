@@ -14,7 +14,12 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /Project synopsis/);
   assert.match(appSource, /Memo text\/transcript/);
   assert.match(appSource, /toggleFileType/);
+  assert.match(appSource, /Media types/);
+  assert.match(appSource, /Parser types/);
+  assert.match(appSource, /Whisper\.cpp/);
+  assert.match(appSource, /Remove parser type/);
   assert.match(appSource, /Add file type/);
+  assert.match(appSource, /Remove file type/);
   assert.match(appSource, /Needs parser support/);
   assert.match(appSource, /label="Strong"/);
   assert.match(appSource, /label="Related"/);
