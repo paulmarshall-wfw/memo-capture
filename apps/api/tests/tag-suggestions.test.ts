@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { WorkItemRecord } from "../src/repositories/work-items.js";
+import { extractKeywords } from "../src/services/keywords.js";
 import { buildTagSuggestionResponse } from "../src/services/work-items.js";
 
 test("tag suggestions are ranked into strong, related, and weak rows without selected tags", () => {
@@ -75,4 +76,34 @@ test("tag suggestions are ranked into strong, related, and weak rows without sel
   assert.equal(response.suggestions.strong.includes("Capture Pipeline"), true);
   assert.equal(response.suggestions.strong.includes("Review Queue"), true);
   assert.equal(response.suggestions.weak.includes("Local Dev"), true);
+});
+
+test("keyword extraction filters generic verbs and stop words from generated tags", () => {
+  const keywords = extractKeywords("Smoke test memo\nThis memo was created during the local run/test smoke pass.");
+  const names = new Set(keywords.map((keyword) => keyword.name.toLowerCase()));
+
+  assert.equal(names.has("was"), false);
+  assert.equal(names.has("created"), false);
+  assert.equal(names.has("during"), false);
+  assert.equal(names.has("run"), false);
+  assert.equal(names.has("test"), false);
+  assert.equal(names.has("local"), false);
+  assert.equal(names.has("smoke"), true);
+});
+
+test("keyword extraction prefers distinctive terms against a workspace corpus", () => {
+  const keywords = extractKeywords("Workflow Routing\nWorkflow Routing captures review queue routing decisions.", {
+    corpusTexts: [
+      "Daily memo created during local run test pass.",
+      "Another memo was created during the local test run.",
+      "Import review captures project metadata and contributor text."
+    ]
+  });
+  const names = new Set(keywords.map((keyword) => keyword.name.toLowerCase()));
+
+  assert.equal(names.has("workflow routing"), true);
+  assert.equal(names.has("created"), false);
+  assert.equal(names.has("during"), false);
+  assert.equal(names.has("local"), false);
+  assert.equal(names.has("run"), false);
 });

@@ -47,6 +47,7 @@ type LoadState = "loading" | "ready" | "error";
 type SaveState = "idle" | "saving" | "saved" | "error" | "conflict";
 type ActiveView = "work-items" | "projects" | "exports" | "settings" | "audit";
 type ThemeMode = "light" | "dark";
+type WorkQueueSyncState = "idle" | "syncing" | "connected" | "error";
 type WorkflowRuntimeEventFilter = "journal" | keyof WorkflowEventViews;
 type SettingsSectionId = "watched" | "file-types" | "prompts" | "providers" | "export" | "diagnostics";
 type FileTypeMediaKind = "text" | "audio";
@@ -1085,7 +1086,7 @@ function TagSuggestionRow(props: {
 }): ReactElement {
   return (
     <div className="tag-suggestion-row">
-      <span className="tag-suggestion-label">{props.label}</span>
+      <strong className="tag-suggestion-label">{props.label}</strong>
       <div className="tag-suggestion-list">
         {props.tags.length === 0 ? <span className="tag-empty">None</span> : null}
         {props.tags.map((tag) => (
@@ -1109,11 +1110,13 @@ export function App() {
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
-  const [actions, setActions] = useState<AllowedWorkflowAction[]>([]);
+  const [rowActionsByItemId, setRowActionsByItemId] = useState<Record<string, AllowedWorkflowAction[]>>({});
   const [projects, setProjects] = useState<Project[]>([]);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [search, setSearch] = useState("");
+  const [workQueueLastRefreshedAt, setWorkQueueLastRefreshedAt] = useState<Date | null>(null);
+  const [workQueueSyncState, setWorkQueueSyncState] = useState<WorkQueueSyncState>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [actionIdInFlight, setActionIdInFlight] = useState<string | null>(null);
@@ -1151,7 +1154,7 @@ export function App() {
   const [newProjectDraft, setNewProjectDraft] = useState<ProjectFormState>(() => createEmptyProjectForm());
   const [projectIdInFlight, setProjectIdInFlight] = useState<string | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
-  const [detailPanelWidth, setDetailPanelWidth] = useState(560);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(440);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
   const workItemById = useMemo(() => new Map(workItems.map((item) => [item.id, item])), [workItems]);
@@ -1180,7 +1183,6 @@ export function App() {
       weak: filterRow(tagSuggestions.weak)
     };
   }, [draft?.tags, tagSuggestions]);
-  const visibleActions = actions.filter((action) => action.visible && !action.requiresInput);
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (query === "") {
@@ -1226,6 +1228,13 @@ export function App() {
   const selectedExportCount = filteredExportSnapshots.filter((snapshot) =>
     selectedExportSnapshotIds.has(snapshot.acceptedSnapshotId)
   ).length;
+  const isWorkQueueSearchActive = search.trim() !== "";
+  const workQueueStatusItems = [
+    formatItemCount(workItems.length),
+    isWorkQueueSearchActive ? `${filteredItems.length} shown` : null,
+    workQueueLastRefreshedAt === null ? "Not refreshed yet" : `Last refreshed ${formatRelativeTime(workQueueLastRefreshedAt)}`,
+    workQueueSyncState === "syncing" ? "Syncing" : workQueueSyncState === "error" ? "API error" : "API connected"
+  ].filter((item): item is string => item !== null);
   const activeProjectCount = projects.filter((project) => project.isActive).length;
   const inactiveProjectCount = projects.length - activeProjectCount;
   const hasDraftChanges =
@@ -1264,9 +1273,7 @@ export function App() {
       ? "Application audit history and workflow runtime event-journal debugging."
       : activeView === "settings"
       ? "Watched folders, file types, AI prompts, providers, and diagnostics."
-      : selectedBucket === null
-      ? "No workflow scope is selected."
-      : `${selectedBucket.label} scope selected.`;
+      : "";
   const activeSettingsSectionMeta =
     settingsSections.find((section) => section.id === activeSettingsSection) ?? {
       id: "watched",
@@ -1370,7 +1377,10 @@ export function App() {
         }
         setSelectedItem(detailResponse.workItem);
         setDraft(createDraft(detailResponse.workItem));
-        setActions(actionsResponse.actions);
+        setRowActionsByItemId((current) => ({
+          ...current,
+          [detailResponse.workItem.id]: actionsResponse.actions.filter((action) => action.visible && !action.requiresInput)
+        }));
         setSelectedDiagnostics(diagnosticsResponse);
         setAiSuggestions(suggestionsResponse.suggestions);
         setTagSuggestions(tagSuggestionResponse.suggestions);
@@ -1457,32 +1467,58 @@ export function App() {
   }, [accessToken, activeView]);
 
   async function loadWorkspace(token: string, requestedBucketId: string | null): Promise<void> {
-    const [bucketResponse, projectsResponse, contributorsResponse] = await Promise.all([
-      authedJson<{ buckets: WorkflowBucket[] }>(token, "/api/workflow/buckets"),
-      authedJson<{ projects: Project[] }>(token, "/api/projects"),
-      authedJson<{ contributors: Contributor[] }>(token, "/api/contributors")
-    ]);
-    const orderedBuckets = [...bucketResponse.buckets].sort((left, right) => left.order - right.order);
-    const defaultBucketId =
-      orderedBuckets.find((bucket) => bucket.label.toLowerCase() === "memos")?.id ?? orderedBuckets[0]?.id ?? null;
-    const nextBucketId = requestedBucketId ?? defaultBucketId;
-    const itemResponse = await loadWorkItems(token, nextBucketId);
+    setWorkQueueSyncState("syncing");
+    try {
+      const [bucketResponse, projectsResponse, contributorsResponse] = await Promise.all([
+        authedJson<{ buckets: WorkflowBucket[] }>(token, "/api/workflow/buckets"),
+        authedJson<{ projects: Project[] }>(token, "/api/projects"),
+        authedJson<{ contributors: Contributor[] }>(token, "/api/contributors")
+      ]);
+      const orderedBuckets = [...bucketResponse.buckets].sort((left, right) => left.order - right.order);
+      const defaultBucketId =
+        orderedBuckets.find((bucket) => bucket.label.toLowerCase() === "memos")?.id ?? orderedBuckets[0]?.id ?? null;
+      const nextBucketId = requestedBucketId ?? defaultBucketId;
+      const itemResponse = await loadWorkItems(token, nextBucketId);
 
-    setBuckets(orderedBuckets);
-    applyProjects(projectsResponse.projects);
-    setContributors(contributorsResponse.contributors);
-    setActiveBucketId(nextBucketId);
-    setWorkItems(itemResponse.workItems);
-    if (itemResponse.workItems.length === 0) {
-      setSelectedItem(null);
-      setDraft(null);
-      setActions([]);
+      setBuckets(orderedBuckets);
+      applyProjects(projectsResponse.projects);
+      setContributors(contributorsResponse.contributors);
+      setActiveBucketId(nextBucketId);
+      setWorkItems(itemResponse.workItems);
+      await loadRowActionsForItems(token, itemResponse.workItems);
+      if (itemResponse.workItems.length === 0) {
+        setSelectedItem(null);
+        setDraft(null);
+      }
+      setSelectedItemId((current) =>
+        current !== null && itemResponse.workItems.some((item) => item.id === current)
+          ? current
+          : itemResponse.workItems[0]?.id ?? null
+      );
+      setWorkQueueLastRefreshedAt(new Date());
+      setWorkQueueSyncState("connected");
+    } catch (error) {
+      setWorkQueueSyncState("error");
+      throw error;
     }
-    setSelectedItemId((current) =>
-      current !== null && itemResponse.workItems.some((item) => item.id === current)
-        ? current
-        : itemResponse.workItems[0]?.id ?? null
+  }
+
+  async function loadRowActionsForItems(token: string, items: WorkItem[]): Promise<void> {
+    if (items.length === 0) {
+      setRowActionsByItemId({});
+      return;
+    }
+
+    const actionEntries = await Promise.all(
+      items.map(async (item) => {
+        const response = await authedJson<{ actions: AllowedWorkflowAction[] }>(
+          token,
+          `/api/work-items/${encodeURIComponent(item.id)}/actions`
+        );
+        return [item.id, response.actions.filter((action) => action.visible && !action.requiresInput)] as const;
+      })
     );
+    setRowActionsByItemId(Object.fromEntries(actionEntries));
   }
 
   function applyProjects(nextProjects: Project[]) {
@@ -1509,22 +1545,30 @@ export function App() {
       return;
     }
 
-    const [bucketResponse, itemResponse] = await Promise.all([
-      authedJson<{ buckets: WorkflowBucket[] }>(accessToken, "/api/workflow/buckets"),
-      loadWorkItems(accessToken, bucketId)
-    ]);
-    setBuckets([...bucketResponse.buckets].sort((left, right) => left.order - right.order));
-    setWorkItems(itemResponse.workItems);
-    if (itemResponse.workItems.length === 0) {
-      setSelectedItem(null);
-      setDraft(null);
-      setActions([]);
+    setWorkQueueSyncState("syncing");
+    try {
+      const [bucketResponse, itemResponse] = await Promise.all([
+        authedJson<{ buckets: WorkflowBucket[] }>(accessToken, "/api/workflow/buckets"),
+        loadWorkItems(accessToken, bucketId)
+      ]);
+      setBuckets([...bucketResponse.buckets].sort((left, right) => left.order - right.order));
+      setWorkItems(itemResponse.workItems);
+      await loadRowActionsForItems(accessToken, itemResponse.workItems);
+      if (itemResponse.workItems.length === 0) {
+        setSelectedItem(null);
+        setDraft(null);
+      }
+      setSelectedItemId((current) =>
+        current !== null && itemResponse.workItems.some((item) => item.id === current)
+          ? current
+          : itemResponse.workItems[0]?.id ?? null
+      );
+      setWorkQueueLastRefreshedAt(new Date());
+      setWorkQueueSyncState("connected");
+    } catch (error) {
+      setWorkQueueSyncState("error");
+      throw error;
     }
-    setSelectedItemId((current) =>
-      current !== null && itemResponse.workItems.some((item) => item.id === current)
-        ? current
-        : itemResponse.workItems[0]?.id ?? null
-    );
   }
 
   async function loadExports(token = accessToken): Promise<void> {
@@ -1662,14 +1706,19 @@ export function App() {
     setActiveBucketId(bucketId);
     setSelectedItem(null);
     setDraft(null);
-    setActions([]);
+    setRowActionsByItemId({});
     setTagSuggestions({ strong: [], related: [], weak: [] });
     setStatusMessage(null);
+    setWorkQueueSyncState("syncing");
     try {
       const itemResponse = await loadWorkItems(accessToken, bucketId);
       setWorkItems(itemResponse.workItems);
+      await loadRowActionsForItems(accessToken, itemResponse.workItems);
       setSelectedItemId(itemResponse.workItems[0]?.id ?? null);
+      setWorkQueueLastRefreshedAt(new Date());
+      setWorkQueueSyncState("connected");
     } catch (error) {
+      setWorkQueueSyncState("error");
       setStatusMessage(error instanceof Error ? error.message : "Unable to load bucket.");
     }
   }
@@ -1726,29 +1775,29 @@ export function App() {
     }
   }
 
-  async function runAction(action: AllowedWorkflowAction) {
-    if (accessToken === null || selectedItem === null) {
+  async function runAction(action: AllowedWorkflowAction, targetItem: WorkItem) {
+    if (accessToken === null) {
       return;
     }
 
     const intent = workflowActionIntent(action);
     if (
       (action.confirmationRequired || intent === "danger" || intent === "warning") &&
-      !window.confirm(`Run "${action.label}" on "${selectedItem.title}"?`)
+      !window.confirm(`Run "${action.label}" on "${targetItem.title}"?`)
     ) {
       return;
     }
 
-    setActionIdInFlight(action.id);
+    setActionIdInFlight(`${targetItem.id}:${action.id}`);
     setStatusMessage(null);
     try {
       await authedJson(
         accessToken,
-        `/api/work-items/${encodeURIComponent(selectedItem.id)}/actions/${encodeURIComponent(action.id)}`,
+        `/api/work-items/${encodeURIComponent(targetItem.id)}/actions/${encodeURIComponent(action.id)}`,
         {
           method: "POST",
           body: JSON.stringify({
-            expectedVersion: selectedItem.workflowItemVersion,
+            expectedVersion: targetItem.workflowItemVersion,
             confirmation: action.confirmationRequired
           })
         }
@@ -2365,7 +2414,7 @@ export function App() {
     const startWidth = detailPanelWidth;
     const onPointerMove = (moveEvent: PointerEvent) => {
       const nextWidth = startWidth - (moveEvent.clientX - startX);
-      setDetailPanelWidth(Math.min(760, Math.max(460, nextWidth)));
+      setDetailPanelWidth(Math.min(920, Math.max(360, nextWidth)));
     };
     const onPointerUp = () => {
       window.removeEventListener("pointermove", onPointerMove);
@@ -2382,7 +2431,7 @@ export function App() {
     event.preventDefault();
     setDetailPanelWidth((current) => {
       const delta = event.key === "ArrowLeft" ? 32 : -32;
-      return Math.min(760, Math.max(460, current + delta));
+      return Math.min(920, Math.max(360, current + delta));
     });
   }
 
@@ -2498,7 +2547,7 @@ export function App() {
         <header className="workspace-header">
           <div>
             <h1>{pageTitle}</h1>
-            <p>{pageDescription}</p>
+            {pageDescription === "" ? null : <p>{pageDescription}</p>}
           </div>
           <button
             className="icon-button"
@@ -2537,6 +2586,11 @@ export function App() {
                 value={search}
                 onChange={(event) => setSearch(event.currentTarget.value)}
               />
+            </div>
+            <div className={`work-queue-status sync-${workQueueSyncState}`} aria-label="Work queue status">
+              {workQueueStatusItems.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
             </div>
           </div>
         ) : activeView === "exports" ? (
@@ -2595,7 +2649,6 @@ export function App() {
         >
           <aside className="scope-rail" aria-label="Workflow buckets">
             <div className="scope-rail-header">
-              <span>Scope</span>
               <strong>{selectedBucket?.label ?? "None"}</strong>
             </div>
             <nav className="bucket-list" aria-label="Workflow buckets">
@@ -2617,6 +2670,11 @@ export function App() {
           </aside>
 
           <section className="item-list" aria-label="Filtered work items">
+            {filteredItems.length === 0 ? null : (
+              <div className="item-list-header" aria-hidden="true">
+                <span>Title / Body</span>
+              </div>
+            )}
             {filteredItems.length === 0 ? (
               <div className="empty-state">
                 <CircleSlash size={20} />
@@ -2625,62 +2683,56 @@ export function App() {
             ) : null}
 
             {filteredItems.map((item) => {
-              const rowActions = item.id === selectedItemId ? visibleActions : [];
+              const rowActions = rowActionsByItemId[item.id] ?? [];
               return (
                 <article className={`item-row ${item.id === selectedItemId ? "selected" : ""}`} key={item.id}>
-                  <button className="item-row-select" type="button" onClick={() => setSelectedItemId(item.id)}>
-                    <div className="item-row-main">
-                      <div className="item-title-line">
-                        <FileText size={18} />
-                        <h2>{item.title}</h2>
-                      </div>
-                      <p>{item.body}</p>
-                    </div>
-                    <div className="item-meta item-meta-column" aria-label="Project, tags, and contributor">
-                      <span>{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
-                      {item.tags.slice(0, 3).map((tag) => (
-                        <span key={tag}>{tag}</span>
-                      ))}
-                      {item.contributorText !== null || item.contributorId !== null ? (
-                        <span>
-                          {item.contributorText ??
-                            contributorById.get(item.contributorId ?? "")?.displayName ??
-                            "Contributor"}
-                        </span>
-                      ) : null}
-                    </div>
-                    <span className={`state-chip state-${item.workflowState}`}>{stateLabel(item.workflowState)}</span>
-                    <span className="updated-time">Updated {formatDate(item.updatedAt)}</span>
-                  </button>
-                  {rowActions.length === 0 ? null : (
-                    <div className="row-action-groups" aria-label="Workflow actions for selected memo">
-                      <span className="row-action-hint">
-                        {hasDraftChanges ? "Save or reset edits before workflow actions" : "Workflow actions"}
-                      </span>
-                      {rowActions.map((action) => {
-                        const intent = workflowActionIntent(action);
-                        return (
-                          <button
-                            className={`row-action-button ${intent}`}
-                            type="button"
-                            key={action.id}
-                            title={workflowActionTitle(action)}
-                            disabled={actionIdInFlight !== null || hasDraftChanges}
-                            onClick={() => void runAction(action)}
-                          >
-                            {action.id === actionIdInFlight ? (
-                              <RefreshCcw className="spin" size={16} />
-                            ) : intent === "danger" || intent === "warning" ? (
-                              <AlertTriangle size={16} />
-                            ) : (
-                              <CheckCircle2 size={16} />
-                            )}
-                            {action.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
+	                  <button className="item-row-select" type="button" onClick={() => setSelectedItemId(item.id)}>
+	                    <div className="item-row-main">
+	                      <div className="item-title-line">
+	                        <FileText size={18} />
+	                        <h2>{item.title}</h2>
+	                        <p>{item.body}</p>
+	                      </div>
+	                    </div>
+	                  </button>
+	                  <span className={`item-row-state state-chip state-${item.workflowState}`}>
+	                    {stateLabel(item.workflowState)}
+	                  </span>
+	                  <button
+	                    className="item-row-meta-select"
+	                    type="button"
+	                    onClick={() => setSelectedItemId(item.id)}
+	                    aria-label={`Select ${item.title}`}
+	                  >
+	                    <span className="item-project">{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
+	                    <span className="updated-time">{formatDate(item.updatedAt)}</span>
+	                  </button>
+                  <div className="row-action-groups" aria-label={`Workflow actions for ${item.title}`}>
+                    {rowActions.length === 0 ? <span className="row-action-empty">No actions</span> : null}
+                    {rowActions.map((action) => {
+                      const intent = workflowActionIntent(action);
+                      const actionInFlightKey = `${item.id}:${action.id}`;
+                      return (
+                        <button
+                          className={`row-action-button ${intent}`}
+                          type="button"
+                          key={action.id}
+                          title={workflowActionTitle(action)}
+                          disabled={actionIdInFlight !== null || hasDraftChanges}
+                          onClick={() => void runAction(action, item)}
+                        >
+                          {actionInFlightKey === actionIdInFlight ? (
+                            <RefreshCcw className="spin" size={16} />
+                          ) : intent === "danger" || intent === "warning" ? (
+                            <AlertTriangle size={16} />
+                          ) : (
+                            <CheckCircle2 size={16} />
+                          )}
+                          {action.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </article>
               );
             })}
@@ -2710,9 +2762,6 @@ export function App() {
                     <p className="eyebrow">{projectById.get(selectedItem.projectId ?? "")?.name ?? "No project"}</p>
                     <h2>{selectedItem.title}</h2>
                   </div>
-                  <span className={`state-chip state-${selectedItem.workflowState}`}>
-                    {stateLabel(selectedItem.workflowState)}
-                  </span>
                 </div>
 
                 <div className="detail-meta">
@@ -2721,78 +2770,20 @@ export function App() {
                   {selectedItem.acceptedUnexportedChanges ? <span>Accepted changes pending export</span> : null}
                 </div>
 
-                <div className="field-grid">
-                  <div className="field-group">
-                    <label htmlFor="work-item-project">Project</label>
-                    <select
-                      id="work-item-project"
-                      value={draft.projectId}
-                      onChange={(event) => updateDraft("projectId", event.currentTarget.value)}
-                    >
-                      <option value="">No project</option>
-                      {projects.map((project) => (
-                        <option value={project.id} key={project.id}>
-                          {project.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="field-group">
-                    <label htmlFor="work-item-tag-input">Tags</label>
-                    <div className="tag-editor">
-                      <div className="tag-chip-list" aria-label="Selected tags">
-                        {draft.tags.length === 0 ? <span className="tag-empty">No tags</span> : null}
-                        {draft.tags.map((tag) => (
-                          <button
-                            className="tag-chip selected"
-                            type="button"
-                            key={tag}
-                            onClick={() => removeDraftTag(tag)}
-                            title={`Remove ${tag}`}
-                          >
-                            <span>{tag}</span>
-                            <X size={14} />
-                          </button>
-                        ))}
-                      </div>
-                      <div className="tag-input-row">
-                        <input
-                          id="work-item-tag-input"
-                          value={draft.tagInput}
-                          onChange={(event) => handleTagInputChange(event.currentTarget.value)}
-                          onKeyDown={handleTagInputKeyDown}
-                          placeholder="Add tag"
-                        />
-                        <button
-                          className="icon-button"
-                          type="button"
-                          disabled={parseTagsText(draft.tagInput).length === 0}
-                          onClick={() => addDraftTags(parseTagsText(draft.tagInput))}
-                          title="Add tag"
-                        >
-                          <Plus size={17} />
-                        </button>
-                      </div>
-                      <div className="tag-suggestion-rows" aria-label="Tag suggestions">
-                        <TagSuggestionRow
-                          label="Strong grouping tags"
-                          tags={visibleTagSuggestions.strong}
-                          onSelect={addDraftTags}
-                        />
-                        <TagSuggestionRow
-                          label="Related tags"
-                          tags={visibleTagSuggestions.related}
-                          onSelect={addDraftTags}
-                        />
-                        <TagSuggestionRow
-                          label="Weak matches"
-                          tags={visibleTagSuggestions.weak}
-                          onSelect={addDraftTags}
-                        />
-                      </div>
-                    </div>
-                  </div>
+                <div className="field-group">
+                  <label htmlFor="work-item-project">Project</label>
+                  <select
+                    id="work-item-project"
+                    value={draft.projectId}
+                    onChange={(event) => updateDraft("projectId", event.currentTarget.value)}
+                  >
+                    <option value="">No project</option>
+                    {projects.map((project) => (
+                      <option value={project.id} key={project.id}>
+                        {project.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="field-grid">
@@ -2839,6 +2830,65 @@ export function App() {
                     onChange={(event) => updateDraft("body", event.currentTarget.value)}
                     rows={10}
                   />
+                </div>
+
+                <div className="field-group">
+                  <label htmlFor="work-item-tag-input">Tags</label>
+                  <div className="tag-editor">
+                    <section className="tag-editor-section" aria-label="Selected tags">
+                      <h3>Selected</h3>
+                      <div className="tag-chip-list">
+                        {draft.tags.length === 0 ? <span className="tag-empty">No tags selected</span> : null}
+                        {draft.tags.map((tag) => (
+                          <button
+                            className="tag-chip selected"
+                            type="button"
+                            key={tag}
+                            onClick={() => removeDraftTag(tag)}
+                            title={`Remove ${tag}`}
+                          >
+                            <span>{tag}</span>
+                            <X size={14} />
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                    <div className="tag-input-row">
+                      <input
+                        id="work-item-tag-input"
+                        value={draft.tagInput}
+                        onChange={(event) => handleTagInputChange(event.currentTarget.value)}
+                        onKeyDown={handleTagInputKeyDown}
+                        placeholder="Add tag"
+                      />
+                      <button
+                        className="icon-button"
+                        type="button"
+                        disabled={parseTagsText(draft.tagInput).length === 0}
+                        onClick={() => addDraftTags(parseTagsText(draft.tagInput))}
+                        title="Add tag"
+                      >
+                        <Plus size={17} />
+                      </button>
+                    </div>
+                    <div className="tag-suggestion-rows" aria-label="Tag suggestions">
+                      <TagSuggestionRow
+                        label="Strong"
+                        tags={visibleTagSuggestions.strong}
+                        onSelect={addDraftTags}
+                      />
+                      <TagSuggestionRow
+                        label="Related"
+                        tags={visibleTagSuggestions.related}
+                        onSelect={addDraftTags}
+                      />
+                      <TagSuggestionRow
+                        label="Weak"
+                        tags={visibleTagSuggestions.weak}
+                        onSelect={addDraftTags}
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="detail-actions">
@@ -4047,6 +4097,25 @@ function formatDate(value: string): string {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(dateValue));
+}
+
+function formatItemCount(count: number): string {
+  return `${count} ${count === 1 ? "item" : "items"}`;
+}
+
+function formatRelativeTime(value: Date): string {
+  const elapsedSeconds = Math.max(0, Math.round((Date.now() - value.getTime()) / 1000));
+  if (elapsedSeconds < 10) {
+    return "just now";
+  }
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s ago`;
+  }
+  const elapsedMinutes = Math.round(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes}m ago`;
+  }
+  return formatDate(value.toISOString());
 }
 
 function formatEventDateTime(value: Date): string {

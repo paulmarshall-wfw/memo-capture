@@ -39,7 +39,8 @@ export class KeywordService {
     ]
       .join("\n")
       .trim();
-    const keywords = extractKeywords(text);
+    const corpusTexts = await loadKeywordCorpus(this.db, workItem.id);
+    const keywords = extractKeywords(text, { corpusTexts });
     const assignments: TagAssignmentInput[] = keywords.map((keyword) => ({
       name: keyword.name,
       assignmentSource: "generated",
@@ -96,7 +97,18 @@ interface ExtractedKeyword {
   frequencyBand: number;
 }
 
-export function extractKeywords(text: string): ExtractedKeyword[] {
+interface KeywordExtractionOptions {
+  corpusTexts?: string[];
+  maxKeywords?: number;
+}
+
+interface KeywordCandidate {
+  name: string;
+  count: number;
+  score: number;
+}
+
+export function extractKeywords(text: string, options: KeywordExtractionOptions = {}): ExtractedKeyword[] {
   const counts = new Map<string, { name: string; count: number }>();
   const phrases = text.match(/\b[A-Z][a-z0-9]+(?:[ \t]+[A-Z][a-z0-9]+){0,3}\b/g) ?? [];
   for (const phrase of phrases) {
@@ -106,19 +118,27 @@ export function extractKeywords(text: string): ExtractedKeyword[] {
   const words = text.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? [];
   for (const word of words) {
     const lower = word.toLowerCase();
-    if (!STOP_WORDS.has(lower) && !/^\d+$/.test(lower)) {
+    if (isDistinctiveTerm(lower)) {
       addCandidate(counts, lower);
     }
   }
 
+  const corpusTexts = options.corpusTexts?.filter((entry) => entry.trim() !== "") ?? [];
+  const documentFrequencyByKey = buildDocumentFrequencies(corpusTexts);
+  const corpusSize = corpusTexts.length;
   const sorted = [...counts.values()]
-    .filter((candidate) => candidate.name.length >= 3)
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name))
-    .slice(0, 12);
+    .map((candidate) => scoreCandidate(candidate, documentFrequencyByKey, corpusSize))
+    .filter((candidate): candidate is KeywordCandidate => candidate !== null)
+    .sort(
+      (left, right) =>
+        right.score - left.score || right.count - left.count || left.name.localeCompare(right.name)
+    )
+    .slice(0, options.maxKeywords ?? 12);
   const maxCount = sorted[0]?.count ?? 1;
+  const maxScore = sorted[0]?.score ?? 1;
 
   return sorted.map((candidate) => {
-    const ratio = candidate.count / maxCount;
+    const ratio = Math.max(candidate.count / maxCount, candidate.score / maxScore);
     return {
       name: candidate.name,
       itemCount: candidate.count,
@@ -131,7 +151,7 @@ export function extractKeywords(text: string): ExtractedKeyword[] {
 function addCandidate(counts: Map<string, { name: string; count: number }>, value: string): void {
   const cleaned = value.trim().replace(/\s+/g, " ");
   const key = normalizeTagName(cleaned);
-  if (key === "" || STOP_WORDS.has(key)) {
+  if (!isDistinctiveCandidate(cleaned)) {
     return;
   }
   const existing = counts.get(key);
@@ -140,6 +160,122 @@ function addCandidate(counts: Map<string, { name: string; count: number }>, valu
     return;
   }
   existing.count += 1;
+}
+
+function scoreCandidate(
+  candidate: { name: string; count: number },
+  documentFrequencyByKey: Map<string, number>,
+  corpusSize: number
+): KeywordCandidate | null {
+  const terms = extractCandidateTerms(candidate.name);
+  if (terms.length === 0) {
+    return null;
+  }
+
+  const key = normalizeTagName(candidate.name);
+  const phraseBonus = terms.length > 1 ? 1.65 : 1;
+  const hyphenBonus = candidate.name.includes("-") ? 1.2 : 1;
+  const exactDocumentFrequency = documentFrequencyByKey.get(key);
+  const termIdf =
+    corpusSize === 0
+      ? 1
+      : terms.reduce((total, term) => total + inverseDocumentFrequency(term, documentFrequencyByKey, corpusSize), 0) /
+        terms.length;
+  const phraseIdf =
+    corpusSize === 0 || exactDocumentFrequency === undefined
+      ? termIdf
+      : inverseDocumentFrequency(key, documentFrequencyByKey, corpusSize);
+  const idf = terms.length > 1 ? Math.max(termIdf, phraseIdf) : termIdf;
+  const score = candidate.count * idf * phraseBonus * hyphenBonus;
+  const minimumScore = corpusSize === 0 ? 1 : terms.length > 1 ? 1.2 : 1.35;
+  if (score < minimumScore) {
+    return null;
+  }
+
+  return {
+    name: candidate.name,
+    count: candidate.count,
+    score
+  };
+}
+
+function inverseDocumentFrequency(term: string, documentFrequencyByKey: Map<string, number>, corpusSize: number): number {
+  const documentFrequency = documentFrequencyByKey.get(term) ?? 0;
+  return Math.log((corpusSize + 1) / (documentFrequency + 1)) + 1;
+}
+
+function buildDocumentFrequencies(corpusTexts: string[]): Map<string, number> {
+  const frequencies = new Map<string, number>();
+  for (const corpusText of corpusTexts) {
+    const keys = new Set<string>();
+    const words = corpusText.match(/[A-Za-z][A-Za-z0-9-]{2,}/g) ?? [];
+    for (const word of words) {
+      const lower = word.toLowerCase();
+      if (isDistinctiveTerm(lower)) {
+        keys.add(normalizeTagName(lower));
+      }
+    }
+
+    const phrases = corpusText.match(/\b[A-Z][a-z0-9]+(?:[ \t]+[A-Z][a-z0-9]+){1,3}\b/g) ?? [];
+    for (const phrase of phrases) {
+      if (isDistinctiveCandidate(phrase)) {
+        keys.add(normalizeTagName(phrase));
+      }
+    }
+
+    for (const key of keys) {
+      frequencies.set(key, (frequencies.get(key) ?? 0) + 1);
+    }
+  }
+  return frequencies;
+}
+
+function isDistinctiveCandidate(value: string): boolean {
+  const terms = extractCandidateTerms(value);
+  if (terms.length === 0) {
+    return false;
+  }
+  if (terms.length === 1) {
+    return isDistinctiveTerm(terms[0] ?? "");
+  }
+  return terms.some((term) => !COMMON_SINGLE_TERMS.has(term));
+}
+
+function extractCandidateTerms(value: string): string[] {
+  return value
+    .toLowerCase()
+    .match(/[a-z][a-z0-9-]{2,}/g)
+    ?.map(normalizeTagName)
+    .filter(isDistinctiveTerm) ?? [];
+}
+
+function isDistinctiveTerm(value: string): boolean {
+  const normalized = normalizeTagName(value);
+  return (
+    normalized.length >= 3 &&
+    !/^\d+$/.test(normalized) &&
+    !STOP_WORDS.has(normalized) &&
+    !COMMON_SINGLE_TERMS.has(normalized)
+  );
+}
+
+async function loadKeywordCorpus(db: Queryable, workItemId: string): Promise<string[]> {
+  const result = await db.query<{ corpus_text: string | null }>(
+    `select concat_ws(
+              E'\n',
+              work_items.title,
+              work_items.body,
+              source_memos.extracted_text,
+              source_memos.current_transcript_text
+            ) as corpus_text
+     from work_items
+     left join source_memos on source_memos.id = work_items.source_memo_id
+     where work_items.id <> $1
+     order by work_items.updated_at desc
+     limit 500`,
+    [workItemId]
+  );
+  return result.rows.map((row) => row.corpus_text?.trim() ?? "").filter((entry) => entry !== "");
 }
 
 function buildGroupingPaths(keywords: ExtractedKeyword[]): string[][] {
@@ -216,30 +352,161 @@ async function refreshKeywordCoOccurrences(db: Queryable, workItemId: string): P
 }
 
 const STOP_WORDS = new Set([
+  "able",
   "about",
+  "above",
   "after",
   "again",
+  "against",
+  "all",
   "also",
+  "among",
+  "an",
   "and",
+  "any",
   "are",
+  "around",
+  "as",
+  "at",
+  "be",
   "because",
+  "been",
+  "before",
+  "being",
+  "below",
+  "between",
+  "both",
   "but",
+  "by",
   "can",
   "could",
+  "did",
+  "do",
+  "does",
+  "doing",
+  "done",
+  "down",
+  "each",
+  "few",
   "for",
   "from",
+  "had",
+  "has",
   "have",
+  "having",
+  "here",
+  "how",
+  "if",
+  "in",
   "into",
+  "is",
+  "it",
+  "its",
+  "just",
+  "more",
+  "most",
+  "near",
+  "new",
+  "no",
+  "nor",
   "memo",
   "not",
+  "of",
+  "off",
+  "on",
+  "once",
+  "only",
+  "or",
+  "other",
+  "our",
+  "out",
+  "over",
+  "own",
+  "same",
+  "so",
+  "some",
+  "such",
   "that",
   "the",
+  "their",
+  "then",
+  "there",
+  "these",
+  "they",
   "this",
+  "those",
   "through",
+  "to",
+  "too",
+  "under",
+  "up",
   "use",
+  "used",
   "user",
   "users",
+  "very",
+  "was",
+  "we",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "who",
+  "will",
   "with",
+  "within",
+  "without",
   "would",
   "you"
+]);
+
+const COMMON_SINGLE_TERMS = new Set([
+  "added",
+  "adds",
+  "change",
+  "changed",
+  "changes",
+  "create",
+  "created",
+  "creates",
+  "creating",
+  "day",
+  "done",
+  "during",
+  "fail",
+  "failed",
+  "feature",
+  "features",
+  "flow",
+  "flows",
+  "generated",
+  "item",
+  "items",
+  "local",
+  "make",
+  "makes",
+  "making",
+  "pass",
+  "passed",
+  "run",
+  "running",
+  "runs",
+  "save",
+  "saved",
+  "set",
+  "sets",
+  "setting",
+  "settings",
+  "test",
+  "tests",
+  "time",
+  "today",
+  "update",
+  "updated",
+  "updates",
+  "using",
+  "version",
+  "work"
 ]);
