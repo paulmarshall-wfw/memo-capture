@@ -834,6 +834,8 @@ function auditEventLabel(event: AuditEvent): string {
       return "Project updated";
     case "project.deactivated":
       return "Project deactivated";
+    case "project.deleted":
+      return "Project deleted";
     case "workflow.imported":
       return "Workflow imported";
     case "workflow.import_failed":
@@ -2959,6 +2961,30 @@ export function App() {
     }
   }
 
+  async function deleteProject(project: Project) {
+    if (accessToken === null) {
+      return;
+    }
+    const projectName = project.name.trim() === "" ? "this blank project" : project.name;
+    if (!window.confirm(`Delete ${projectName}? This cannot be undone.`)) {
+      return;
+    }
+
+    setProjectIdInFlight(project.id);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/projects/${encodeURIComponent(project.id)}`, {
+        method: "DELETE"
+      });
+      await loadProjects(accessToken);
+      setStatusMessage("Project deleted.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to delete project.");
+    } finally {
+      setProjectIdInFlight(null);
+    }
+  }
+
   function refreshCurrentView() {
     void (activeView === "exports"
       ? loadExports()
@@ -3861,10 +3887,24 @@ export function App() {
                               onClick={() => void deactivateProject(project.id)}
                             >
                               <CircleSlash size={16} />
-                            Deactivate
+                              Deactivate
+                            </button>
+                          ) : null}
+                          <button
+                            className="row-action-button danger icon-only"
+                            type="button"
+                            title="Delete project"
+                            aria-label={`Delete ${project.name.trim() === "" ? "blank project" : project.name}`}
+                            disabled={projectIdInFlight !== null}
+                            onClick={() => void deleteProject(project)}
+                          >
+                            {projectIdInFlight === project.id ? (
+                              <RefreshCcw className="spin" size={16} />
+                            ) : (
+                              <Trash2 size={16} />
+                            )}
                           </button>
-                        ) : null}
-                      </div>
+                        </div>
                       </div>
 
                       <div className="field-group project-synopsis-field">

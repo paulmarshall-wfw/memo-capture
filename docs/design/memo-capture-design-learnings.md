@@ -478,7 +478,7 @@ The right-hand detail panel shows the full memo/work-item content, editable fiel
 
 ## V1 Retention And Deletion Policy
 
-V1 has no user-facing delete or purge behavior.
+V1 has no user-facing delete or purge behavior for captured memo content or managed artifacts. Unused backend-owned configuration rows, such as projects that have no dependent work items or accepted snapshots, may expose guarded delete controls.
 
 Rules:
 
@@ -516,7 +516,7 @@ All signed-in users are effectively admins in V1 and can create projects.
 Project rules:
 
 - projects are required for normal work items after ingestion review
-- projects are never deleted in V1; they can be deactivated
+- unused projects can be deleted; projects with dependent work items or accepted snapshots can only be deactivated until those dependencies are moved
 - project slugs are stable identifiers separate from display names
 - if a project display name changes, historical work items show the new display name
 

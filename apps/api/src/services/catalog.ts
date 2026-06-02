@@ -80,6 +80,41 @@ export class CatalogService {
     });
   }
 
+  async deleteProject(
+    projectId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<ProjectRecord | null> {
+    return this.db.transaction(async (client) => {
+      const projects = new ProjectRepository(client);
+      const audit = new AuditRepository(client);
+      let project: ProjectRecord | null = null;
+      try {
+        project = await projects.delete(projectId);
+      } catch (error) {
+        if (isForeignKeyViolation(error)) {
+          throw new HttpError(
+            409,
+            "project_in_use",
+            "Project is still used by memos or snapshots. Deactivate it instead, or move those records first."
+          );
+        }
+        throw error;
+      }
+      if (project !== null) {
+        await audit.record({
+          eventName: "project.deleted",
+          actor,
+          subjectType: "project",
+          subjectId: project.id,
+          requestId,
+          metadata: { slug: project.slug, name: project.name }
+        });
+      }
+      return project;
+    });
+  }
+
   async listContributors(): Promise<ContributorRecord[]> {
     return new ContributorRepository(this.db).list();
   }
@@ -187,4 +222,8 @@ function parseObject(body: unknown): Record<string, unknown> {
   }
 
   return body as Record<string, unknown>;
+}
+
+function isForeignKeyViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "23503";
 }

@@ -94,6 +94,16 @@ export class ProjectRepository {
     );
     return result.rows[0] === undefined ? null : mapProject(result.rows[0]);
   }
+
+  async delete(projectId: string): Promise<ProjectRecord | null> {
+    const result = await this.db.query<ProjectRow>(
+      `delete from projects
+       where id = $1
+       returning *`,
+      [projectId]
+    );
+    return result.rows[0] === undefined ? null : mapProject(result.rows[0]);
+  }
 }
 
 export interface ContributorInput {

@@ -296,6 +296,7 @@ Settings:
 - `project.created`
 - `project.updated`
 - `project.deactivated`
+- `project.deleted`
 - `contributor.created`
 - `contributor.updated`
 - `contributor.alias_added`
@@ -507,7 +508,7 @@ Primary navigation pages:
 - Settings
 - Audit
 
-The Projects page owns project create/edit/deactivate controls. Each project exposes name, slug, Synopsis, active state, and updated timestamp. Synopsis is stored on the existing project description field.
+The Projects page owns project create/edit/deactivate/delete controls. The Create button adds an unsaved draft row for editing; it does not create a backend project until the draft is saved. Each project exposes name, slug, Synopsis, active state, updated timestamp, and a guarded delete action. Synopsis is stored on the existing project description field. Delete is allowed only for projects with no dependent work items or accepted snapshots.
 
 Settings sections:
 

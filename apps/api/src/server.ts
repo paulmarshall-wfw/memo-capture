@@ -168,6 +168,19 @@ function matchProtectedRoute(
   }
 
   const projectPatchMatch = /^\/api\/projects\/([^/]+)$/.exec(pathname);
+  if (method === "DELETE" && projectPatchMatch !== null) {
+    return async (context, session) => ({
+      project: requireFound(
+        await services.catalog.deleteProject(
+          projectPatchMatch[1] ?? "",
+          session.user,
+          context.requestId
+        ),
+        "project"
+      )
+    });
+  }
+
   if (method === "PATCH" && projectPatchMatch !== null) {
     return async (context, session) => ({
       project: requireFound(

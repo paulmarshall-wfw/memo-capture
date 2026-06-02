@@ -115,7 +115,7 @@ Constraints:
 Rules:
 
 - Projects are required for normal work items after ingestion review.
-- Projects are never deleted in V1; they can be deactivated.
+- Unused projects can be deleted. Projects referenced by work items or accepted snapshots cannot be deleted; deactivate them or move dependent records first.
 - Project slug is a stable identifier separate from display name.
 - Display name changes affect historical work item display.
 
@@ -421,6 +421,7 @@ Current implementation already exposes these baseline routes.
 - `POST /api/projects`
 - `PATCH /api/projects/{projectId}`
 - `POST /api/projects/{projectId}/deactivate`
+- `DELETE /api/projects/{projectId}`
 
 Create request:
 

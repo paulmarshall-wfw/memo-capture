@@ -62,6 +62,29 @@ test("form memo service creates source memo, work item, import event, and audit 
   assert.equal(result.workItem.title, "Capture this");
 });
 
+test("catalog service deletes unused projects and blocks projects referenced by work items", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  db.projects.push(projectRow("project-unused", "Unused Project"));
+  db.projects.push(projectRow("project-used", "Used Project"));
+  db.workItems.push({ id: "work-item-used", project_id: "project-used" });
+
+  const deleted = await services.catalog.deleteProject("project-unused", session.user, "request-delete-unused");
+
+  assert.equal(deleted?.id, "project-unused");
+  assert.equal(db.projects.some((project) => project.id === "project-unused"), false);
+  assert.equal(db.auditEvents.at(-1)?.event_name, "project.deleted");
+  await assert.rejects(
+    () => services.catalog.deleteProject("project-used", session.user, "request-delete-used"),
+    (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "project_in_use"
+  );
+});
+
 test("archive result rejects mismatched machine ids", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -696,6 +719,12 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(contributorDeactivate.response.status, 200);
     assert.equal(contributorDeactivate.body.contributor.isActive, false);
 
+    const projectDelete = await authedJson(baseUrl, "/api/projects/project-1", {
+      method: "DELETE"
+    });
+    assert.equal(projectDelete.response.status, 200);
+    assert.equal(projectDelete.body.project.id, "project-1");
+
     const workItemDetail = await authedJson(baseUrl, "/api/work-items/work-item-1");
     assert.equal(workItemDetail.response.status, 200);
     assert.equal(workItemDetail.body.workItem.title, "Captured memo");
@@ -1036,7 +1065,8 @@ function stubServices(): AppServices {
       }
     } as unknown as AppServices["auth"],
     catalog: {
-      listProjects: async () => []
+      listProjects: async () => [],
+      deleteProject: async () => null
     } as unknown as AppServices["catalog"],
     diagnostics: {
       getWorkItemDiagnostics: async () => ({ workItemId: "missing" }),
@@ -1302,6 +1332,7 @@ function captureRouteServices(): AppServices {
       createProject: async () => project,
       updateProject: async () => project,
       deactivateProject: async () => ({ ...project, isActive: false }),
+      deleteProject: async () => project,
       listContributors: async () => [contributor],
       createContributor: async () => contributor,
       updateContributor: async () => contributor,
@@ -1902,10 +1933,6 @@ class FakeDatabase implements Database {
       return rows(this.extractionSettings === null ? [] : [this.extractionSettings as Row]);
     }
 
-    if (text.includes("from projects")) {
-      return rows([...this.projects] as Row[]);
-    }
-
     if (text.includes("insert into source_memos")) {
       this.sourceMemos.push({
         id: values[0],
@@ -1918,6 +1945,25 @@ class FakeDatabase implements Database {
         original_file_modified_at: values[9]
       });
       return rows([]);
+    }
+
+    if (text.includes("delete from projects")) {
+      const projectId = String(values[0]);
+      if (this.workItems.some((item) => item.project_id === projectId)) {
+        const error = new Error("project still referenced") as Error & { code: string };
+        error.code = "23503";
+        throw error;
+      }
+      const index = this.projects.findIndex((project) => project.id === projectId);
+      if (index === -1) {
+        return rows([]);
+      }
+      const [project] = this.projects.splice(index, 1);
+      return rows([project as Row]);
+    }
+
+    if (text.includes("from projects")) {
+      return rows([...this.projects] as Row[]);
     }
 
     if (text.includes("from source_memos") && text.includes("where content_hash")) {

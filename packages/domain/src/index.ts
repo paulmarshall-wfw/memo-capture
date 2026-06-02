@@ -174,6 +174,7 @@ export const AUDIT_EVENT_NAMES = [
   "project.created",
   "project.updated",
   "project.deactivated",
+  "project.deleted",
   "contributor.created",
   "contributor.updated",
   "contributor.alias_added",
