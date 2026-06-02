@@ -27,6 +27,13 @@ export interface StagedWorkflowRow extends Record<string, unknown> {
   activated_at: Date | string | null;
 }
 
+export interface ActiveWorkflowDependentJobRow extends Record<string, unknown> {
+  id: string;
+  job_kind: "nominate_tags";
+  work_item_id: string | null;
+  workflow_state: string | null;
+}
+
 export interface WorkflowActivationHistoryInput {
   workflowId: string;
   previousWorkflowVersion: string | null;
@@ -88,18 +95,19 @@ export class WorkflowRepository {
     return result.rows[0] ?? null;
   }
 
-  async countActiveWorkflowDependentJobs(): Promise<number> {
-    const result = await this.db.query<{ active_count: number | string }>(
-      `select count(*) as active_count
+  async listActiveWorkflowDependentJobs(): Promise<ActiveWorkflowDependentJobRow[]> {
+    const result = await this.db.query<ActiveWorkflowDependentJobRow>(
+      `select
+         processing_jobs.id,
+         processing_jobs.job_kind,
+         processing_jobs.work_item_id,
+         work_items.workflow_state
        from processing_jobs
-       where status in ('queued', 'claimed', 'running', 'retry_scheduled')
-         and (
-           work_item_id is not null
-           or job_kind in ('extract_memo_metadata', 'expand_work_item', 'generate_export_batch')
-         )`
+       left join work_items on work_items.id = processing_jobs.work_item_id
+       where processing_jobs.status in ('queued', 'claimed', 'running', 'retry_scheduled')
+         and processing_jobs.job_kind in ('nominate_tags')`
     );
-    const count = result.rows[0]?.active_count ?? 0;
-    return typeof count === "number" ? count : Number.parseInt(count, 10);
+    return result.rows;
   }
 
   async createStagedImport(input: WorkflowImportInput): Promise<StagedWorkflowRow> {

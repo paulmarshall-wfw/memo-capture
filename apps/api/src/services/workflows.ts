@@ -4,7 +4,11 @@ import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
-import { WorkflowRepository, type ActiveWorkflowRow } from "../repositories/workflows.js";
+import {
+  WorkflowRepository,
+  type ActiveWorkflowDependentJobRow,
+  type ActiveWorkflowRow
+} from "../repositories/workflows.js";
 import { HttpError, optionalString } from "./errors.js";
 import { WorkflowHookScheduler } from "./workflow-hooks.js";
 import {
@@ -156,7 +160,11 @@ export class WorkflowService {
         );
       }
 
-      const activeDependentJobs = await workflows.countActiveWorkflowDependentJobs();
+      const activeDependentJobs = countIncompatibleActiveWorkflowDependentJobs(
+        await workflows.listActiveWorkflowDependentJobs(),
+        staged.bundle,
+        this.runtime
+      );
       if (activeDependentJobs > 0) {
         await audit.record({
           eventName: "workflow.activation_blocked",
@@ -588,6 +596,24 @@ async function requireActiveWorkflow(workflows: WorkflowRepository): Promise<Act
     throw new HttpError(409, "active_workflow_missing", "No active workflow definition is installed.");
   }
   return active;
+}
+
+export function countIncompatibleActiveWorkflowDependentJobs(
+  jobs: readonly ActiveWorkflowDependentJobRow[],
+  candidateBundle: unknown,
+  runtime = new WorkflowRuntimeAdapter()
+): number {
+  return jobs.filter((job) => {
+    if (job.job_kind !== "nominate_tags") {
+      return true;
+    }
+    if (job.workflow_state === null) {
+      return true;
+    }
+    return !runtime
+      .getStateResidentHooks(candidateBundle, job.workflow_state)
+      .some((hook) => hook.handlerKey === "nominate_tags");
+  }).length;
 }
 
 function summarizeActive(active: ActiveWorkflowRow): WorkflowActiveSummary {

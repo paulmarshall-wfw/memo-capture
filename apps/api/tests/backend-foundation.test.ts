@@ -10,8 +10,10 @@ import type { AiSuggestionRecord } from "../src/repositories/ai-suggestions.js";
 import type { AppServices } from "../src/services/app.js";
 import { createAppServicesFromDatabase } from "../src/services/app.js";
 import { HttpError } from "../src/services/errors.js";
+import { countIncompatibleActiveWorkflowDependentJobs } from "../src/services/workflows.js";
 import { createApiServer } from "../src/server.js";
 import { WorkItemRepository } from "../src/repositories/work-items.js";
+import { WorkflowRepository } from "../src/repositories/workflows.js";
 import { ObjectStorageService } from "../src/services/object-storage.js";
 import { TranscriptionService } from "../src/services/transcription.js";
 import { KeywordService } from "../src/services/keywords.js";
@@ -91,6 +93,74 @@ test("catalog service deletes unused projects and blocks projects referenced by 
     () => services.catalog.deleteProject("project-used", session.user, "request-delete-used"),
     (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "project_in_use"
   );
+});
+
+test("workflow activation compatibility lists only workflow-dependent active jobs", async () => {
+  const db = new FakeDatabase();
+  const activeStatuses = ["queued", "claimed", "running", "retry_scheduled"];
+  const nonWorkflowJobKinds = [
+    "transcribe_audio",
+    "extract_memo_metadata",
+    "generate_keywords",
+    "expand_work_item",
+    "generate_export_batch"
+  ];
+
+  for (const status of activeStatuses) {
+    for (const jobKind of nonWorkflowJobKinds) {
+      db.processingJobs.push({
+        job_kind: jobKind,
+        status,
+        work_item_id: jobKind === "generate_export_batch" ? null : "work-item-1"
+      });
+    }
+  }
+  db.processingJobs.push(
+    { id: "job-nominate-queued", job_kind: "nominate_tags", status: "queued", work_item_id: "work-item-queued" },
+    { id: "job-nominate-running", job_kind: "nominate_tags", status: "running", work_item_id: "work-item-running" },
+    { id: "job-nominate-done", job_kind: "nominate_tags", status: "succeeded", work_item_id: "work-item-done" }
+  );
+  db.workItems.push(
+    { id: "work-item-queued", workflow_state: "memo" },
+    { id: "work-item-running", workflow_state: "memo" },
+    { id: "work-item-done", workflow_state: "memo" }
+  );
+
+  const activeDependentJobs = await new WorkflowRepository(db).listActiveWorkflowDependentJobs();
+
+  assert.deepEqual(
+    activeDependentJobs.map((job) => job.id),
+    ["job-nominate-queued", "job-nominate-running"]
+  );
+});
+
+test("workflow activation compatibility allows nomination jobs when the staged bundle supports the same state hook", () => {
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  const candidateBundle = db.activeWorkflow?.bundle;
+
+  const activeDependentJobs = countIncompatibleActiveWorkflowDependentJobs(
+    [{ id: "job-nominate-queued", job_kind: "nominate_tags", work_item_id: "work-item-1", workflow_state: "memo" }],
+    candidateBundle
+  );
+
+  assert.equal(activeDependentJobs, 0);
+});
+
+test("workflow activation compatibility blocks nomination jobs when the staged bundle removes their state hook", () => {
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  const candidateBundle = {
+    ...(db.activeWorkflow?.bundle as Record<string, unknown>),
+    hooks: []
+  };
+
+  const activeDependentJobs = countIncompatibleActiveWorkflowDependentJobs(
+    [{ id: "job-nominate-queued", job_kind: "nominate_tags", work_item_id: "work-item-1", workflow_state: "memo" }],
+    candidateBundle
+  );
+
+  assert.equal(activeDependentJobs, 1);
 });
 
 test("archive result rejects mismatched machine ids", async () => {
@@ -2664,6 +2734,24 @@ class FakeDatabase implements Database {
         claim_expires_at: null
       });
       return rows([]);
+    }
+
+    if (text.includes("from processing_jobs") && text.includes("processing_jobs.job_kind")) {
+      return rows(
+        this.processingJobs
+          .filter(
+            (job) =>
+              ["queued", "claimed", "running", "retry_scheduled"].includes(String(job.status)) &&
+              job.job_kind === "nominate_tags"
+          )
+          .map((job) => ({
+            id: job.id,
+            job_kind: job.job_kind,
+            work_item_id: job.work_item_id,
+            workflow_state:
+              this.workItems.find((workItem) => workItem.id === job.work_item_id)?.workflow_state ?? null
+          })) as unknown as Row[]
+      );
     }
 
     if (text.includes("with cancelled as") && text.includes("update processing_jobs")) {
