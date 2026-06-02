@@ -21,12 +21,24 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /Add file type/);
   assert.match(appSource, /Remove file type/);
   assert.match(appSource, /Needs parser support/);
+  assert.match(appSource, /Operations/);
+  assert.match(appSource, /Workflow bundle import/);
+  assert.match(appSource, /Validate and stage/);
+  assert.match(appSource, /Activate workflow/);
+  assert.match(appSource, /rollback requires re-import/i);
+  assert.match(appSource, /I understand activation replaces the active workflow bundle/);
+  assert.match(appSource, /\/api\/workflow\/status/);
+  assert.match(appSource, /\/api\/workflow\/imports/);
+  assert.match(appSource, /\/api\/workflow\/buckets/);
   assert.match(appSource, /Active watching every/);
   assert.match(appSource, /watchedFolderPollingIntervalMs/);
   assert.match(appSource, /label="Strong"/);
   assert.match(appSource, /label="Related"/);
   assert.match(appSource, /label="Weak"/);
+  assert.match(appSource, /projectDeleteConfirmId/);
+  assert.doesNotMatch(appSource, /Delete \$\{projectName\}/);
   assert.doesNotMatch(appSource, />\s*Import\s*</);
+  assert.doesNotMatch(appSource, /manual per-file import/i);
 });
 
 test("watched imports use filesystem creation time before modified time", () => {

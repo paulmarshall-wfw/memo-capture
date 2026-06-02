@@ -512,22 +512,23 @@ The Projects page owns project create/edit/deactivate/delete controls. The Creat
 
 Settings sections:
 
-- Tag and keyword grouping
-- Contributors
-- File types
-- Providers
-- Prompts
-- Exports
 - Watched folders and desktop-local paths
-- System diagnostics
+- File types
+- AI prompts
+- Providers
+- Export contract
+- Operations
+- Diagnostics
 
 Settings must not expose a manual per-file import queue. Watched folders own standalone file ingestion. Saved enabled watched folders are actively polled by the native desktop app while it is open, and the Check now action is allowed only when it runs the same automatic processing path for eligible enabled file types.
 
 Operations section:
 
-- Workflow import
-- Workflow staged validation
-- Workflow activation
+- Active workflow status from `GET /api/workflow/status`, including workflow ID, workflow version, state-machine version, content hash, activation time, and supported hook handlers.
+- Workflow bundle import through a JSON file selector and notes field, validating client-side JSON before `POST /api/workflow/imports`.
+- In-session staged validation details, including staged import ID, validation state, identity fields, warnings, errors, and content hash.
+- Explicit activation only for valid staged imports, with activation notes, a required confirmation checkbox, and `POST /api/workflow/imports/{stagedImportId}/activate` using `confirmActivation: true`.
+- Warning that Memo Capture stores only the active workflow bundle body and rollback requires re-importing a known-good bundle.
 
 ## Acceptance Tests
 

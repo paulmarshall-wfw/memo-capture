@@ -1,0 +1,54 @@
+# Operations_Workflow_Import_UI
+
+## Summary
+
+Add a Settings sub-section named `Operations` for workflow bundle import, validation, staging, and explicit activation. Keep the implementation on the existing backend workflow APIs and avoid adding new durable staged-import management unless a later issue requires list/discard behavior.
+
+## Key Changes
+
+- Extend the desktop Settings section model with `Operations`, placed before `Diagnostics`
+- Add an Operations panel that shows current active workflow status from `GET /api/workflow/status`: workflow ID, workflow version, state-machine version, content hash, activation time, and supported hook handlers.
+- Add a workflow bundle import form:
+  - JSON file input using browser/Tauri web file APIs.
+  - Notes field sent as `notes`.
+  - `Validate and stage` button that parses JSON client-side, then calls `POST /api/workflow/imports`.
+- Render staged import result in-session:
+  - staged import ID
+  - validation status
+  - identity fields
+  - warnings and errors
+  - content hash
+  - clear warning that Memo Capture stores only the active workflow bundle body and rollback requires re-importing a known-good bundle.
+- Add explicit activation controls only when the staged result is valid:
+  - activation notes field
+  - required confirmation checkbox
+  - `Activate workflow` button calling `POST /api/workflow/imports/{stagedImportId}/activate` with `confirmActivation: true`.
+- After successful activation, refresh workflow status and workflow buckets so the Work queue reflects the new active definition.
+- Keep this pass UI-only against existing APIs; do not add staged import list/discard routes.
+
+## Tests
+
+- Add/update desktop source tests to assert the Settings page exposes `Operations`, workflow import copy, activation confirmation copy, and does not expose manual per-file import controls.
+- Add API route coverage only if current workflow import/activation route tests are insufficient for request/response shape.
+- Run:
+  - `npm run typecheck`
+  - `npm test`
+  - `npm run build`
+  - `npm run verify`
+- Browser/Chrome smoke:
+  - Open Settings.
+  - Confirm `Operations` appears.
+  - Confirm active workflow status renders.
+  - Stage a valid workflow JSON bundle and see validation details.
+  - Confirm activation requires the checkbox.
+  - Activate and verify status refreshes.
+
+Rebuild the native app so the user can test it
+
+If everything is successful then update completed task ledger [$completed-task-log](/Users/paulmarshall/Software Development/All Skills/completed-task-log/SKILL.md) 
+
+## Assumptions
+
+- `Operations` should be a Settings sub-section because the issue reports it missing from the Settings page.
+- MVP staging is session-oriented: if the app reloads after staging but before activation, the operator re-imports the known-good bundle.
+- Existing dirty files in the workspace should be preserved and worked with, not reverted.

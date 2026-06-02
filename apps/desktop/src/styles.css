@@ -1465,6 +1465,58 @@ button:disabled {
   grid-template-columns: minmax(120px, 0.8fr) minmax(130px, 0.8fr) minmax(170px, 1fr) minmax(120px, 0.7fr) minmax(130px, 0.7fr) minmax(78px, auto);
 }
 
+.operations-section {
+  align-content: start;
+}
+
+.workflow-import-panel,
+.workflow-staged-panel,
+.workflow-activation-panel {
+  background: var(--surface-raised);
+}
+
+.workflow-validation-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.workflow-validation-grid > div {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.workflow-validation-grid strong {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 780;
+  text-transform: uppercase;
+}
+
+.workflow-validation-grid ul,
+.workflow-validation-grid p {
+  margin: 0;
+}
+
+.workflow-validation-grid ul {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.workflow-confirmation-row {
+  align-items: flex-start;
+  line-height: 1.35;
+}
+
 .prompt-editor-list {
   gap: 12px;
 }
@@ -2014,6 +2066,7 @@ button:disabled {
   .settings-table-header,
   .settings-table-row,
   .settings-inline-form,
+  .workflow-validation-grid,
   .project-row-top,
   .tag-suggestion-row {
     grid-template-columns: 1fr;

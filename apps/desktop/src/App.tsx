@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactElement
@@ -50,7 +51,14 @@ type ActiveView = "work-items" | "projects" | "exports" | "settings" | "audit";
 type ThemeMode = "light" | "dark";
 type WorkQueueSyncState = "idle" | "syncing" | "connected" | "error";
 type WorkflowRuntimeEventFilter = "journal" | keyof WorkflowEventViews;
-type SettingsSectionId = "watched" | "file-types" | "prompts" | "providers" | "export" | "diagnostics";
+type SettingsSectionId =
+  | "watched"
+  | "file-types"
+  | "prompts"
+  | "providers"
+  | "export"
+  | "operations"
+  | "diagnostics";
 type FileTypeCapabilityState = "active" | "inactive" | "not_supported_yet";
 
 interface SessionResponse {
@@ -78,6 +86,33 @@ interface WorkflowBucket {
   order: number;
   states: string[];
   count?: number;
+}
+
+interface WorkflowStatus {
+  active: {
+    workflowId: string;
+    workflowVersion: string;
+    stateMachineVersion: string;
+    contentHash: string;
+    activatedAt: string;
+  } | null;
+  supportedHookHandlers: string[];
+}
+
+interface WorkflowImportResult {
+  stagedImportId: string;
+  status: "staged" | "invalid";
+  validation: {
+    ok: boolean;
+    warnings: string[];
+    errors: string[];
+  };
+  identity: {
+    workflowId: string;
+    workflowVersion: string;
+    stateMachineVersion: string;
+    contentHash: string;
+  } | null;
 }
 
 interface WorkItem {
@@ -469,6 +504,7 @@ const settingsSections: readonly { id: SettingsSectionId; label: string }[] = [
   { id: "prompts", label: "AI prompts" },
   { id: "providers", label: "Providers" },
   { id: "export", label: "Export contract" },
+  { id: "operations", label: "Operations" },
   { id: "diagnostics", label: "Diagnostics" }
 ];
 
@@ -1236,6 +1272,16 @@ export function App() {
   const [fileTypeCreateInFlight, setFileTypeCreateInFlight] = useState(false);
   const [mediaTypeCreateInFlight, setMediaTypeCreateInFlight] = useState(false);
   const [parserTypeCreateInFlight, setParserTypeCreateInFlight] = useState(false);
+  const [workflowStatus, setWorkflowStatus] = useState<WorkflowStatus | null>(null);
+  const [workflowStatusLoading, setWorkflowStatusLoading] = useState(false);
+  const [workflowImportFile, setWorkflowImportFile] = useState<File | null>(null);
+  const [workflowImportNotes, setWorkflowImportNotes] = useState("");
+  const [workflowImportResult, setWorkflowImportResult] = useState<WorkflowImportResult | null>(null);
+  const [workflowImportError, setWorkflowImportError] = useState<string | null>(null);
+  const [workflowImportInFlight, setWorkflowImportInFlight] = useState(false);
+  const [workflowActivationNotes, setWorkflowActivationNotes] = useState("");
+  const [workflowActivationConfirmed, setWorkflowActivationConfirmed] = useState(false);
+  const [workflowActivationInFlight, setWorkflowActivationInFlight] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditFilter, setAuditFilter] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -1243,6 +1289,7 @@ export function App() {
   const [projectDrafts, setProjectDrafts] = useState<Record<string, ProjectFormState>>({});
   const [newProjectDrafts, setNewProjectDrafts] = useState<NewProjectDraft[]>([]);
   const [projectIdInFlight, setProjectIdInFlight] = useState<string | null>(null);
+  const [projectDeleteConfirmId, setProjectDeleteConfirmId] = useState<string | null>(null);
   const [projectThresholdDraft, setProjectThresholdDraft] = useState("0.65");
   const [projectConfigSaving, setProjectConfigSaving] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
@@ -1401,6 +1448,7 @@ export function App() {
       id: "watched",
       label: "Watched folders"
     };
+  const validWorkflowImportReady = workflowImportResult?.validation.ok === true;
   const projectThresholdValue = Number.parseFloat(projectThresholdDraft);
   const projectThresholdDisplay = Number.isFinite(projectThresholdValue)
     ? projectThresholdValue.toFixed(2)
@@ -1586,6 +1634,16 @@ export function App() {
   }, [accessToken, activeView]);
 
   useEffect(() => {
+    if (accessToken === null || activeView !== "settings" || activeSettingsSection !== "operations") {
+      return;
+    }
+
+    void loadWorkflowStatus(accessToken).catch((error) => {
+      setWorkflowImportError(error instanceof Error ? error.message : "Unable to load workflow status.");
+    });
+  }, [accessToken, activeView, activeSettingsSection]);
+
+  useEffect(() => {
     if (!activeFolderWatching) {
       return;
     }
@@ -1700,6 +1758,7 @@ export function App() {
   function applyProjects(nextProjects: Project[]) {
     setProjects(nextProjects);
     setProjectDrafts(Object.fromEntries(nextProjects.map((project) => [project.id, createProjectForm(project)])));
+    setProjectDeleteConfirmId(null);
   }
 
   async function loadProjects(token = accessToken): Promise<void> {
@@ -1819,6 +1878,104 @@ export function App() {
       );
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  async function loadWorkflowStatus(token = accessToken): Promise<void> {
+    if (token === null) {
+      return;
+    }
+    setWorkflowStatusLoading(true);
+    try {
+      const statusResponse = await authedJson<WorkflowStatus>(token, "/api/workflow/status");
+      setWorkflowStatus(statusResponse);
+    } finally {
+      setWorkflowStatusLoading(false);
+    }
+  }
+
+  function handleWorkflowImportFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextFile = event.currentTarget.files?.[0] ?? null;
+    setWorkflowImportFile(nextFile);
+    setWorkflowImportResult(null);
+    setWorkflowActivationConfirmed(false);
+    setWorkflowImportError(null);
+  }
+
+  async function validateAndStageWorkflowImport(): Promise<void> {
+    if (accessToken === null) {
+      return;
+    }
+    if (workflowImportFile === null) {
+      setWorkflowImportError("Choose a workflow JSON bundle before staging.");
+      return;
+    }
+
+    setWorkflowImportInFlight(true);
+    setWorkflowImportError(null);
+    setWorkflowImportResult(null);
+    setWorkflowActivationConfirmed(false);
+    try {
+      let bundle: unknown;
+      try {
+        bundle = JSON.parse(await workflowImportFile.text()) as unknown;
+      } catch {
+        setWorkflowImportError("Workflow bundle JSON could not be parsed.");
+        return;
+      }
+      const response = await authedJson<WorkflowImportResult>(accessToken, "/api/workflow/imports", {
+        method: "POST",
+        body: JSON.stringify({
+          bundle,
+          notes: workflowImportNotes.trim()
+        })
+      });
+      setWorkflowImportResult(response);
+      setWorkflowActivationNotes("");
+      setStatusMessage(response.validation.ok ? "Workflow bundle staged." : "Workflow bundle failed validation.");
+    } catch (error) {
+      setWorkflowImportError(error instanceof Error ? error.message : "Unable to stage workflow bundle.");
+    } finally {
+      setWorkflowImportInFlight(false);
+    }
+  }
+
+  async function activateStagedWorkflow(): Promise<void> {
+    if (accessToken === null || workflowImportResult === null || !workflowImportResult.validation.ok) {
+      return;
+    }
+    if (!workflowActivationConfirmed) {
+      setWorkflowImportError("Confirm activation before activating the staged workflow.");
+      return;
+    }
+
+    setWorkflowActivationInFlight(true);
+    setWorkflowImportError(null);
+    try {
+      await authedJson<{
+        activated: true;
+        activeWorkflowVersion: string;
+        contentHash: string;
+      }>(
+        accessToken,
+        `/api/workflow/imports/${encodeURIComponent(workflowImportResult.stagedImportId)}/activate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            confirmActivation: true,
+            activationNotes: workflowActivationNotes.trim()
+          })
+        }
+      );
+      setWorkflowImportResult(null);
+      setWorkflowActivationConfirmed(false);
+      setWorkflowActivationNotes("");
+      await Promise.all([loadWorkflowStatus(accessToken), refreshBucket(activeBucketId)]);
+      setStatusMessage("Workflow activated and Work queue refreshed.");
+    } catch (error) {
+      setWorkflowImportError(error instanceof Error ? error.message : "Unable to activate staged workflow.");
+    } finally {
+      setWorkflowActivationInFlight(false);
     }
   }
 
@@ -2965,10 +3122,6 @@ export function App() {
     if (accessToken === null) {
       return;
     }
-    const projectName = project.name.trim() === "" ? "this blank project" : project.name;
-    if (!window.confirm(`Delete ${projectName}? This cannot be undone.`)) {
-      return;
-    }
 
     setProjectIdInFlight(project.id);
     setStatusMessage(null);
@@ -3890,20 +4043,44 @@ export function App() {
                               Deactivate
                             </button>
                           ) : null}
-                          <button
-                            className="row-action-button danger icon-only"
-                            type="button"
-                            title="Delete project"
-                            aria-label={`Delete ${project.name.trim() === "" ? "blank project" : project.name}`}
-                            disabled={projectIdInFlight !== null}
-                            onClick={() => void deleteProject(project)}
-                          >
-                            {projectIdInFlight === project.id ? (
-                              <RefreshCcw className="spin" size={16} />
-                            ) : (
+                          {projectDeleteConfirmId === project.id ? (
+                            <>
+                              <button
+                                className="row-action-button danger"
+                                type="button"
+                                disabled={projectIdInFlight !== null}
+                                onClick={() => void deleteProject(project)}
+                              >
+                                {projectIdInFlight === project.id ? (
+                                  <RefreshCcw className="spin" size={16} />
+                                ) : (
+                                  <Trash2 size={16} />
+                                )}
+                                Delete
+                              </button>
+                              <button
+                                className="row-action-button icon-only"
+                                type="button"
+                                title="Cancel delete"
+                                aria-label="Cancel delete"
+                                disabled={projectIdInFlight === project.id}
+                                onClick={() => setProjectDeleteConfirmId(null)}
+                              >
+                                <X size={16} />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="row-action-button danger icon-only"
+                              type="button"
+                              title="Delete project"
+                              aria-label={`Delete ${project.name.trim() === "" ? "blank project" : project.name}`}
+                              disabled={projectIdInFlight !== null}
+                              onClick={() => setProjectDeleteConfirmId(project.id)}
+                            >
                               <Trash2 size={16} />
-                            )}
-                          </button>
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -4748,6 +4925,249 @@ export function App() {
                       </dd>
                     </div>
                   </dl>
+                </section>
+              ) : activeSettingsSection === "operations" ? (
+                <section className="detail-section operations-section" aria-label="Workflow operations">
+                  <div className="settings-row-header">
+                    <div className="section-title">
+                      <PackageCheck size={18} />
+                      <h3>Active workflow</h3>
+                    </div>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={workflowStatusLoading}
+                      onClick={() => void loadWorkflowStatus()}
+                    >
+                      <RefreshCcw className={workflowStatusLoading ? "spin" : ""} size={18} />
+                      Refresh
+                    </button>
+                  </div>
+                  {workflowStatus?.active === null ? (
+                    <div className="empty-detail compact-empty">
+                      <CircleSlash size={22} />
+                      <span>No active workflow bundle</span>
+                    </div>
+                  ) : (
+                    <dl className="metadata-list compact-metadata">
+                      <div>
+                        <dt>Workflow ID</dt>
+                        <dd>
+                          <span>{workflowStatus?.active?.workflowId ?? "not loaded"}</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Workflow</dt>
+                        <dd>
+                          <span>{workflowStatus?.active?.workflowVersion ?? "not loaded"}</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>State machine</dt>
+                        <dd>
+                          <span>{workflowStatus?.active?.stateMachineVersion ?? "not loaded"}</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Content hash</dt>
+                        <dd>
+                          <span>{workflowStatus?.active?.contentHash ?? "not loaded"}</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Activated</dt>
+                        <dd>
+                          <span>
+                            {workflowStatus?.active?.activatedAt === undefined
+                              ? "not loaded"
+                              : formatDate(workflowStatus.active.activatedAt)}
+                          </span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Hook handlers</dt>
+                        <dd>
+                          <span>
+                            {(workflowStatus?.supportedHookHandlers ?? []).length === 0
+                              ? "none"
+                              : (workflowStatus?.supportedHookHandlers ?? []).join(", ")}
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
+                  )}
+
+                  <div className="settings-row workflow-import-panel">
+                    <div className="settings-row-header">
+                      <div className="section-title">
+                        <PackagePlus size={18} />
+                        <h3>Workflow bundle import</h3>
+                      </div>
+                      <span className="detail-count">
+                        {workflowImportFile === null ? "No file selected" : workflowImportFile.name}
+                      </span>
+                    </div>
+                    <div className="field-grid">
+                      <div className="field-group">
+                        <label htmlFor="workflow-bundle-file">JSON bundle</label>
+                        <input
+                          id="workflow-bundle-file"
+                          type="file"
+                          accept="application/json,.json"
+                          onChange={handleWorkflowImportFileChange}
+                        />
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="workflow-import-notes">Notes</label>
+                        <input
+                          id="workflow-import-notes"
+                          value={workflowImportNotes}
+                          onChange={(event) => setWorkflowImportNotes(event.currentTarget.value)}
+                          placeholder="Why this workflow is being staged"
+                        />
+                      </div>
+                    </div>
+                    <div className="detail-actions">
+                      <button
+                        className="primary-button"
+                        type="button"
+                        disabled={workflowImportInFlight}
+                        onClick={() => void validateAndStageWorkflowImport()}
+                      >
+                        {workflowImportInFlight ? <RefreshCcw className="spin" size={18} /> : <CheckCircle2 size={18} />}
+                        Validate and stage
+                      </button>
+                      {workflowImportError === null ? null : <span className="muted-text">{workflowImportError}</span>}
+                    </div>
+                  </div>
+
+                  {workflowImportResult === null ? null : (
+                    <div className="settings-row workflow-staged-panel">
+                      <div className="settings-row-header">
+                        <div className="section-title">
+                          {workflowImportResult.validation.ok ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                          <h3>Staged validation</h3>
+                        </div>
+                        <span className={`state-chip state-${workflowImportResult.validation.ok ? "accepted" : "failed"}`}>
+                          {workflowImportResult.status}
+                        </span>
+                      </div>
+                      <dl className="metadata-list compact-metadata">
+                        <div>
+                          <dt>Staged ID</dt>
+                          <dd>
+                            <span>{workflowImportResult.stagedImportId}</span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Validation</dt>
+                          <dd>
+                            <span>{workflowImportResult.validation.ok ? "valid" : "invalid"}</span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Workflow ID</dt>
+                          <dd>
+                            <span>{workflowImportResult.identity?.workflowId ?? "unavailable"}</span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Workflow</dt>
+                          <dd>
+                            <span>{workflowImportResult.identity?.workflowVersion ?? "unavailable"}</span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>State machine</dt>
+                          <dd>
+                            <span>{workflowImportResult.identity?.stateMachineVersion ?? "unavailable"}</span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Content hash</dt>
+                          <dd>
+                            <span>{workflowImportResult.identity?.contentHash ?? "unavailable"}</span>
+                          </dd>
+                        </div>
+                      </dl>
+                      <div className="workflow-validation-grid">
+                        <div>
+                          <strong>Warnings</strong>
+                          {workflowImportResult.validation.warnings.length === 0 ? (
+                            <p className="muted-text">None</p>
+                          ) : (
+                            <ul>
+                              {workflowImportResult.validation.warnings.map((warning) => (
+                                <li key={warning}>{warning}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                        <div>
+                          <strong>Errors</strong>
+                          {workflowImportResult.validation.errors.length === 0 ? (
+                            <p className="muted-text">None</p>
+                          ) : (
+                            <ul>
+                              {workflowImportResult.validation.errors.map((error) => (
+                                <li key={error}>{error}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                      <div className="status-banner warning">
+                        <AlertTriangle size={18} />
+                        <span>
+                          Memo Capture stores only the active workflow bundle body. Rollback requires re-importing a
+                          known-good bundle.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {!validWorkflowImportReady ? null : (
+                    <div className="settings-row workflow-activation-panel">
+                      <div className="settings-row-header">
+                        <div className="section-title">
+                          <Check size={18} />
+                          <h3>Activation</h3>
+                        </div>
+                      </div>
+                      <div className="field-group">
+                        <label htmlFor="workflow-activation-notes">Activation notes</label>
+                        <input
+                          id="workflow-activation-notes"
+                          value={workflowActivationNotes}
+                          onChange={(event) => setWorkflowActivationNotes(event.currentTarget.value)}
+                          placeholder="Operator note for this activation"
+                        />
+                      </div>
+                      <label className="toggle-row workflow-confirmation-row">
+                        <input
+                          type="checkbox"
+                          checked={workflowActivationConfirmed}
+                          onChange={(event) => setWorkflowActivationConfirmed(event.currentTarget.checked)}
+                        />
+                        I understand activation replaces the active workflow bundle and rollback requires re-import.
+                      </label>
+                      <div className="detail-actions">
+                        <button
+                          className="primary-button"
+                          type="button"
+                          disabled={!workflowActivationConfirmed || workflowActivationInFlight}
+                          onClick={() => void activateStagedWorkflow()}
+                        >
+                          {workflowActivationInFlight ? (
+                            <RefreshCcw className="spin" size={18} />
+                          ) : (
+                            <PackageCheck size={18} />
+                          )}
+                          Activate workflow
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </section>
               ) : (
                 <>
