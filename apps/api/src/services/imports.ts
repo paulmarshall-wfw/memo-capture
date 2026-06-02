@@ -21,6 +21,7 @@ import {
   type ParserTypeSettingRow
 } from "../repositories/settings.js";
 import { WorkItemRepository } from "../repositories/work-items.js";
+import { ClassificationService } from "./classification.js";
 import type { ObjectStorageService } from "./object-storage.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
 import {
@@ -67,10 +68,10 @@ export interface UploadSessionResponse {
 
 export interface FinalizeUploadSessionResponse {
   sourceMemoId: string;
-  workItemId: string;
+  workItemId: string | null;
   artifactId: string;
   importEventId: string;
-  initialWorkflowState: string;
+  initialWorkflowState: string | null;
   processingJobs: string[];
 }
 
@@ -329,10 +330,8 @@ async function finalizeWatchedAudioImport(input: {
   const sourceMemos = new SourceMemoRepository(input.client);
   const sourceMemoArtifacts = new SourceMemoArtifactRepository(input.client);
   const importEvents = new ImportEventRepository(input.client);
-  const workItems = new WorkItemRepository(input.client);
   const jobs = new ProcessingJobRepository(input.client);
   const audit = new AuditRepository(input.client);
-  const title = deriveTitle("", session.originalFilename);
 
   await artifacts.create({
     id: session.artifactId,
@@ -362,18 +361,6 @@ async function finalizeWatchedAudioImport(input: {
     relationship: "primary_original"
   });
 
-  const workItem = await workItems.create({
-    sourceMemoId: sourceMemo.id,
-    projectId: null,
-    contributorText: null,
-    contributorId: null,
-    title,
-    body: "",
-    bodyFormat: "markdown",
-    workflowState: INGESTION_REVIEW_WORK_ITEM_STATE,
-    actorUserId: input.actor.id
-  });
-
   const importEvent = await importEvents.create({
     sourceMemoId: sourceMemo.id,
     artifactId: session.artifactId,
@@ -387,7 +374,7 @@ async function finalizeWatchedAudioImport(input: {
   const transcriptionJob = await jobs.create({
     jobKind: "transcribe_audio",
     sourceMemoId: sourceMemo.id,
-    workItemId: workItem.id,
+    workItemId: null,
     maxAttempts: await readTranscriptionMaxAttempts(input.client),
     initiatedBy: input.actor.id
   });
@@ -405,23 +392,13 @@ async function finalizeWatchedAudioImport(input: {
       importEventId: importEvent.id
     }
   });
-  await audit.record({
-    eventName: "work_item.created",
-    actor: input.actor,
-    subjectType: "work_item",
-    subjectId: workItem.id,
-    requestId: input.requestId,
-    sourceMemoId: sourceMemo.id,
-    workItemId: workItem.id,
-    metadata: { workflowState: workItem.workflowState }
-  });
 
   return {
     sourceMemoId: sourceMemo.id,
-    workItemId: workItem.id,
+    workItemId: null,
     artifactId: session.artifactId,
     importEventId: importEvent.id,
-    initialWorkflowState: workItem.workflowState,
+    initialWorkflowState: null,
     processingJobs: [transcriptionJob.id]
   };
 }
@@ -510,13 +487,6 @@ async function finalizeWatchedTextImport(input: {
     contentHash: session.contentHash,
     status: "imported"
   });
-  const extractionJob = await jobs.create({
-    jobKind: "extract_memo_metadata",
-    sourceMemoId: sourceMemo.id,
-    workItemId: workItem.id,
-    maxAttempts: 3,
-    initiatedBy: input.actor.id
-  });
   await new ImportUploadSessionRepository(input.client).markFinalized(session.id);
   await audit.record({
     eventName: "source_memo.created",
@@ -541,6 +511,18 @@ async function finalizeWatchedTextImport(input: {
     workItemId: workItem.id,
     metadata: { workflowState: workItem.workflowState }
   });
+  await new ClassificationService(input.client).runInitialStateHooksForWorkItem({
+    workItem,
+    actor: input.actor,
+    requestId: input.requestId
+  });
+  const keywordJob = await jobs.create({
+    jobKind: "generate_keywords",
+    sourceMemoId: sourceMemo.id,
+    workItemId: workItem.id,
+    maxAttempts: 3,
+    initiatedBy: input.actor.id
+  });
 
   return {
     sourceMemoId: sourceMemo.id,
@@ -548,7 +530,7 @@ async function finalizeWatchedTextImport(input: {
     artifactId: session.artifactId,
     importEventId: importEvent.id,
     initialWorkflowState: workItem.workflowState,
-    processingJobs: [extractionJob.id]
+    processingJobs: [keywordJob.id]
   };
 }
 

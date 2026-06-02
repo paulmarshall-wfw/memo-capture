@@ -22,7 +22,7 @@ The app uses two linked primary records:
 
 `work_item` stores the reviewable idea content and metadata that users edit, browse, accept, park, reject, ignore, fail, or export.
 
-Every successfully detected/imported source memo creates a work item immediately. Form submissions and high-confidence imports instantiate work items in `memo`. Low-confidence imports instantiate work items in `needs_review`.
+Form submissions create a source memo and a `memo` work item immediately because required project/body fields are explicit. Watched text imports create a source memo and `needs_review` work item immediately, then run the shared `classify_item` hook. Watched audio imports create source memo provenance and a transcription job first; the review work item is created after transcription succeeds or after automatic transcription reaches a recoverable failure state.
 
 ## Classification Model
 
@@ -50,11 +50,11 @@ Supported V1 ingestion channels:
 - watched folder for audio files
 - watched folder for text files
 
-Watched-folder imports always create source memo provenance first, then create the workflow work item in the appropriate initial state.
+Watched-folder imports always create source memo provenance first. Text imports create the workflow work item in `needs_review` immediately. Audio imports defer work-item creation until transcription succeeds or reaches recoverable failure, so users do not see an empty review item while automatic transcription can still complete.
 
 Watched-folder source memo provenance preserves the source file's filesystem creation timestamp as the original memo time, falling back to filesystem modified time only when creation time is unavailable. Work queue rows and the work item detail header should show this original file time rather than workflow processing timestamps; processing dates belong in audit, diagnostics, and logs.
 
-Automatic extraction should produce candidate project, title, body, contributor, tags, and derived grouping metadata with confidence metadata. Low-confidence or incomplete imports enter `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block promotion.
+Automatic extraction should produce candidate project, title, body, contributor, tags, and derived grouping metadata with confidence metadata. The shared `classify_item` hook promotes an imported `needs_review` item through workflow action `review.memo` only when exactly one active project name matches the item text and that match meets the backend project-confidence threshold. Low-confidence, ambiguous, or incomplete imports remain in `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block manual promotion.
 
 Promotion from `needs_review` to `memo` requires:
 
@@ -256,11 +256,12 @@ Backend processing flow:
 - create processing job
 - call configured transcription provider or local/NAS-hosted transcription service
 - store transcript as a versioned derived artifact linked to source memo
-- run extraction/classification from the transcript
+- create the `needs_review` work item and run the same `classify_item` hook used for watched text
+- queue keyword generation after classification
 
 Automatic transcription retry count is configurable.
 
-Recoverable transcription or extraction failures stay in `needs_review` with visible error details and recovery actions. Terminal `failed` is reserved for explicit unrecoverable/system/user failure.
+Recoverable transcription or extraction failures create or keep a `needs_review` work item with visible error details and recovery actions. Terminal `failed` is reserved for explicit unrecoverable/system/user failure.
 
 If automatic transcription fails, the user can play the source audio in the detail panel and manually enter or edit transcript/body content.
 
@@ -378,6 +379,7 @@ Backend-owned settings:
 - contributor list
 - supported file type entries and capability state
 - extraction confidence thresholds
+- project auto-promotion confidence threshold
 - transcription retry count
 - base LLM prompts and prompt versions
 - export settings/templates

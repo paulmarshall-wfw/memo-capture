@@ -39,7 +39,7 @@ export interface WorkflowActionResult {
   entryHooks: WorkflowHook[];
 }
 
-interface WorkflowHook {
+export interface WorkflowHook {
   id: string;
   phase: string;
   targetType: string;
@@ -232,6 +232,12 @@ export class WorkflowRuntimeAdapter {
         (hook) => hook.phase === "on_state_entry" && hook.targetType === "state" && hook.targetId === action.to
       )
     };
+  }
+
+  getStateEntryHooks(bundle: unknown, workflowState: string): WorkflowHook[] {
+    return readHookDefinitions(bundle).filter(
+      (hook) => hook.phase === "on_state_entry" && hook.targetType === "state" && hook.targetId === workflowState
+    );
   }
 }
 

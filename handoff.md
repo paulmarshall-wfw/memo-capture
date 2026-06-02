@@ -4,112 +4,97 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-01T19:48:37Z
+- Created timestamp UTC: 2026-06-02T00:37:00Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: original watched-file timestamp provenance and work item display.
+- Session scope: shared `classify_item` flow for watched text and audio imports.
 
 ### Checkpoint Status
 
-- Git HEAD: `3e4a827`
+- Git HEAD: `11dfd33`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/db/migrations/0015_original_file_modified_at.sql`
-  - `apps/api/src/repositories/import-upload-sessions.ts`
-  - `apps/api/src/repositories/rows.ts`
-  - `apps/api/src/repositories/source-memos.ts`
   - `apps/api/src/repositories/work-items.ts`
-  - `apps/api/src/services/diagnostics.ts`
   - `apps/api/src/services/imports.ts`
+  - `apps/api/src/services/settings.ts`
+  - `apps/api/src/services/transcription.ts`
+  - `apps/api/src/services/workflow-runtime.ts`
   - `apps/api/tests/backend-foundation.test.ts`
-  - `apps/api/tests/tag-suggestions.test.ts`
   - `apps/desktop/src/App.tsx`
-  - `packages/domain/src/index.ts`
-  - `docs/design/memo-capture-design-learnings.md`
-  - `docs/specs/ingestion-and-artifacts.md`
+  - `apps/desktop/src/styles.css`
+  - `apps/worker/src/index.ts`
   - `docs/completed-tasks.md`
+  - `docs/design/memo-capture-design-learnings.md`
   - `handoff.md`
-- Dirty files intentionally out of scope:
-  - None
+  - `packages/domain/src/index.ts`
+  - `packages/domain/tests/states.test.ts`
 - Untracked files intentionally in scope:
+  - `apps/api/db/migrations/0017_project_classification_threshold.sql`
+  - `apps/api/src/services/classification.ts`
+- Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally out of scope:
   - None
-- Canonical files described:
-  - `AGENTS.md`
-  - `package.json`
-  - `apps/api/db/migrations/0015_original_file_modified_at.sql`
-  - `apps/api/src/services/imports.ts`
-  - `apps/api/src/repositories/work-items.ts`
-  - `apps/desktop/src/App.tsx`
-  - `docs/completed-tasks.md`
-  - `handoff.md`
 - Last verification:
-  - command: `npm run typecheck`; `npm test`; `npm run build`; `npm run verify`; `npm run db:migrate`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
+  - command: `npm run verify`; `npm run db:migrate`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`; Chrome smoke on `http://127.0.0.1:5173/`
   - result: passed
-  - timestamp UTC: 2026-06-01T19:44Z
+  - timestamp UTC: 2026-06-02T00:36Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD`, dirty files, source/API/UI changes, docs updates, tests, full verification, and app-only native rebuild are recorded here. No handoff freshness helper scripts exist in this repo, so freshness was checked manually.
-- Next checkpoint action: review the dirty timestamp slice, run live native smoke if desired, then commit if acceptable.
+- Safe-to-continue basis: current `HEAD`, dirty file list, new untracked files, migration application, tests, build, Chrome smoke, and native `.app` rebuild are recorded here. No handoff freshness helper scripts exist in this repo, so freshness was checked manually.
+- Next checkpoint action: review the dirty classifier/import/settings diff, then commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-Memo Capture now captures the source file modified timestamp for watched-folder imports and displays that original memo time in the work queue and detail header instead of workflow `updated_at`. Existing filename-stamped watched imports have a follow-up migration that recovers original memo times from `YYYYMMDD HHMMSS` filename prefixes.
+Memo Capture now has a shared `classify_item` workflow-hook path for watched text and watched audio imports. Text imports create a `needs_review` work item immediately, run `classify_item`, and then queue keyword generation. Audio imports create the source memo and transcription job first; a `needs_review` work item is created only after transcription succeeds or after transcription reaches a recoverable final failure.
 
-The API still keeps `createdAt` and `updatedAt` for concurrency, audit, diagnostics, and workflow processing. Processing timestamps remain in diagnostics/audit/log surfaces, while user-facing work item rows prioritize the original source memo time.
+Automatic promotion from `needs_review` to `memo` now happens through workflow action `review.memo` only when exactly one active project name matches the item text and the match confidence meets the backend Project Config threshold. That threshold defaults to `0.65`, is persisted in `extraction_settings.project_confidence_threshold`, and is editable from the Projects page.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: finish and checkpoint the original memo timestamp implementation.
-
-Intended finished state:
-
-- Watched import upload sessions require `originalFileModifiedAt`.
-- Source memo provenance stores `original_file_modified_at`.
-- Work item API responses include `originalFileModifiedAt`.
-- Work item lists sort by original source time first, then work item creation time.
-- Work queue rows and the detail panel show the original memo time, not workflow update time.
-- Native `.app` is rebuilt after the user-facing desktop change.
+Immediate goal: finish and checkpoint the shared text/audio classification implementation from `docs/plans/Shared_classify_item_Flow_For_Text_And_Audio.txt`.
 
 Definition of done:
 
-- Migration, backend propagation, frontend display, focused tests, docs, and handoff are reviewed.
-- Local databases are migrated before live smoke or app use.
-- Commit is made only if explicitly requested.
+- `classify_item` is registered as a supported workflow hook handler.
+- Initial-state hooks run for work items created directly in `needs_review`.
+- Text and audio use one classifier path.
+- Confident single-project matches promote via `review.memo`; ambiguous, low-confidence, or incomplete items remain in `needs_review`.
+- Audio finalization does not create a work item before transcription completes.
+- Repeated transcription/classifier paths are idempotent against duplicate work items and duplicate promotion attempts.
+- Project threshold is configurable in the Project Config UI.
+- Docs, tests, migration, and native app bundle are current.
 
 ## 4. Current State
 
 ### Working
 
-- Migration `0015_original_file_modified_at.sql` adds nullable `original_file_modified_at` to `source_memos`, `import_upload_sessions`, and `import_events`, backfills existing source memos from `created_at`, and indexes source memo original file time.
-- Migration `0016_backfill_original_file_time_from_filename.sql` corrects existing watched imports whose filenames start with `YYYYMMDD HHMMSS`, such as `20230726 205704-C846C071.m4a`, so pre-provenance rows no longer show ingestion time when the filename contains the original memo time.
-- `ImportService.createUploadSession` validates `originalFileModifiedAt` as a date-time string and stores it in upload sessions and duplicate import events.
-- Watched text, watched audio, and unsupported-parser finalization store the timestamp on source memos and import events.
-- `WorkItemRepository.list` and `findById` join source memos and expose `originalFileModifiedAt` on work item responses.
-- Work item list ordering is now `source_memos.original_file_modified_at desc nulls last`, then `work_items.created_at desc`.
-- The desktop app normalizes `candidate.modifiedAt` to an ISO date-time before sending it as `originalFileModifiedAt`, because the native scanner currently returns epoch milliseconds.
-- The work queue row date and detail header now display `originalFileModifiedAt ?? createdAt`; the detail metadata section includes `Original file time`.
-- The rebuilt app bundle exists at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+- `SUPPORTED_WORKFLOW_HOOK_HANDLERS` and app capabilities now include `classify_item`.
+- `WorkflowRuntimeAdapter.getStateEntryHooks()` exposes active state-entry hooks.
+- `apps/api/src/services/classification.ts` contains the shared classifier.
+- `classify_item` uses deterministic metadata extraction, requires exactly one active project match, applies the configured project confidence threshold, and executes `review.memo` through workflow runtime action semantics.
+- `WorkItemRepository.findFirstBySourceMemoId()` and idempotent `applyClassification()` support retries without duplicate work items or unnecessary updates.
+- Watched text import creates `needs_review`, runs `classify_item`, then queues `generate_keywords`.
+- Watched audio import creates source memo/artifact/import event plus `transcribe_audio` only; `workItemId` and `initialWorkflowState` are `null` in the finalize response.
+- Transcription success creates or updates one audio work item, runs `classify_item`, then queues `generate_keywords`.
+- Transcription final `failed` or `exhausted` states create one blank recoverable `needs_review` audio work item and run `classify_item`, which stays not-ready.
+- Project Config on the Projects page exposes a slider and number input for auto-promotion confidence.
+- Migration `0017_project_classification_threshold.sql` sets the default project threshold to `0.65` and updates existing default `0.7` singleton rows to `0.65`.
+- Local database has migration `0017_project_classification_threshold` applied.
+- Rebuilt native app bundle exists at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
 
 ### Partially Working
 
-- Local Postgres has been migrated through `0015_original_file_modified_at`; other databases still need `npm run db:migrate` before the running API can use the new columns.
-- Existing source memos backfill to their source memo `created_at`, not the historical filesystem timestamp, because that old metadata was not previously persisted.
-- Form-created source memos and future non-file sources can keep `originalFileModifiedAt` null; UI falls back to work item creation time.
+- The active workflow must be a bundle that includes the `needs_review` state-entry hook with `handlerKey: "classify_item"` for hook-driven classification to run.
+- Existing databases need `npm run db:migrate` before they pick up the new `0.65` default.
+- The generic metadata extraction job kind still exists for compatibility, but watched text/audio import now uses `classify_item` plus keyword generation for this flow.
 
 ### Not Working Yet
 
-- Filename timestamp parsing is intentionally out of scope.
-- Embedded media metadata, EXIF-style extraction, and source-created-time extraction are intentionally out of scope.
-- The implementation does not move workflow processing timestamps into a new UI log surface; it preserves existing audit/diagnostic/log surfaces.
-
-### Not Yet Verified
-
-- Live native watched-folder smoke against a migrated local Postgres database after this exact change.
-- Visual confirmation in the running native app that a newly imported file row shows its filesystem modified time.
+- No new external LLM classifier was added; this is the existing deterministic project-name matcher with stricter promotion semantics.
+- Image/PDF ingestion remains future work.
 
 ## 5. Active Constraints
 
@@ -128,66 +113,59 @@ Definition of done:
 
 ## 6. Commands and Verification
 
-Use Node `22.14.0` and npm `10.9.x` for project commands.
-
-Passed in this timestamp slice:
+Passed in this classifier slice:
 
 ```bash
 npm run typecheck
+npm run test -w @memo-capture/api
+npm run test -w @memo-capture/worker
+npm run test -w @memo-capture/desktop
 npm test
 npm run build
-npm run verify
 npm run db:migrate
+npm run verify
 npm run tauri:build -w @memo-capture/desktop -- --bundles app
+git diff --check
 ```
 
 Verification notes:
 
-- The first sandboxed `npm test` failed only because API route tests could not bind `127.0.0.1` (`listen EPERM`).
-- Unsandboxed `npm test` passed.
-- Unsandboxed `npm run verify` passed.
-- Sandboxed `npm run db:migrate` failed because `tsx` could not create its IPC pipe; unsandboxed `npm run db:migrate` applied `0015_original_file_modified_at` and skipped `0001` through `0014`.
+- Sandboxed API route tests hit expected `listen EPERM` on `127.0.0.1`; unsandboxed `npm run test -w @memo-capture/api`, `npm test`, and `npm run verify` passed.
+- Sandboxed `npm run db:migrate` hit expected `tsx` IPC `listen EPERM`; unsandboxed migration applied `0017_project_classification_threshold`.
+- Chrome smoke used temporary API and Vite dev servers, opened `http://127.0.0.1:5173/`, navigated to Projects, and confirmed Project Config threshold controls render at `0.65` with no console errors.
+- Temporary API/Vite dev servers started for Chrome smoke were stopped before handoff.
 - App-only Tauri build passed and produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
-
-Recommended before live app smoke:
-
-```bash
-./scripts/applauncher-native-dev.sh
-```
 
 Handoff helper status:
 
 - `scripts/handoff_status.py` is absent.
 - `scripts/verify_handoff_freshness.py` is absent.
-- Freshness was checked manually with Git status, short HEAD, dirty file list, and claimed canonical file existence.
+- Freshness was checked manually with Git status, short HEAD, dirty file list, and verification evidence.
 
 ## 7. Files to Open First
 
 - `AGENTS.md`: repo-local constraints and runtime notes.
 - `handoff.md`: this hot-context checkpoint.
-- `apps/api/db/migrations/0015_original_file_modified_at.sql`: schema change and backfill.
-- `apps/api/src/services/imports.ts`: upload-session request validation and timestamp propagation.
-- `apps/api/src/repositories/work-items.ts`: API join, response mapping, and ordering.
-- `apps/desktop/src/App.tsx`: watched import payload and work queue/detail display.
+- `docs/plans/Shared_classify_item_Flow_For_Text_And_Audio.txt`: source plan.
+- `apps/api/src/services/classification.ts`: shared classifier and promotion gate.
+- `apps/api/src/services/imports.ts`: watched text/audio finalization timing.
+- `apps/api/src/services/transcription.ts`: audio success/failure work-item creation.
+- `apps/api/db/migrations/0017_project_classification_threshold.sql`: threshold migration.
+- `apps/desktop/src/App.tsx`: Project Config control.
 - `docs/completed-tasks.md`: append-only completed work ledger.
 
 ## 8. Next Actions
 
 Next:
 
-- Review the dirty timestamp diff.
-- Start the native runtime and import one watched file with a known modified timestamp to visually confirm queue/detail display.
-- Commit the timestamp slice if accepted.
-
-Blocked:
-
-- Live app smoke is blocked until the native app/API/worker are running.
+- Review the dirty shared-classifier diff.
+- Commit the slice if accepted.
 
 Later:
 
-- Decide whether future sources need richer original timestamp extraction from filenames or embedded media metadata.
-- Consider a diagnostics UI enhancement if workflow processing timestamps need a more prominent non-primary surface.
+- Run a live watched text/audio file smoke with active workflow `0.2.3` if you want end-to-end runtime evidence against real imports.
+- Consider whether the deterministic project matcher should evolve from substring matching to explicit aliases or a controlled keyword model.
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Review `AGENTS.md`, `apps/api/db/migrations/0015_original_file_modified_at.sql`, `apps/api/src/services/imports.ts`, `apps/api/src/repositories/work-items.ts`, `apps/desktop/src/App.tsx`, and `docs/completed-tasks.md` first. Treat the original-file timestamp implementation as complete but dirty at HEAD `3e4a827`; local Postgres has migration `0015` applied, and do not commit unless explicitly asked.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Review `AGENTS.md`, `docs/plans/Shared_classify_item_Flow_For_Text_And_Audio.txt`, `apps/api/src/services/classification.ts`, `apps/api/src/services/imports.ts`, `apps/api/src/services/transcription.ts`, `apps/api/db/migrations/0017_project_classification_threshold.sql`, `apps/desktop/src/App.tsx`, and `docs/completed-tasks.md` first. Treat the shared `classify_item` flow as implemented and verified but dirty at HEAD `11dfd33`; local Postgres has migration `0017` applied, and do not commit unless explicitly asked.

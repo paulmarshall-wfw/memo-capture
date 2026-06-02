@@ -9,6 +9,9 @@ import { ArtifactRepository } from "../repositories/artifacts.js";
 import { ProcessingJobRepository } from "../repositories/jobs.js";
 import { SourceMemoArtifactRepository, SourceMemoRepository } from "../repositories/source-memos.js";
 import { WorkItemRepository } from "../repositories/work-items.js";
+import { AuditRepository } from "../repositories/audit.js";
+import { INGESTION_REVIEW_WORK_ITEM_STATE } from "@memo-capture/domain";
+import { ClassificationService } from "./classification.js";
 import type { ObjectStorageService } from "./object-storage.js";
 
 export interface TranscriptionProvider {
@@ -87,20 +90,27 @@ export class TranscriptionService {
         artifactId: transcriptArtifact.id,
         relationship: "derived_transcript"
       });
-      if (input.workItemId !== null) {
-        await new WorkItemRepository(client).applyTranscriptIfBodyEmpty({
-          workItemId: input.workItemId,
-          transcriptText,
-          actorUserId: originalArtifact.createdBy
-        });
-        await new ProcessingJobRepository(client).create({
-          jobKind: "extract_memo_metadata",
-          sourceMemoId: input.sourceMemoId,
-          workItemId: input.workItemId,
-          maxAttempts: 3,
-          initiatedBy: originalArtifact.createdBy
-        });
-      }
+      const workItem = await ensureAudioWorkItem({
+        client,
+        sourceMemoId: input.sourceMemoId,
+        transcriptText,
+        actorUserId: originalArtifact.createdBy,
+        originalFilename: originalArtifact.originalFilename,
+        requestId: input.jobId,
+        updateExistingWorkItemId: input.workItemId
+      });
+      await new ClassificationService(client).runInitialStateHooksForWorkItem({
+        workItem,
+        actor: null,
+        requestId: input.jobId
+      });
+      await new ProcessingJobRepository(client).create({
+        jobKind: "generate_keywords",
+        sourceMemoId: input.sourceMemoId,
+        workItemId: workItem.id,
+        maxAttempts: 3,
+        initiatedBy: originalArtifact.createdBy
+      });
 
       await client.query(
         `update processing_jobs
@@ -108,6 +118,35 @@ export class TranscriptionService {
          where id = $1`,
         [input.jobId, this.provider.providerName, this.provider.modelName, result.latencyMs]
       );
+    });
+  }
+
+  async ensureRecoverableAudioWorkItem(input: {
+    sourceMemoId: string;
+    actorUserId: string | null;
+    requestId: string | null;
+  }): Promise<void> {
+    await this.db.transaction(async (client) => {
+      const sourceMemo = await new SourceMemoRepository(client).findById(input.sourceMemoId);
+      if (sourceMemo === null || sourceMemo.sourceType !== "watched_audio_file") {
+        return;
+      }
+
+      const originalArtifact = await new ArtifactRepository(client).findPrimaryForSourceMemo(input.sourceMemoId);
+      const workItem = await ensureAudioWorkItem({
+        client,
+        sourceMemoId: input.sourceMemoId,
+        transcriptText: "",
+        actorUserId: input.actorUserId,
+        originalFilename: originalArtifact?.originalFilename ?? null,
+        requestId: input.requestId,
+        updateExistingWorkItemId: null
+      });
+      await new ClassificationService(client).runInitialStateHooksForWorkItem({
+        workItem,
+        actor: null,
+        requestId: input.requestId
+      });
     });
   }
 }
@@ -144,6 +183,70 @@ async function storeTranscriptArtifact(input: {
     layoutVersion: "v1",
     createdBy: input.actorUserId
   });
+}
+
+async function ensureAudioWorkItem(input: {
+  client: Queryable;
+  sourceMemoId: string;
+  transcriptText: string;
+  actorUserId: string | null;
+  originalFilename: string | null;
+  requestId: string | null;
+  updateExistingWorkItemId: string | null;
+}) {
+  const workItems = new WorkItemRepository(input.client);
+  const existing =
+    input.updateExistingWorkItemId === null
+      ? await workItems.findFirstBySourceMemoId(input.sourceMemoId)
+      : await workItems.findById(input.updateExistingWorkItemId);
+  if (existing !== null) {
+    if (input.transcriptText.trim() === "") {
+      return existing;
+    }
+    return (
+      (await workItems.applyTranscriptIfBodyEmpty({
+        workItemId: existing.id,
+        transcriptText: input.transcriptText,
+        actorUserId: input.actorUserId
+      })) ?? existing
+    );
+  }
+
+  const workItem = await workItems.create({
+    sourceMemoId: input.sourceMemoId,
+    projectId: null,
+    contributorText: null,
+    contributorId: null,
+    title: deriveAudioTitle(input.originalFilename),
+    body: input.transcriptText,
+    bodyFormat: "markdown",
+    workflowState: INGESTION_REVIEW_WORK_ITEM_STATE,
+    actorUserId: input.actorUserId
+  });
+  await new AuditRepository(input.client).record({
+    eventName: "work_item.created",
+    actor: null,
+    subjectType: "work_item",
+    subjectId: workItem.id,
+    requestId: input.requestId,
+    sourceMemoId: input.sourceMemoId,
+    workItemId: workItem.id,
+    metadata: {
+      workflowState: workItem.workflowState,
+      source: input.transcriptText.trim() === "" ? "transcription_recovery" : "transcription_success"
+    },
+    redactionApplied: true
+  });
+  return workItem;
+}
+
+function deriveAudioTitle(filename: string | null): string {
+  const base = (filename ?? "Audio memo")
+    .replace(/\.[^.]+$/u, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return base === "" ? "Audio memo" : base.slice(0, 120);
 }
 
 export function createTranscriptionProvider(config: ApiConfig): TranscriptionProvider {

@@ -1500,6 +1500,26 @@ button:disabled {
   gap: 8px;
 }
 
+.project-config-row {
+  flex-shrink: 0;
+}
+
+.project-threshold-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 92px auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.project-threshold-controls input[type="range"] {
+  width: 100%;
+}
+
+.project-threshold-controls input[type="number"] {
+  width: 100%;
+  min-width: 0;
+}
+
 .projects-list-panel {
   display: flex;
   min-height: 0;
@@ -1983,6 +2003,10 @@ button:disabled {
   .export-toolbar,
   .watched-toolbar,
   .settings-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .project-threshold-controls {
     grid-template-columns: 1fr;
   }
 

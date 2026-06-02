@@ -12,7 +12,7 @@ export interface WorkItemCreateInput {
   body: string;
   bodyFormat: BodyFormat;
   workflowState: WorkItemState;
-  actorUserId: string;
+  actorUserId: string | null;
 }
 
 export type WorkItemRecord = ReturnType<typeof mapWorkItem>;
@@ -71,6 +71,24 @@ export class WorkItemRepository {
     return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
   }
 
+  async findFirstBySourceMemoId(sourceMemoId: string): Promise<WorkItemRecord | null> {
+    const result = await this.db.query<WorkItemRow>(
+      `select work_items.*,
+              source_memos.original_file_modified_at,
+              coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
+       from work_items
+       join source_memos on source_memos.id = work_items.source_memo_id
+       left join work_item_tags on work_item_tags.work_item_id = work_items.id
+       left join tags on tags.id = work_item_tags.tag_id
+       where work_items.source_memo_id = $1
+       group by work_items.id, source_memos.original_file_modified_at
+       order by work_items.created_at asc
+       limit 1`,
+      [sourceMemoId]
+    );
+    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+  }
+
   async create(input: WorkItemCreateInput): Promise<WorkItemRecord> {
     const result = await this.db.query<WorkItemRow>(
       `insert into work_items (
@@ -118,7 +136,7 @@ export class WorkItemRepository {
     workItemId: string;
     expectedVersion: number;
     nextState: string;
-    actorUserId: string;
+    actorUserId: string | null;
   }): Promise<WorkItemRecord | null> {
     const result = await this.db.query<WorkItemRow>(
       `update work_items
@@ -244,6 +262,46 @@ export class WorkItemRepository {
        where id = $1
        returning *`,
       [input.workItemId, input.title, input.body, input.contributorText, input.actorUserId]
+    );
+
+    const row = result.rows[0];
+    return row === undefined ? null : await this.findById(row.id);
+  }
+
+  async applyClassification(input: {
+    workItemId: string;
+    title: string;
+    body: string;
+    contributorText: string | null;
+    projectId: string | null;
+    actorUserId: string | null;
+  }): Promise<WorkItemRecord | null> {
+    const result = await this.db.query<WorkItemRow>(
+      `update work_items
+       set
+         title = $2,
+         body = $3,
+         contributor_text = coalesce(contributor_text, $4),
+         project_id = coalesce(project_id, $5),
+         workflow_item_version = workflow_item_version + 1,
+         updated_by = coalesce($6, updated_by),
+         updated_at = now()
+       where id = $1
+         and (
+           title is distinct from $2
+           or body is distinct from $3
+           or (contributor_text is null and $4 is not null)
+           or (project_id is null and $5 is not null)
+         )
+       returning *`,
+      [
+        input.workItemId,
+        input.title,
+        input.body,
+        input.contributorText,
+        input.projectId,
+        input.actorUserId
+      ]
     );
 
     const row = result.rows[0];

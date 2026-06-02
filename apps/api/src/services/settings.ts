@@ -30,18 +30,21 @@ export class SettingsService {
       settings.listPrompts()
     ]);
 
-    return {
-      mediaTypes: mediaTypes.map(serializeMediaType),
-      parserTypes: parserTypes.map(serializeParserType),
-      fileTypes: fileTypes.map(serializeFileType),
-      extraction: extraction === null
-        ? null
+    const serializedExtraction =
+      extraction === null
+        ? defaultExtractionSettings()
         : {
             projectConfidenceThreshold: toNumber(extraction.project_confidence_threshold),
             contributorConfidenceThreshold: toNumber(extraction.contributor_confidence_threshold),
             tagConfidenceThreshold: toNumber(extraction.tag_confidence_threshold),
             updatedAt: toIso(extraction.updated_at)
-          },
+          };
+
+    return {
+      mediaTypes: mediaTypes.map(serializeMediaType),
+      parserTypes: parserTypes.map(serializeParserType),
+      fileTypes: fileTypes.map(serializeFileType),
+      extraction: serializedExtraction,
       transcription: transcription === null
         ? null
         : {
@@ -476,6 +479,15 @@ export class SettingsService {
       };
     });
   }
+}
+
+function defaultExtractionSettings() {
+  return {
+    projectConfidenceThreshold: 0.65,
+    contributorConfidenceThreshold: 0.7,
+    tagConfidenceThreshold: 0.7,
+    updatedAt: new Date(0).toISOString()
+  };
 }
 
 function serializeMediaType(row: MediaTypeSettingRow): Record<string, unknown> {

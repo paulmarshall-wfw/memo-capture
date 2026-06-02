@@ -30,9 +30,10 @@ test("work item states use memo as the successful capture state", () => {
 });
 
 test("supported workflow hook handlers are app-owned", () => {
-  assert.deepEqual([...SUPPORTED_WORKFLOW_HOOK_HANDLERS], ["create_accepted_snapshot"]);
+  assert.deepEqual([...SUPPORTED_WORKFLOW_HOOK_HANDLERS], ["create_accepted_snapshot", "classify_item"]);
   assert.deepEqual([...SUPPORTED_WORKFLOW_APP_CAPABILITIES], [
-    "memo-capture.workflow-hooks.create_accepted_snapshot.v1"
+    "memo-capture.workflow-hooks.create_accepted_snapshot.v1",
+    "memo-capture.workflow-hooks.classify_item.v1"
   ]);
 });
 

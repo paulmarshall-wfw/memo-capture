@@ -130,6 +130,17 @@ async function runClaimedJob(job: {
       retryable: failure.retryable,
       retryDelaySeconds: failure.retryDelaySeconds
     });
+    if (
+      job.jobKind === "transcribe_audio" &&
+      job.sourceMemoId !== null &&
+      (failedJob?.status === "failed" || failedJob?.status === "exhausted")
+    ) {
+      await transcriptionService.ensureRecoverableAudioWorkItem({
+        sourceMemoId: job.sourceMemoId,
+        actorUserId: failedJob.initiatedBy,
+        requestId: job.id
+      });
+    }
     await new AuditRepository(db).record({
       eventName: failedJob?.status === "exhausted" ? "processing_job.exhausted" : "processing_job.failed",
       actor: null,

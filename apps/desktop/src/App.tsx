@@ -263,10 +263,10 @@ interface UploadSessionResponse {
 
 interface FinalizeUploadSessionResponse {
   sourceMemoId: string;
-  workItemId: string;
+  workItemId: string | null;
   artifactId: string;
   importEventId: string;
-  initialWorkflowState: string;
+  initialWorkflowState: string | null;
   processingJobs: string[];
 }
 
@@ -507,6 +507,12 @@ const defaultNewParserTypeDraft: ParserTypeDraft = {
   description: "",
   mediaKey: "text",
   capabilityState: "not_supported_yet"
+};
+const defaultExtractionSettings = {
+  projectConfidenceThreshold: 0.65,
+  contributorConfidenceThreshold: 0.7,
+  tagConfidenceThreshold: 0.7,
+  updatedAt: new Date(0).toISOString()
 };
 const primaryNavigation: { id: ActiveView; label: string }[] = [
   { id: "work-items", label: "Work queue" },
@@ -1235,6 +1241,8 @@ export function App() {
   const [projectDrafts, setProjectDrafts] = useState<Record<string, ProjectFormState>>({});
   const [newProjectDrafts, setNewProjectDrafts] = useState<NewProjectDraft[]>([]);
   const [projectIdInFlight, setProjectIdInFlight] = useState<string | null>(null);
+  const [projectThresholdDraft, setProjectThresholdDraft] = useState("0.65");
+  const [projectConfigSaving, setProjectConfigSaving] = useState(false);
   const [auditLoading, setAuditLoading] = useState(false);
   const [detailPanelWidth, setDetailPanelWidth] = useState(440);
   const nextProjectDraftId = useRef(1);
@@ -1391,6 +1399,10 @@ export function App() {
       id: "watched",
       label: "Watched folders"
     };
+  const projectThresholdValue = Number.parseFloat(projectThresholdDraft);
+  const projectThresholdDisplay = Number.isFinite(projectThresholdValue)
+    ? projectThresholdValue.toFixed(2)
+    : "--";
 
   useEffect(() => {
     let cancelled = false;
@@ -1611,6 +1623,12 @@ export function App() {
       )
     );
   }, [settingsSummary]);
+
+  useEffect(() => {
+    setProjectThresholdDraft(
+      String(settingsSummary?.extraction?.projectConfidenceThreshold ?? defaultExtractionSettings.projectConfidenceThreshold)
+    );
+  }, [settingsSummary?.extraction?.projectConfidenceThreshold]);
 
   useEffect(() => {
     if (accessToken === null || activeView !== "audit") {
@@ -2825,6 +2843,37 @@ export function App() {
     }));
   }
 
+  async function saveProjectConfig() {
+    if (accessToken === null) {
+      return;
+    }
+    const threshold = Number.parseFloat(projectThresholdDraft);
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+      setStatusMessage("Confidence must be from 0 to 1.");
+      return;
+    }
+
+    const extraction = settingsSummary?.extraction ?? defaultExtractionSettings;
+    setProjectConfigSaving(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/extraction", {
+        method: "PATCH",
+        body: JSON.stringify({
+          projectConfidenceThreshold: threshold,
+          contributorConfidenceThreshold: extraction.contributorConfidenceThreshold,
+          tagConfidenceThreshold: extraction.tagConfidenceThreshold
+        })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Project config saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save project config.");
+    } finally {
+      setProjectConfigSaving(false);
+    }
+  }
+
   async function createProject(draftId: string) {
     if (accessToken === null) {
       return;
@@ -3727,6 +3776,47 @@ export function App() {
         ) : activeView === "projects" ? (
           <div className="projects-grid">
             <section className="detail-panel projects-list-panel" aria-label="Projects">
+              <article className="settings-row project-config-row">
+                <div className="settings-row-header">
+                  <div>
+                    <strong>Project Config</strong>
+                    <p>Auto-promotion confidence</p>
+                  </div>
+                  <span className="detail-count">
+                    {projectThresholdDisplay}
+                  </span>
+                </div>
+                <div className="project-threshold-controls">
+                  <input
+                    aria-label="Auto-promotion confidence"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={projectThresholdDraft}
+                    onChange={(event) => setProjectThresholdDraft(event.currentTarget.value)}
+                  />
+                  <input
+                    aria-label="Auto-promotion confidence value"
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={projectThresholdDraft}
+                    onChange={(event) => setProjectThresholdDraft(event.currentTarget.value)}
+                  />
+                  <button
+                    className="row-action-button primary"
+                    type="button"
+                    disabled={projectConfigSaving}
+                    onClick={() => void saveProjectConfig()}
+                  >
+                    {projectConfigSaving ? <RefreshCcw className="spin" size={16} /> : <Save size={16} />}
+                    Save
+                  </button>
+                </div>
+              </article>
+
               {projects.length === 0 && newProjectDrafts.length === 0 ? (
                 <div className="empty-detail">
                   <FolderOpen size={22} />
@@ -4771,6 +4861,7 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
     mediaTypes: Array.isArray(summary.mediaTypes) ? summary.mediaTypes : [],
     parserTypes: Array.isArray(summary.parserTypes) ? summary.parserTypes : [],
     fileTypes: Array.isArray(summary.fileTypes) ? summary.fileTypes : [],
+    extraction: summary.extraction ?? defaultExtractionSettings,
     providers: Array.isArray(summary.providers) ? summary.providers : [],
     prompts: Array.isArray(summary.prompts)
       ? summary.prompts.map((prompt) => {
