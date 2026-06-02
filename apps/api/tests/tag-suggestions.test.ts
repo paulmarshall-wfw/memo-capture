@@ -14,6 +14,7 @@ test("tag suggestions are ranked into strong, related, and weak rows without sel
     title: "Workflow Routing",
     body: "Workflow Routing captures review queue routing decisions.",
     tags: ["existing"],
+    tagsAvailable: true,
     bodyFormat: "markdown",
     workflowState: "memo",
     workflowItemVersion: 1,
@@ -75,7 +76,14 @@ test("tag suggestions are ranked into strong, related, and weak rows without sel
   assert.equal(response.suggestions.strong.includes("existing"), false);
   assert.equal(response.suggestions.strong[0], "Workflow Routing");
   assert.equal(response.suggestions.strong.includes("Capture Pipeline"), true);
-  assert.equal(response.suggestions.strong.includes("Review Queue"), true);
+  assert.equal(
+    [
+      ...response.suggestions.strong,
+      ...response.suggestions.related,
+      ...response.suggestions.weak
+    ].includes("Review Queue"),
+    true
+  );
   assert.equal(response.suggestions.weak.includes("Local Dev"), true);
 });
 
@@ -89,6 +97,7 @@ test("tag suggestions exclude globally suppressed candidate and keyword tags", (
     title: "Workflow Routing",
     body: "Workflow Routing captures review queue routing decisions.",
     tags: [],
+    tagsAvailable: true,
     bodyFormat: "markdown",
     workflowState: "memo",
     workflowItemVersion: 1,
@@ -145,6 +154,52 @@ test("keyword extraction filters generic verbs and stop words from generated tag
   assert.equal(names.has("test"), false);
   assert.equal(names.has("local"), false);
   assert.equal(names.has("smoke"), true);
+});
+
+test("tag suggestions do not add text-derived tags outside the candidate lexicon", () => {
+  const workItem = {
+    id: "work-item-1",
+    sourceMemoId: "source-memo-1",
+    projectId: "project-1",
+    contributorText: null,
+    contributorId: null,
+    title: "Workflow Routing",
+    body: "Workflow Routing captures review queue routing decisions.",
+    tags: [],
+    tagsAvailable: true,
+    bodyFormat: "markdown",
+    workflowState: "memo",
+    workflowItemVersion: 1,
+    acceptedSnapshotId: null,
+    acceptedUnexportedChanges: false,
+    originalFileModifiedAt: "2026-05-28T23:45:00.000Z",
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  } satisfies WorkItemRecord;
+
+  const response = buildTagSuggestionResponse({
+    workItem,
+    sourceText: "Workflow Routing connects capture review and project grouping.",
+    candidates: [
+      {
+        name: "Review Queue",
+        normalizedName: "review queue",
+        documentCount: 5,
+        totalItemCount: 7,
+        projectDocumentCount: 2,
+        selectedCoDocumentCount: 0
+      }
+    ]
+  });
+
+  const allSuggestions = [
+    ...response.suggestions.strong,
+    ...response.suggestions.related,
+    ...response.suggestions.weak
+  ].map((tag) => tag.toLowerCase());
+
+  assert.equal(allSuggestions.includes("workflow routing"), false);
+  assert.equal(allSuggestions.includes("review queue"), true);
 });
 
 test("keyword extraction prefers distinctive terms against a workspace corpus", () => {

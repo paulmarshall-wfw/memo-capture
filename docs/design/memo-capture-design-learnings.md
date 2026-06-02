@@ -42,6 +42,8 @@ Contributor attribution is memo metadata, not authorization. Authenticated user 
 
 Tag editing is flat in V1. The memo detail panel should show selected tags as removable chips and should offer three rows of tag suggestions: strongest grouping tags, related tags, and weak matches. These rows represent relative usefulness for the current memo, not a stored hierarchy. The UI should not distinguish generated tags from user-entered tags once they are available for selection or assigned to a memo.
 
+Tags remain hidden in work item detail until the item is in `memo` and the active workflow's `nominate_tags` process has completed for that item. This is an internal readiness gate, not a user-facing mode or status. Tag suggestions and automatic nominations are restricted to the current project's tag lexicon, while the suppressed-tag list remains global across projects.
+
 ## Ingestion Model
 
 Supported V1 ingestion channels:
@@ -54,7 +56,7 @@ Watched-folder imports always create source memo provenance first. Text imports 
 
 Watched-folder source memo provenance preserves the source file's filesystem creation timestamp as the original memo time, falling back to filesystem modified time only when creation time is unavailable. Work queue rows and the work item detail header should show this original file time rather than workflow processing timestamps; processing dates belong in audit, diagnostics, and logs.
 
-Automatic extraction should produce candidate project, title, body, and contributor metadata with confidence metadata. The shared `classify_item` hook promotes an imported `needs_review` item through workflow action `review.memo` only when exactly one active project name matches the item text and that match meets the backend project-confidence threshold. Low-confidence, ambiguous, or incomplete imports remain in `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block manual promotion. Generated tags are nominated only after a work item reaches `memo` and the active workflow's `nominate_tags` `while_in_state` hook is due.
+Automatic extraction should produce candidate project, title, body, and contributor metadata with confidence metadata. The shared `classify_item` hook promotes an imported `needs_review` item through workflow action `review.memo` only when exactly one active project name matches the item text and that match meets the backend project-confidence threshold. Low-confidence, ambiguous, or incomplete imports remain in `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block manual promotion. Generated tags are nominated only after a work item reaches `memo` and the active workflow's `nominate_tags` `while_in_state` hook is due, and only from the selected project's existing lexicon.
 
 Promotion from `needs_review` to `memo` requires:
 

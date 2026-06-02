@@ -26,7 +26,19 @@ export class WorkItemRepository {
     const result = await this.db.query<WorkItemRow>(
       `select work_items.*,
               source_memos.original_file_modified_at,
-              coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
+              (
+                work_items.tag_nomination_completed_at is not null
+                and work_items.project_id is not null
+                and work_items.tag_nomination_project_id = work_items.project_id
+              ) as tags_available,
+              case
+                when (
+                  work_items.tag_nomination_completed_at is not null
+                  and work_items.project_id is not null
+                  and work_items.tag_nomination_project_id = work_items.project_id
+                ) then coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}')
+                else '{}'
+              end as tags
        from work_items
        join source_memos on source_memos.id = work_items.source_memo_id
        left join work_item_tags on work_item_tags.work_item_id = work_items.id
@@ -59,7 +71,19 @@ export class WorkItemRepository {
     const result = await this.db.query<WorkItemRow>(
       `select work_items.*,
               source_memos.original_file_modified_at,
-              coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
+              (
+                work_items.tag_nomination_completed_at is not null
+                and work_items.project_id is not null
+                and work_items.tag_nomination_project_id = work_items.project_id
+              ) as tags_available,
+              case
+                when (
+                  work_items.tag_nomination_completed_at is not null
+                  and work_items.project_id is not null
+                  and work_items.tag_nomination_project_id = work_items.project_id
+                ) then coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}')
+                else '{}'
+              end as tags
        from work_items
        join source_memos on source_memos.id = work_items.source_memo_id
        left join work_item_tags on work_item_tags.work_item_id = work_items.id
@@ -75,7 +99,19 @@ export class WorkItemRepository {
     const result = await this.db.query<WorkItemRow>(
       `select work_items.*,
               source_memos.original_file_modified_at,
-              coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}') as tags
+              (
+                work_items.tag_nomination_completed_at is not null
+                and work_items.project_id is not null
+                and work_items.tag_nomination_project_id = work_items.project_id
+              ) as tags_available,
+              case
+                when (
+                  work_items.tag_nomination_completed_at is not null
+                  and work_items.project_id is not null
+                  and work_items.tag_nomination_project_id = work_items.project_id
+                ) then coalesce(array_agg(tags.name order by lower(tags.name), tags.name) filter (where tags.id is not null), '{}')
+                else '{}'
+              end as tags
        from work_items
        join source_memos on source_memos.id = work_items.source_memo_id
        left join work_item_tags on work_item_tags.work_item_id = work_items.id
@@ -187,6 +223,7 @@ export class WorkItemRepository {
     contributorId: string | null;
     contributorText: string | null;
     actorUserId: string;
+    resetTagNomination: boolean;
   }): Promise<WorkItemRecord | null> {
     const result = await this.db.query<WorkItemRow>(
       `update work_items
@@ -197,6 +234,18 @@ export class WorkItemRepository {
          contributor_id = $6,
          contributor_text = $7,
          workflow_item_version = workflow_item_version + 1,
+         tag_nomination_completed_at = case
+           when $9::boolean then null
+           else tag_nomination_completed_at
+         end,
+         tag_nomination_project_id = case
+           when $9::boolean then null
+           else tag_nomination_project_id
+         end,
+         tag_nomination_job_id = case
+           when $9::boolean then null
+           else tag_nomination_job_id
+         end,
          accepted_unexported_changes = case
            when accepted_snapshot_id is null then accepted_unexported_changes
            else true
@@ -213,8 +262,30 @@ export class WorkItemRepository {
         input.projectId,
         input.contributorId,
         input.contributorText,
-        input.actorUserId
+        input.actorUserId,
+        input.resetTagNomination
       ]
+    );
+
+    const row = result.rows[0];
+    return row === undefined ? null : await this.findById(row.id);
+  }
+
+  async markTagNominationReady(input: {
+    workItemId: string;
+    projectId: string | null;
+    jobId: string | null;
+  }): Promise<WorkItemRecord | null> {
+    const result = await this.db.query<WorkItemRow>(
+      `update work_items
+       set
+         tag_nomination_completed_at = now(),
+         tag_nomination_project_id = $2::uuid,
+         tag_nomination_job_id = $3::uuid,
+         updated_at = now()
+       where id = $1
+       returning *`,
+      [input.workItemId, input.projectId, input.jobId]
     );
 
     const row = result.rows[0];

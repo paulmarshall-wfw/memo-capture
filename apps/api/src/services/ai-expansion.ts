@@ -252,6 +252,7 @@ export class AiExpansionService {
       });
       await tags.setForWorkItem({
         workItemId: workItem.id,
+        projectId: workItem.projectId,
         tags: suggestion.tags,
         actorUserId: actor.id
       });

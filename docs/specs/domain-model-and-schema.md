@@ -241,6 +241,9 @@ Required columns:
 - `workflow_item_version integer not null default 1`
 - `accepted_snapshot_id uuid`
 - `accepted_unexported_changes boolean not null default false`
+- `tag_nomination_completed_at timestamptz`
+- `tag_nomination_project_id uuid references projects(id)`
+- `tag_nomination_job_id uuid references processing_jobs(id)`
 - `created_by uuid references app_users(id)`
 - `updated_by uuid references app_users(id)`
 - timestamps
@@ -302,6 +305,7 @@ Required columns:
 
 - `tags(id, name, normalized_name, created_at, created_by)`
 - `work_item_tags(work_item_id, tag_id, assignment_source, confidence, item_count, created_at, created_by)`
+- `project_tags(project_id, tag_id, first_seen_work_item_id, created_by, created_at)`
 - `tag_statistics(tag_id, document_count, total_item_count, project_distribution, updated_at)`
 - `tag_co_occurrences(tag_id, co_tag_id, co_document_count, updated_at)`
 
@@ -309,8 +313,11 @@ Constraints:
 
 - unique normalized tag name
 - primary key `(work_item_id, tag_id)`
+- primary key `(project_id, tag_id)` for the internal project lexicon
 - derived tag statistics and co-occurrence rows are recalculated metadata, not canonical hierarchy.
 - tag suggestion rows are UI ranking bands derived from memo text and tag statistics; they are not persisted as hierarchy.
+- selected tags and tag suggestions remain hidden from API/UI responses until tag nomination has completed for the work item's current project.
+- automatic nomination and suggestions use only the current project's `project_tags` lexicon, excluding globally suppressed tags.
 
 ### import_events
 
@@ -453,6 +460,7 @@ Create request:
 - `POST /api/ai-suggestions/{suggestionId}/accept`
 - `POST /api/ai-suggestions/{suggestionId}/dismiss`
 - `GET /api/work-items/{workItemId}/diagnostics`
+- `GET /api/work-items/{workItemId}/tag-suggestions`
 
 List filters:
 

@@ -126,6 +126,7 @@ interface WorkItem {
   title: string;
   body: string;
   tags: string[];
+  tagsAvailable: boolean;
   bodyFormat: string;
   workflowState: string;
   workflowItemVersion: number;
@@ -1379,6 +1380,7 @@ export function App() {
       weak: filterRow(tagSuggestions.weak)
     };
   }, [draft?.tags, tagSuggestions]);
+  const selectedTagsAvailable = selectedItem?.tagsAvailable === true;
   const suppressedTagTableRows = useMemo(() => {
     const columns = 3;
     const sortedTags = [...suppressedTags].sort((left, right) =>
@@ -1451,7 +1453,8 @@ export function App() {
       draft.projectId !== (selectedItem.projectId ?? "") ||
       draft.contributorId !== (selectedItem.contributorId ?? "") ||
       draft.contributorText !== (selectedItem.contributorText ?? "") ||
-      normalizeTagsForCompare(draft.tags) !== normalizeTagsForCompare(selectedItem.tags));
+      (selectedTagsAvailable &&
+        normalizeTagsForCompare(draft.tags) !== normalizeTagsForCompare(selectedItem.tags)));
   const audioArtifact =
     selectedDiagnostics?.artifacts.find((artifact) => artifact.artifactKind === "original_audio_file") ?? null;
   const transcriptArtifacts =
@@ -1574,7 +1577,7 @@ export function App() {
     let cancelled = false;
     async function loadSelectedItem() {
       try {
-        const [detailResponse, actionsResponse, diagnosticsResponse, suggestionsResponse, tagSuggestionResponse] =
+        const [detailResponse, actionsResponse, diagnosticsResponse, suggestionsResponse] =
           await Promise.all([
             authedJson<{ workItem: WorkItem }>(token, `/api/work-items/${encodeURIComponent(workItemId)}`),
             authedJson<{ actions: AllowedWorkflowAction[] }>(
@@ -1588,12 +1591,14 @@ export function App() {
             authedJson<{ suggestions: AiSuggestion[] }>(
               token,
               `/api/work-items/${encodeURIComponent(workItemId)}/ai-suggestions`
-            ),
-            authedJson<TagSuggestionResponse>(
+            )
+          ]);
+        const tagSuggestionResponse = detailResponse.workItem.tagsAvailable
+          ? await authedJson<TagSuggestionResponse>(
               token,
               `/api/work-items/${encodeURIComponent(workItemId)}/tag-suggestions`
             )
-          ]);
+          : { suggestions: { strong: [], related: [], weak: [] } };
         if (cancelled) {
           return;
         }
@@ -2186,30 +2191,35 @@ export function App() {
     setSaveState("saving");
     setStatusMessage(null);
     try {
+      const payload = {
+        expectedVersion: selectedItem.workflowItemVersion,
+        title: draft.title,
+        body: draft.body,
+        projectId: draft.projectId,
+        contributorId: draft.contributorId,
+        contributorText: draft.contributorText,
+        ...(selectedTagsAvailable ? { tags: draft.tags } : {})
+      };
       const response = await authedJson<{ workItem: WorkItem }>(
         accessToken,
         `/api/work-items/${encodeURIComponent(selectedItem.id)}`,
         {
           method: "PATCH",
-          body: JSON.stringify({
-            expectedVersion: selectedItem.workflowItemVersion,
-            title: draft.title,
-            body: draft.body,
-            projectId: draft.projectId,
-            contributorId: draft.contributorId,
-            contributorText: draft.contributorText,
-            tags: draft.tags
-          })
+          body: JSON.stringify(payload)
         }
       );
       setSelectedItem(response.workItem);
       setDraft(createDraft(response.workItem));
       setWorkItems((items) => items.map((item) => (item.id === response.workItem.id ? response.workItem : item)));
-      const tagSuggestionResponse = await authedJson<TagSuggestionResponse>(
-        accessToken,
-        `/api/work-items/${encodeURIComponent(response.workItem.id)}/tag-suggestions`
-      );
-      setTagSuggestions(tagSuggestionResponse.suggestions);
+      if (response.workItem.tagsAvailable) {
+        const tagSuggestionResponse = await authedJson<TagSuggestionResponse>(
+          accessToken,
+          `/api/work-items/${encodeURIComponent(response.workItem.id)}/tag-suggestions`
+        );
+        setTagSuggestions(tagSuggestionResponse.suggestions);
+      } else {
+        setTagSuggestions({ strong: [], related: [], weak: [] });
+      }
       setSaveState("saved");
       await refreshBucket();
     } catch (error) {
@@ -3830,79 +3840,81 @@ export function App() {
                   />
                 </div>
 
-                <div className="field-group">
-                  <label htmlFor="work-item-tag-input">Tags</label>
-                  <div className="tag-editor">
-                    <section className="tag-editor-section" aria-label="Selected tags">
-                      <h3>Selected</h3>
-                      <div className="tag-chip-list">
-                        {draft.tags.length === 0 ? <span className="tag-empty">No tags selected</span> : null}
-                        {draft.tags.map((tag) => (
-                          <span className="tag-chip selected split-tag-chip" key={tag}>
-                            <button
-                              className="tag-chip-icon-action"
-                              type="button"
-                              title={`Suppress ${tag} suggestions`}
-                              aria-label={`Suppress ${tag} suggestions`}
-                              disabled={suppressedTagInFlight === tag.trim().toLowerCase()}
-                              onClick={() => void suppressTag(tag, { removeFromDraft: true })}
-                            >
-                              <Minus size={13} />
-                            </button>
-                            <span className="tag-chip-label">{tag}</span>
-                            <button
-                              className="tag-chip-icon-action"
-                              type="button"
-                              title={`Remove ${tag}`}
-                              aria-label={`Remove ${tag}`}
-                              onClick={() => removeDraftTag(tag)}
-                            >
-                              <X size={13} />
-                            </button>
-                          </span>
-                        ))}
+                {selectedTagsAvailable ? (
+                  <div className="field-group">
+                    <label htmlFor="work-item-tag-input">Tags</label>
+                    <div className="tag-editor">
+                      <section className="tag-editor-section" aria-label="Selected tags">
+                        <h3>Selected</h3>
+                        <div className="tag-chip-list">
+                          {draft.tags.length === 0 ? <span className="tag-empty">No tags selected</span> : null}
+                          {draft.tags.map((tag) => (
+                            <span className="tag-chip selected split-tag-chip" key={tag}>
+                              <button
+                                className="tag-chip-icon-action"
+                                type="button"
+                                title={`Suppress ${tag} suggestions`}
+                                aria-label={`Suppress ${tag} suggestions`}
+                                disabled={suppressedTagInFlight === tag.trim().toLowerCase()}
+                                onClick={() => void suppressTag(tag, { removeFromDraft: true })}
+                              >
+                                <Minus size={13} />
+                              </button>
+                              <span className="tag-chip-label">{tag}</span>
+                              <button
+                                className="tag-chip-icon-action"
+                                type="button"
+                                title={`Remove ${tag}`}
+                                aria-label={`Remove ${tag}`}
+                                onClick={() => removeDraftTag(tag)}
+                              >
+                                <X size={13} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </section>
+                      <div className="tag-input-row">
+                        <input
+                          id="work-item-tag-input"
+                          value={draft.tagInput}
+                          onChange={(event) => handleTagInputChange(event.currentTarget.value)}
+                          onKeyDown={handleTagInputKeyDown}
+                          placeholder="Add tag"
+                        />
+                        <button
+                          className="icon-button"
+                          type="button"
+                          disabled={parseTagsText(draft.tagInput).length === 0}
+                          onClick={() => addDraftTags(parseTagsText(draft.tagInput))}
+                          title="Add tag"
+                        >
+                          <Plus size={17} />
+                        </button>
                       </div>
-                    </section>
-                    <div className="tag-input-row">
-                      <input
-                        id="work-item-tag-input"
-                        value={draft.tagInput}
-                        onChange={(event) => handleTagInputChange(event.currentTarget.value)}
-                        onKeyDown={handleTagInputKeyDown}
-                        placeholder="Add tag"
-                      />
-                      <button
-                        className="icon-button"
-                        type="button"
-                        disabled={parseTagsText(draft.tagInput).length === 0}
-                        onClick={() => addDraftTags(parseTagsText(draft.tagInput))}
-                        title="Add tag"
-                      >
-                        <Plus size={17} />
-                      </button>
-                    </div>
-                    <div className="tag-suggestion-rows" aria-label="Tag suggestions">
-                      <TagSuggestionRow
-                        label="Strong"
-                        tags={visibleTagSuggestions.strong}
-                        onSelect={addDraftTags}
-                        onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
-                      />
-                      <TagSuggestionRow
-                        label="Related"
-                        tags={visibleTagSuggestions.related}
-                        onSelect={addDraftTags}
-                        onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
-                      />
-                      <TagSuggestionRow
-                        label="Weak"
-                        tags={visibleTagSuggestions.weak}
-                        onSelect={addDraftTags}
-                        onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
-                      />
+                      <div className="tag-suggestion-rows" aria-label="Tag suggestions">
+                        <TagSuggestionRow
+                          label="Strong"
+                          tags={visibleTagSuggestions.strong}
+                          onSelect={addDraftTags}
+                          onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
+                        />
+                        <TagSuggestionRow
+                          label="Related"
+                          tags={visibleTagSuggestions.related}
+                          onSelect={addDraftTags}
+                          onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
+                        />
+                        <TagSuggestionRow
+                          label="Weak"
+                          tags={visibleTagSuggestions.weak}
+                          onSelect={addDraftTags}
+                          onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : null}
 
                 <section className="detail-section" aria-label="AI expansion">
                   <div className="section-title with-actions">

@@ -79,6 +79,7 @@ export class TagRepository {
 
   async setForWorkItem(input: {
     workItemId: string;
+    projectId: string | null;
     tags: string[] | TagAssignmentInput[];
     actorUserId: string | null;
   }): Promise<string[]> {
@@ -86,6 +87,14 @@ export class TagRepository {
     await this.db.query("delete from work_item_tags where work_item_id = $1", [input.workItemId]);
     for (const assignment of normalizedTags) {
       const tag = await this.upsertTag(assignment.name, input.actorUserId);
+      if (input.projectId !== null) {
+        await this.addToProjectLexicon({
+          projectId: input.projectId,
+          tagId: tag.id,
+          workItemId: input.workItemId,
+          actorUserId: input.actorUserId
+        });
+      }
       await this.db.query(
         `insert into work_item_tags (
            work_item_id,
@@ -116,6 +125,10 @@ export class TagRepository {
     selectedTagNames: string[];
     limit?: number;
   }): Promise<TagSuggestionCandidate[]> {
+    if (input.projectId === null) {
+      return [];
+    }
+
     const selectedNormalizedNames = normalizeTagList(input.selectedTagNames).map(normalizeTagName);
     const result = await this.db.query<TagSuggestionCandidateRow>(
       `select
@@ -125,7 +138,8 @@ export class TagRepository {
          coalesce(tag_statistics.total_item_count, 0) as total_item_count,
          coalesce((tag_statistics.project_distribution ->> projects.slug)::integer, 0) as project_document_count,
          coalesce(co_occurrence_totals.selected_co_document_count, 0) as selected_co_document_count
-       from tags
+       from project_tags
+       join tags on tags.id = project_tags.tag_id
        left join tag_statistics on tag_statistics.tag_id = tags.id
        left join projects on projects.id = $1::uuid
        left join lateral (
@@ -137,7 +151,8 @@ export class TagRepository {
            (tag_co_occurrences.tag_id = tags.id and tag_co_occurrences.co_tag_id = selected_tags.id)
            or (tag_co_occurrences.co_tag_id = tags.id and tag_co_occurrences.tag_id = selected_tags.id)
        ) co_occurrence_totals on true
-       where not (tags.normalized_name = any($2::text[]))
+       where project_tags.project_id = $1::uuid
+        and not (tags.normalized_name = any($2::text[]))
         and not exists (
           select 1
           from suppressed_tags
@@ -161,6 +176,22 @@ export class TagRepository {
       projectDocumentCount: toNumber(row.project_document_count),
       selectedCoDocumentCount: toNumber(row.selected_co_document_count)
     }));
+  }
+
+  async listProjectLexiconNormalizedNames(projectId: string | null): Promise<string[]> {
+    if (projectId === null) {
+      return [];
+    }
+
+    const result = await this.db.query<{ normalized_name: string }>(
+      `select tags.normalized_name
+       from project_tags
+       join tags on tags.id = project_tags.tag_id
+       where project_tags.project_id = $1
+       order by tags.normalized_name`,
+      [projectId]
+    );
+    return result.rows.map((row) => row.normalized_name);
   }
 
   async listSuppressed(): Promise<SuppressedTagRecord[]> {
@@ -223,6 +254,26 @@ export class TagRepository {
       name: row.name,
       normalizedName: row.normalized_name
     };
+  }
+
+  private async addToProjectLexicon(input: {
+    projectId: string;
+    tagId: string;
+    workItemId: string;
+    actorUserId: string | null;
+  }): Promise<void> {
+    await this.db.query(
+      `insert into project_tags (
+         project_id,
+         tag_id,
+         first_seen_work_item_id,
+         created_by,
+         created_at
+       )
+       values ($1, $2, $3, $4, now())
+       on conflict (project_id, tag_id) do nothing`,
+      [input.projectId, input.tagId, input.workItemId, input.actorUserId]
+    );
   }
 }
 

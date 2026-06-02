@@ -251,3 +251,8 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Changed workflow activation to compare active workflow-dependent jobs against the staged bundle so compatible queued `nominate_tags` hook jobs no longer block activating a new workflow definition.
   Verification: `npm run test -w @memo-capture/api` passed outside the sandbox; `npm run typecheck`, `npm run build`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed; a live read-only compatibility check showed staged import `7089f6ce-3986-43ca-bed3-177fe4c4b65a` had 1 active workflow-dependent job and 0 incompatible active jobs.
   Traceability: branch `main`, base HEAD `87318c8`; changed files include `apps/api/src/repositories/workflows.ts`, `apps/api/src/services/workflows.ts`, `apps/api/tests/backend-foundation.test.ts`, and `docs/completed-tasks.md`.
+
+- Task: Add project-scoped tag visibility and nomination
+  Outcome: Added tag nomination readiness, internal project tag lexicons, hidden tags until nomination completes for the current project, project-scoped Strong/Related/Weak suggestions, and desktop tag-editor gating.
+  Verification: `npm run verify`, `npm run db:migrate`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed; migration `0020_project_scoped_tag_nomination` applied to the local database.
+  Traceability: branch `main`, base HEAD `e00af92`; changed files include `apps/api/db/migrations/0020_project_scoped_tag_nomination.sql`, API tag/work-item repositories and services, API tests, `apps/desktop/src/App.tsx`, `packages/domain/src/index.ts`, and tag nomination docs.

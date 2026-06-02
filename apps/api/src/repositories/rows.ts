@@ -69,6 +69,7 @@ export interface WorkItemRow extends Record<string, unknown> {
   title: string;
   body: string;
   tags: string[] | null;
+  tags_available?: boolean | null;
   body_format: string;
   workflow_state: string;
   workflow_item_version: number;
@@ -126,6 +127,7 @@ export function mapWorkItem(row: WorkItemRow) {
     title: row.title,
     body: row.body,
     tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string") : [],
+    tagsAvailable: row.tags_available === true,
     bodyFormat: row.body_format,
     workflowState: row.workflow_state,
     workflowItemVersion: row.workflow_item_version,

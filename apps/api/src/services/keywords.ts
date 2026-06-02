@@ -102,18 +102,35 @@ export class KeywordService {
       .join("\n")
       .trim();
     const corpusTexts = await loadKeywordCorpus(this.db, input.workItem.id);
+    const tags = new TagRepository(this.db);
+    const [projectLexiconNames, suppressedTags] = await Promise.all([
+      tags.listProjectLexiconNormalizedNames(input.workItem.projectId),
+      tags.listSuppressed()
+    ]);
+    const projectLexicon = new Set(projectLexiconNames);
+    const suppressedNames = new Set(suppressedTags.map((tag) => tag.normalizedName));
     const keywords = extractKeywords(text, { corpusTexts });
-    const assignments: TagAssignmentInput[] = keywords.map((keyword) => ({
+    const nominatedKeywords = keywords.filter((keyword) => {
+      const normalizedName = normalizeTagName(keyword.name);
+      return projectLexicon.has(normalizedName) && !suppressedNames.has(normalizedName);
+    });
+    const assignments: TagAssignmentInput[] = nominatedKeywords.map((keyword) => ({
       name: keyword.name,
       assignmentSource: "generated",
       confidence: keyword.confidence,
       itemCount: keyword.itemCount
     }));
 
-    const assignedTags = await new TagRepository(this.db).setForWorkItem({
+    const assignedTags = await tags.setForWorkItem({
       workItemId: input.workItem.id,
+      projectId: input.workItem.projectId,
       tags: assignments,
       actorUserId: null
+    });
+    await new WorkItemRepository(this.db).markTagNominationReady({
+      workItemId: input.workItem.id,
+      projectId: input.workItem.projectId,
+      jobId: input.updateSource === "nominate_tags" ? input.jobId : null
     });
     await refreshKeywordStatistics(this.db);
     await refreshKeywordCoOccurrences(this.db, input.workItem.id);
@@ -130,15 +147,15 @@ export class KeywordService {
         updateSource: input.updateSource,
         hookId: input.hookId,
         tags: assignedTags,
-        groupingPaths: buildGroupingPaths(keywords)
+        groupingPaths: buildGroupingPaths(nominatedKeywords)
       },
       redactionApplied: true
     });
 
     return {
       workItemId: input.workItem.id,
-      tags: keywords,
-      groupingPaths: buildGroupingPaths(keywords)
+      tags: nominatedKeywords,
+      groupingPaths: buildGroupingPaths(nominatedKeywords)
     };
   }
 }

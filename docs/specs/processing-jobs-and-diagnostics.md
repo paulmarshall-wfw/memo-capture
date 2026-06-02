@@ -223,6 +223,8 @@ Rules:
 
 - Runs only when the active workflow defines a due `while_in_state` hook with handler key `nominate_tags` for the work item's current state.
 - If the work item has left `memo` before the job runs, the job skips tag assignment.
+- Successful completion marks tag nomination readiness for the current project even when no tags are assigned.
+- Automatic assignments are limited to the current project's internal tag lexicon and exclude globally suppressed tags.
 - Recurring workflow schedules are read from the active bundle; intervals are not hardcoded in app code.
 
 ### expand_work_item

@@ -74,6 +74,7 @@ async function createFormMemoWithClient(
   });
   const assignedTags = await tags.setForWorkItem({
     workItemId: workItem.id,
+    projectId: workItem.projectId,
     tags: input.tags ?? [],
     actorUserId: actor.id
   });

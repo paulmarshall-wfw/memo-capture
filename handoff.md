@@ -4,107 +4,90 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-02T11:33:57Z
+- Created timestamp UTC: 2026-06-02T17:54:25Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: move generated tag nomination to workflow-owned `nominate_tags`, verify, rebuild native Tauri `.app`, update continuity docs.
+- Session scope: project-scoped tag visibility and nomination, completed-task ledger update, handoff refresh.
 
 ### Checkpoint Status
 
-- Git HEAD: `50dd7b5`
+- Git HEAD: `e00af92`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/src/repositories/jobs.ts`
+  - `apps/api/src/repositories/rows.ts`
+  - `apps/api/src/repositories/tags.ts`
+  - `apps/api/src/repositories/work-items.ts`
   - `apps/api/src/services/ai-expansion.ts`
-  - `apps/api/src/services/classification.ts`
   - `apps/api/src/services/form-memos.ts`
-  - `apps/api/src/services/imports.ts`
   - `apps/api/src/services/keywords.ts`
-  - `apps/api/src/services/metadata-extraction.ts`
-  - `apps/api/src/services/transcription.ts`
-  - `apps/api/src/services/workflow-runtime.ts`
-  - `apps/api/src/services/workflows.ts`
+  - `apps/api/src/services/work-items.ts`
   - `apps/api/tests/backend-foundation.test.ts`
-  - `apps/api/tests/workflow-runtime.test.ts`
-  - `apps/worker/src/index.ts`
-  - `apps/worker/tests/job-kinds.test.ts`
+  - `apps/api/tests/tag-suggestions.test.ts`
+  - `apps/desktop/src/App.tsx`
   - `docs/completed-tasks.md`
   - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/domain-model-and-schema.md`
   - `docs/specs/processing-jobs-and-diagnostics.md`
-  - `docs/specs/workflow-runtime-integration.md`
   - `handoff.md`
   - `packages/domain/src/index.ts`
-  - `packages/domain/tests/states.test.ts`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `apps/api/src/services/workflow-hooks.ts`
-  - `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`
+  - `apps/api/db/migrations/0020_project_scoped_tag_nomination.sql`
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
   - `handoff.md`
   - `docs/completed-tasks.md`
-  - `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`
   - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/domain-model-and-schema.md`
   - `docs/specs/processing-jobs-and-diagnostics.md`
-  - `docs/specs/workflow-runtime-integration.md`
 - Last verification:
-  - command: `npm run typecheck`; `npm test`; `npm run verify`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`; `git diff --check`; `python3 -m json.tool docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`
+  - command: `npm run verify`; `npm run db:migrate`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`; `git diff --check`
   - result: passed
-  - timestamp UTC: 2026-06-02T11:33Z
+  - timestamp UTC: 2026-06-02T17:54Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD`, dirty/untracked file list, completed-task ledger entry, verification results, and native `.app` rebuild are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
-- Next checkpoint action: import/activate workflow `0.2.5` in local app runtime and smoke-test scheduled tag nomination; commit only if explicitly requested.
+- Safe-to-continue basis: current `HEAD`, dirty/untracked file list, verification results, applied migration, completed-task ledger entry, and rebuilt native `.app` are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
+- Next checkpoint action: review the dirty diff and commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-Generated tag nomination is now workflow-owned. Automatic tag assignment no longer runs directly during watched text import, post-transcription audio handling, or metadata extraction. Work items entering `memo` schedule the active workflow's `while_in_state` hook with handler key `nominate_tags`; the worker assigns generated tags only when that scheduled job becomes due and the item is still in a state whose active workflow defines that hook.
+Project-scoped tag visibility and nomination is implemented in the dirty tree. Work-item API responses now include `tagsAvailable`; selected tags and Strong/Related/Weak suggestions are masked until tag nomination has completed for the work item's current project. Automatic nomination and suggestions use the current project's internal `project_tags` lexicon and still exclude globally suppressed tags.
 
-The app supports `nominate_tags` as a workflow hook handler, app capability, and processing job kind. The workflow runtime projection preserves hook phase, target state, handler key, and schedule. The schedule interval is read from the active workflow bundle, not hardcoded.
+The desktop detail panel now omits the entire tag editor while tags are unavailable, without showing a user-facing pending state. Manual tag editing after the gate opens seeds the current project's lexicon.
 
-Native app rebuild completed. The rebuilt bundle is `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`, timestamp `Jun 2 21:12 2026`, size `8.4M`.
+Migration `0020_project_scoped_tag_nomination` has been applied to the local database. Native app rebuild completed at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: continue from the completed hook-driven tag nomination implementation and validate it against the active/local workflow bundle.
+Immediate goal: continue from the completed project-scoped tag visibility implementation and validate any desired runtime/user-flow behavior in the native app.
 
-Definition of done for the current workstream:
+Definition of done for this workstream:
 
-- Workflow bundle `0.2.5` with `while_in_state` / `nominate_tags` can be imported and activated.
-- Imports and manual transitions into `memo` schedule tag nomination from the workflow hook.
-- Generated tags are assigned only by due `nominate_tags` jobs while the work item remains in the hook target state.
-- Native app can run from the rebuilt `.app` bundle.
-- Any remaining dirty-tree changes are reviewed and committed only when explicitly requested.
+- Work items in `needs_review` or `memo` before completed nomination expose `tagsAvailable: false` and `tags: []`.
+- After successful `nominate_tags`, tags and suggestions are visible for the current project.
+- Suggestions and automatic nominations do not leak tags from other projects.
+- Native app uses the rebuilt `.app` bundle.
 
 ## 4. Current State
 
 ### Working
 
-- `packages/domain/src/index.ts` now includes `nominate_tags` in supported workflow hook handlers, app capabilities, and processing job kinds.
-- `apps/api/src/services/workflow-runtime.ts` projects state-resident hooks and preserves schedule metadata.
-- `apps/api/src/services/workflow-hooks.ts` schedules delayed `nominate_tags` jobs from the active workflow bundle and cancels pending nomination jobs on state exit.
-- `apps/api/src/services/classification.ts`, `workflows.ts`, `form-memos.ts`, and `ai-expansion.ts` schedule memo-state hooks when work items enter `memo`.
-- `apps/api/src/services/imports.ts` no longer creates eager `generate_keywords` jobs for watched text imports.
-- `apps/api/src/services/transcription.ts` no longer creates eager keyword jobs after audio transcription.
-- `apps/api/src/services/metadata-extraction.ts` no longer persists generated tags.
-- `apps/api/src/services/keywords.ts` keeps the existing keyword extraction/assignment logic and exposes it through guarded `runNominateTagsJob`.
-- `apps/worker/src/index.ts` claims `nominate_tags`; legacy `generate_keywords` jobs route through the same guarded nomination path.
-- Tests cover workflow `nominate_tags` validation/projection, memo-entry scheduling, ambiguous review no-scheduling, manual action scheduling, nomination assignment, state-exit skip/cancel, and worker job-kind support.
-- Docs updated:
-  - `docs/design/memo-capture-design-learnings.md`
-  - `docs/specs/processing-jobs-and-diagnostics.md`
-  - `docs/specs/workflow-runtime-integration.md`
-  - `docs/completed-tasks.md`
-- Native Tauri app rebuilt successfully.
+- `apps/api/db/migrations/0020_project_scoped_tag_nomination.sql` adds work-item nomination readiness fields and `project_tags`.
+- `apps/api/src/repositories/work-items.ts` masks tags at read time unless readiness matches the current project.
+- `apps/api/src/repositories/tags.ts` maintains project lexicons on tag saves and restricts suggestion candidates to the current project.
+- `apps/api/src/services/keywords.ts` assigns only nominated keywords that already exist in the current project lexicon and are not globally suppressed.
+- `apps/api/src/services/work-items.ts` treats omitted `tags` in `PATCH /api/work-items/:id` as no tag change and returns empty suggestions when tags are unavailable.
+- `apps/desktop/src/App.tsx` omits the tag editor/suggestion rows while `tagsAvailable` is false and omits `tags` from save payloads in that state.
+- Docs and tests cover the new behavior.
+- `npm run verify`, `npm run db:migrate`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed.
 
 ### Partially Working
 
-- The code path is verified by automated tests/build, but local runtime activation of `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json` has not yet been smoke-tested in the app.
-- The untracked workflow bundle `0.2.5` defines `nominate_tags` on `memo` with `intervalMs: 10000`. Treat that value as workflow data, not app code.
+- Automated verification covers API/domain/desktop build behavior. Interactive native UI smoke for the invisible tag gate has not been run after this handoff refresh.
 
 ### Not Working Yet
 
@@ -112,77 +95,62 @@ Definition of done for the current workstream:
 
 ### Not Yet Verified
 
-- Live import/activation of workflow bundle `0.2.5` through the Operations UI or API.
-- Native app smoke test proving a work item entering `memo` schedules `nominate_tags` and receives generated tags after the due interval.
-- Browser/native screenshot verification for this backend-focused change was not run.
+- A live native flow showing a newly promoted memo with hidden tags before nomination and visible project-scoped suggestions after nomination.
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
 - Do not commit, tag, release, publish, delete files, or install dependencies unless explicitly requested.
 - Never use `latest`; always use numbered versions.
-- Apply `engineering-project-standard` for repo maintenance and verification work.
-- Use Chrome for browser automation unless the user asks otherwise.
 - For Memo Capture user-facing/native-testable changes, rebuild the runnable `.app`; do not create a DMG unless explicitly requested.
 - Desktop clients must not connect directly to Postgres or object storage.
 - Workflow actions, buckets, reopen behavior, and lifecycle hooks should be driven by the active workflow definition wherever possible.
-- AI/code-consumed generated output must remain structured and validated before storage.
-- Tag editing remains flat in V1; generated tags and user tags should not create hierarchy/provenance UI.
-- `nominate_tags` timing is owned by workflow schedule data. Do not hardcode the interval in app code.
+- Tag editing remains flat in V1; generated/user tags should not create hierarchy/provenance UI.
+- The global suppressed-tag list remains cross-project; project lexicons scope nominations/suggestions.
 
 ## 6. Commands and Verification
 
 Passed in this slice:
 
 ```bash
-npm run typecheck
-npm test
 npm run verify
+npm run db:migrate
 npm run tauri:build -w @memo-capture/desktop -- --bundles app
 git diff --check
-python3 -m json.tool docs/design/memo-capture-0.2.5-workflow-definition-bundled.json
 ```
 
 Verification notes:
 
-- Sandboxed `npm test` initially failed only because protected-route tests could not bind `127.0.0.1` (`listen EPERM`); the approved unsandboxed rerun passed.
-- `npm run verify` passed outside the sandbox and included doctor, typecheck, tests, and build.
-- Tauri build produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
-- Bundle check after build: `ls -ld` timestamp `Jun 2 21:12`; `du -sh` size `8.4M`.
-- `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json` is valid JSON.
-- `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are absent in this repo; handoff freshness was checked manually.
+- `npm run db:migrate` first failed in the sandbox because `tsx` could not create its IPC pipe; approved unsandboxed rerun passed and applied only `0020_project_scoped_tag_nomination`.
+- Rebuilt app bundle: `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+- Handoff helper scripts are absent in this repo; freshness is manually grounded in `git status`, `HEAD`, and the listed verification evidence.
 
 Useful next commands:
 
 ```bash
 git status --short
 git diff --check
-npm run dev:api
-npm run dev:desktop
-npm run dev:worker
+npm run verify
 npm run tauri:dev
 ```
 
 ## 7. Files to Open First
 
 - `AGENTS.md`: repo-local constraints and verification expectations.
-- `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`: workflow bundle with scheduled `nominate_tags`.
-- `apps/api/src/services/workflow-hooks.ts`: scheduling/cancel behavior for state-resident hooks.
-- `apps/api/src/services/workflow-runtime.ts`: hook projection and schedule metadata.
-- `apps/api/src/services/keywords.ts`: guarded `nominate_tags` execution and existing tag assignment logic.
-- `apps/api/src/services/classification.ts`: classify-item promotion and memo hook scheduling.
-- `apps/api/src/services/workflows.ts`: manual workflow action entry/exit scheduling and cancellation.
-- `apps/api/tests/backend-foundation.test.ts`: behavioral coverage for scheduling, skipping, cancellation, and nomination.
-- `docs/completed-tasks.md`: append-only completed work ledger.
+- `apps/api/db/migrations/0020_project_scoped_tag_nomination.sql`: schema change for readiness and project lexicons.
+- `apps/api/src/repositories/work-items.ts`: tag masking/readiness behavior.
+- `apps/api/src/repositories/tags.ts`: project lexicon maintenance and suggestion candidate query.
+- `apps/api/src/services/keywords.ts`: project-scoped automatic nomination.
+- `apps/api/src/services/work-items.ts`: API tag gate and optional tag patch behavior.
+- `apps/desktop/src/App.tsx`: invisible tag editor gate and save payload behavior.
+- `apps/api/tests/backend-foundation.test.ts` and `apps/api/tests/tag-suggestions.test.ts`: coverage for readiness, lexicon scope, and suggestion behavior.
 
 ## 8. Next Actions
 
 Next:
 
-- Review the dirty diff and untracked files.
-- Import/stage/activate `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json` in a local runtime.
-- Launch API, worker, and native app; verify a work item entering `memo` schedules `nominate_tags` and receives generated tags after the workflow-defined due interval.
-- Confirm a work item moved out of `memo` before the due time does not receive generated tags.
+- Review dirty diff and untracked migration.
+- Optionally run native app smoke to confirm the tag editor stays hidden before nomination and appears after nomination.
 - Commit only if explicitly requested.
 
 Blocked:
@@ -191,8 +159,8 @@ Blocked:
 
 Later:
 
-- Consider whether old queued `generate_keywords` jobs need an operator note; current worker routes legacy jobs through the same guarded nomination path.
+- If runtime smoke uncovers stale pre-`0020` items with hidden historical tags, decide whether an operator-only backfill or manual nomination trigger is needed.
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Review `AGENTS.md`, `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`, `apps/api/src/services/workflow-hooks.ts`, `apps/api/src/services/workflow-runtime.ts`, `apps/api/src/services/keywords.ts`, `apps/api/src/services/classification.ts`, `apps/api/src/services/workflows.ts`, `apps/api/tests/backend-foundation.test.ts`, and `docs/completed-tasks.md` first. Treat hook-driven `nominate_tags` scheduling as implemented and verified in the dirty tree at HEAD `50dd7b5`. Continue by validating local workflow `0.2.5` activation and native/worker runtime behavior, and distinguish confirmed runtime behavior from any new recommendations.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Review `AGENTS.md`, `apps/api/db/migrations/0020_project_scoped_tag_nomination.sql`, `apps/api/src/repositories/work-items.ts`, `apps/api/src/repositories/tags.ts`, `apps/api/src/services/keywords.ts`, `apps/api/src/services/work-items.ts`, `apps/desktop/src/App.tsx`, `apps/api/tests/backend-foundation.test.ts`, and `apps/api/tests/tag-suggestions.test.ts` first. Treat project-scoped tag visibility and nomination as implemented and verified in the dirty tree at HEAD `e00af92`. Continue by reviewing the dirty diff, optionally native-smoke-testing the invisible tag gate, and distinguishing confirmed runtime behavior from any new recommendations.

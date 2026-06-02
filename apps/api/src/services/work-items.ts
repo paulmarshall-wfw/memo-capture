@@ -52,6 +52,9 @@ export class WorkItemService {
     if (workItem === null) {
       throw new HttpError(404, "not_found", "work_item was not found.");
     }
+    if (!workItem.tagsAvailable) {
+      return emptyTagSuggestionResponse(workItem.id);
+    }
 
     const sourceMemo = await new SourceMemoRepository(this.db).findById(workItem.sourceMemoId);
     const tags = new TagRepository(this.db);
@@ -82,6 +85,11 @@ export class WorkItemService {
       const tags = new TagRepository(client);
       const snapshots = new AcceptedSnapshotRepository(client);
       const audit = new AuditRepository(client);
+      const current = await workItems.findById(workItemId);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "work_item was not found.");
+      }
+      const projectWillChange = current.projectId !== input.projectId;
       const updated = await workItems.updateContent({
         workItemId,
         expectedVersion: input.expectedVersion,
@@ -90,7 +98,8 @@ export class WorkItemService {
         projectId: input.projectId,
         contributorId: input.contributorId,
         contributorText: input.contributorText,
-        actorUserId: actor.id
+        actorUserId: actor.id,
+        resetTagNomination: projectWillChange && input.tags === undefined
       });
 
       if (updated === null) {
@@ -104,12 +113,22 @@ export class WorkItemService {
           workItem: current
         });
       }
-      await tags.setForWorkItem({
-        workItemId: updated.id,
-        tags: input.tags,
-        actorUserId: actor.id
-      });
-      const tagged = (await workItems.findById(updated.id)) ?? { ...updated, tags: input.tags };
+      if (input.tags !== undefined) {
+        await tags.setForWorkItem({
+          workItemId: updated.id,
+          projectId: updated.projectId,
+          tags: input.tags,
+          actorUserId: actor.id
+        });
+        if (updated.projectId !== null) {
+          await workItems.markTagNominationReady({
+            workItemId: updated.id,
+            projectId: updated.projectId,
+            jobId: null
+          });
+        }
+      }
+      const tagged = (await workItems.findById(updated.id)) ?? { ...updated, tags: input.tags ?? updated.tags };
 
       const finalWorkItem = await createSnapshotForAcceptedEdit({
         updated: tagged,
@@ -204,7 +223,8 @@ export class WorkItemService {
         projectId: current.projectId,
         contributorId: current.contributorId,
         contributorText: current.contributorText,
-        actorUserId: actor.id
+        actorUserId: actor.id,
+        resetTagNomination: false
       });
 
       if (updated === null) {
@@ -272,27 +292,6 @@ export function buildTagSuggestionResponse(input: {
     );
   }
 
-  for (const keyword of textKeywords) {
-    const normalizedName = normalizeTagName(keyword.name);
-    if (selectedNames.has(normalizedName) || suppressedNames.has(normalizedName) || candidateByName.has(normalizedName)) {
-      continue;
-    }
-    candidateByName.set(
-      normalizedName,
-      scoreTagSuggestion(
-        {
-          name: keyword.name,
-          normalizedName,
-          documentCount: 0,
-          totalItemCount: 0,
-          projectDocumentCount: 0,
-          selectedCoDocumentCount: 0
-        },
-        keyword
-      )
-    );
-  }
-
   const ranked = [...candidateByName.values()]
     .filter((candidate) => candidate.score > 0)
     .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
@@ -306,6 +305,17 @@ export function buildTagSuggestionResponse(input: {
       strong: ranked.slice(0, strongCount).map((candidate) => candidate.name),
       related: ranked.slice(strongCount, strongCount + relatedCount).map((candidate) => candidate.name),
       weak: ranked.slice(strongCount + relatedCount, strongCount + relatedCount + 8).map((candidate) => candidate.name)
+    }
+  };
+}
+
+function emptyTagSuggestionResponse(workItemId: string): TagSuggestionResponse {
+  return {
+    workItemId,
+    suggestions: {
+      strong: [],
+      related: [],
+      weak: []
     }
   };
 }
@@ -392,7 +402,7 @@ function parseUpdateBody(body: unknown): {
   projectId: string | null;
   contributorId: string | null;
   contributorText: string | null;
-  tags: string[];
+  tags: string[] | undefined;
 } {
   const record = parseObject(body);
   const expectedVersion = record.expectedVersion;
@@ -407,7 +417,7 @@ function parseUpdateBody(body: unknown): {
     projectId: optionalString(record.projectId, "projectId"),
     contributorId: optionalString(record.contributorId, "contributorId"),
     contributorText: optionalString(record.contributorText, "contributorText"),
-    tags: parseTags(record.tags)
+    tags: record.tags === undefined ? undefined : parseTags(record.tags)
   };
 }
 

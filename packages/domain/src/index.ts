@@ -241,6 +241,7 @@ export interface WorkItem {
   title: string;
   body: string;
   tags: string[];
+  tagsAvailable: boolean;
   bodyFormat: BodyFormat;
   workflowState: WorkItemState;
   workflowItemVersion: number;

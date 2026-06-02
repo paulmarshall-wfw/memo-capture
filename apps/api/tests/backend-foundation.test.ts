@@ -588,6 +588,7 @@ test("nominate_tags job assigns generated tags and reschedules recurring memo ho
     body: "Project Falcon Project Falcon launch sequencing and release notes.",
     sourceText: "Project Falcon launch sequencing."
   });
+  seedProjectTag(db, "Project Falcon");
 
   const result = await new KeywordService(db).runNominateTagsJob({
     jobId: "job-nominate",
@@ -596,10 +597,33 @@ test("nominate_tags job assigns generated tags and reschedules recurring memo ho
   });
 
   assert.equal(result.workItemId, "00000000-0000-4000-8000-000000000201");
-  assert.equal(result.tags.length > 0, true);
-  assert.equal((db.workItems[0]?.tags as unknown[]).length > 0, true);
+  assert.deepEqual(result.tags.map((tag) => tag.name), ["Project Falcon"]);
+  assert.deepEqual(db.workItems[0]?.tags, ["Project Falcon"]);
+  assert.notEqual(db.workItems[0]?.tag_nomination_completed_at, null);
   assert.equal(db.processingJobs.length, 1);
   assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
+});
+
+test("nominate_tags job does not assign keywords outside the project lexicon", async () => {
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  seedWorkItemRow({
+    db,
+    title: "Project Falcon launch notes",
+    body: "Project Falcon Project Falcon launch sequencing and release notes.",
+    sourceText: "Project Falcon launch sequencing."
+  });
+  seedProjectTag(db, "Unrelated Lexicon");
+
+  const result = await new KeywordService(db).runNominateTagsJob({
+    jobId: "job-nominate",
+    workItemId: "00000000-0000-4000-8000-000000000201",
+    sourceMemoId: "00000000-0000-4000-8000-000000000101"
+  });
+
+  assert.deepEqual(result.tags, []);
+  assert.deepEqual(db.workItems[0]?.tags, []);
+  assert.notEqual(db.workItems[0]?.tag_nomination_completed_at, null);
 });
 
 test("nominate_tags job skips tag assignment when the work item is no longer in memo", async () => {
@@ -1516,6 +1540,7 @@ function captureRouteServices(): AppServices {
     title: "Captured memo",
     body: "Useful memo body",
     tags: ["capture-api"],
+    tagsAvailable: true,
     bodyFormat: "markdown",
     workflowState: "memo",
     workflowItemVersion: 1,
@@ -2228,9 +2253,11 @@ class FakeDatabase implements Database {
   readonly contributors: Record<string, unknown>[] = [];
   readonly importEvents: Record<string, unknown>[] = [];
   readonly processingJobs: Record<string, unknown>[] = [];
-  readonly auditEvents: Record<string, unknown>[] = [];
-  readonly tags: Record<string, unknown>[] = [];
-  readonly workItemTags: Record<string, unknown>[] = [];
+	  readonly auditEvents: Record<string, unknown>[] = [];
+	  readonly tags: Record<string, unknown>[] = [];
+	  readonly workItemTags: Record<string, unknown>[] = [];
+	  readonly projectTags: Record<string, unknown>[] = [];
+	  readonly suppressedTags: Record<string, unknown>[] = [];
   activeWorkflow: Record<string, unknown> | null = null;
   extractionSettings: Record<string, unknown> | null = {
     project_confidence_threshold: 0.65,
@@ -2636,7 +2663,7 @@ class FakeDatabase implements Database {
 
     if (text.includes("from work_items") && text.includes("where work_items.source_memo_id =")) {
       const item = this.workItems.find((row) => row.source_memo_id === values[0]);
-      return rows(item === undefined ? [] : [item as Row]);
+      return rows(item === undefined ? [] : [withTagAvailability(item) as Row]);
     }
 
     if (text.includes("where work_items.id <>")) {
@@ -2659,9 +2686,72 @@ class FakeDatabase implements Database {
       );
     }
 
+    if (text.includes("insert into suppressed_tags")) {
+      const existing = this.suppressedTags.find((row) => row.normalized_name === values[0]);
+      if (existing !== undefined) {
+        return rows([existing as Row]);
+      }
+      const row = {
+        normalized_name: values[0],
+        display_name: values[1],
+        created_at: "2026-05-29T00:00:00.000Z",
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.suppressedTags.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("delete from suppressed_tags")) {
+      const index = this.suppressedTags.findIndex((row) => row.normalized_name === values[0]);
+      if (index === -1) {
+        return rows([]);
+      }
+      const [row] = this.suppressedTags.splice(index, 1);
+      return rows([row as Row]);
+    }
+
+    if (text.includes("select normalized_name, display_name, created_at, updated_at") && text.includes("from suppressed_tags")) {
+      return rows([...this.suppressedTags] as Row[]);
+    }
+
+    if (
+      text.includes("from project_tags") &&
+      text.includes("where project_tags.project_id") &&
+      text.includes("selected_co_document_count")
+    ) {
+      const projectId = values[0];
+      const selectedNames = new Set(Array.isArray(values[1]) ? values[1] : []);
+      return rows(
+        this.projectTags
+          .filter((row) => row.project_id === projectId)
+          .map((row) => this.tags.find((tag) => tag.id === row.tag_id))
+          .filter((tag): tag is Record<string, unknown> => tag !== undefined)
+          .filter((tag) => !selectedNames.has(String(tag.normalized_name)))
+          .map((tag) => ({
+            name: tag.name,
+            normalized_name: tag.normalized_name,
+            document_count: 1,
+            total_item_count: 1,
+            project_document_count: 1,
+            selected_co_document_count: 0
+          })) as unknown as Row[]
+      );
+    }
+
+    if (text.includes("from project_tags") && text.includes("where project_tags.project_id")) {
+      const projectId = values[0];
+      return rows(
+        this.projectTags
+          .filter((row) => row.project_id === projectId)
+          .map((row) => this.tags.find((tag) => tag.id === row.tag_id))
+          .filter((tag): tag is Record<string, unknown> => tag !== undefined)
+          .map((tag) => ({ normalized_name: tag.normalized_name ?? String(tag.name).toLowerCase() })) as unknown as Row[]
+      );
+    }
+
     if (text.includes("from work_items") && text.includes("where work_items.id =")) {
       const item = this.workItems.find((row) => row.id === values[0]);
-      return rows(item === undefined ? [] : [item as Row]);
+      return rows(item === undefined ? [] : [withTagAvailability(item) as Row]);
     }
 
     if (text.includes("update work_items") && text.includes("project_id = coalesce")) {
@@ -2695,6 +2785,36 @@ class FakeDatabase implements Database {
       return rows([item as Row]);
     }
 
+    if (text.includes("update work_items") && text.includes("title = $3") && text.includes("project_id = $5")) {
+      const item = this.workItems.find((row) => row.id === values[0]);
+      if (item === undefined || item.workflow_item_version !== values[1]) {
+        return rows([]);
+      }
+      item.title = values[2];
+      item.body = values[3];
+      item.project_id = values[4];
+      item.contributor_id = values[5];
+      item.contributor_text = values[6];
+      item.workflow_item_version = Number(item.workflow_item_version) + 1;
+      if (values[8] === true) {
+        item.tag_nomination_completed_at = null;
+        item.tag_nomination_project_id = null;
+        item.tag_nomination_job_id = null;
+      }
+      return rows([withTagAvailability(item) as Row]);
+    }
+
+    if (text.includes("update work_items") && text.includes("tag_nomination_completed_at")) {
+      const item = this.workItems.find((row) => row.id === values[0]);
+      if (item === undefined) {
+        return rows([]);
+      }
+      item.tag_nomination_completed_at = "2026-05-29T00:00:00.000Z";
+      item.tag_nomination_project_id = values[1];
+      item.tag_nomination_job_id = values[2];
+      return rows([withTagAvailability(item) as Row]);
+    }
+
     if (text.includes("insert into work_items")) {
       const row = {
         id: values[0],
@@ -2710,6 +2830,9 @@ class FakeDatabase implements Database {
         workflow_item_version: 1,
         accepted_snapshot_id: null,
         accepted_unexported_changes: false,
+        tag_nomination_completed_at: null,
+        tag_nomination_project_id: null,
+        tag_nomination_job_id: null,
         original_file_modified_at:
           this.sourceMemos.find((sourceMemo) => sourceMemo.id === values[1])?.original_file_modified_at ?? null,
         created_at: "2026-05-29T00:00:00.000Z",
@@ -2813,6 +2936,19 @@ class FakeDatabase implements Database {
       const tag = this.tags.find((candidate) => candidate.id === values[1]);
       if (item !== undefined && tag !== undefined) {
         item.tags = [...new Set([...(Array.isArray(item.tags) ? item.tags : []), tag.name])];
+      }
+      return rows([]);
+    }
+
+    if (text.includes("insert into project_tags")) {
+      const existing = this.projectTags.find((row) => row.project_id === values[0] && row.tag_id === values[1]);
+      if (existing === undefined) {
+        this.projectTags.push({
+          project_id: values[0],
+          tag_id: values[1],
+          first_seen_work_item_id: values[2],
+          created_by: values[3]
+        });
       }
       return rows([]);
     }
@@ -3086,10 +3222,47 @@ function seedWorkItemRow(input: {
     workflow_item_version: 1,
     accepted_snapshot_id: null,
     accepted_unexported_changes: false,
+    tag_nomination_completed_at: null,
+    tag_nomination_project_id: null,
+    tag_nomination_job_id: null,
     original_file_modified_at: originalFileModifiedAt,
     created_at: "2026-05-29T00:00:00.000Z",
     updated_at: "2026-05-29T00:00:00.000Z"
   });
+}
+
+function seedProjectTag(db: FakeDatabase, name: string): void {
+  const normalizedName = name.trim().toLowerCase();
+  const tagId = `tag-${normalizedName.replaceAll(" ", "-")}`;
+  db.tags.push({
+    id: tagId,
+    name,
+    normalized_name: normalizedName
+  });
+  db.projectTags.push({
+    project_id: "00000000-0000-4000-8000-000000000301",
+    tag_id: tagId,
+    first_seen_work_item_id: null,
+    created_by: null
+  });
+}
+
+function withTagAvailability(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...row,
+    tags_available:
+      row.tag_nomination_completed_at !== null &&
+      row.tag_nomination_completed_at !== undefined &&
+      row.project_id !== null &&
+      row.tag_nomination_project_id === row.project_id,
+    tags:
+      row.tag_nomination_completed_at !== null &&
+      row.tag_nomination_completed_at !== undefined &&
+      row.project_id !== null &&
+      row.tag_nomination_project_id === row.project_id
+        ? row.tags
+        : []
+  };
 }
 
 function rows<Row extends Record<string, unknown>>(resultRows: Row[]): QueryResult<Row> {
