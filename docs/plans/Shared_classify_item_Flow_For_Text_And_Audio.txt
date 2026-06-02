@@ -1,0 +1,35 @@
+# Shared `classify_item` Flow For Text And Audio
+
+## Summary
+Use one classification path for all imported work items. Text imports create a `needs_review` work item immediately. Audio imports wait until transcription processing has run, then create a `needs_review` work item and let the same `classify_item` hook classify and optionally promote it.
+
+## Key Changes
+- Register `classify_item` as a supported workflow hook handler for the new `0.2.3` workflow bundle.
+- Do not edit the workflow JSON.
+- Add initial-state hook execution for work items created directly in `needs_review`.
+- Implement one shared classification service used by the `classify_item` hook for text and audio work items.
+- If classification confidently identifies one active configured project and required fields are present, execute workflow action `review.memo`.
+- Otherwise keep the item in `needs_review`.
+
+## Import Flow
+- Text imports:
+  - Create source memo, artifact, import event, and work item in `needs_review`.
+  - Run `classify_item`.
+  - Queue/generate keywords after classification.
+- Audio imports:
+  - Create source memo, artifact, import event, and `transcribe_audio` job only.
+  - Do not create a work item before transcription processing runs.
+  - After transcription success, create a work item in `needs_review` with transcript/body populated, then run `classify_item`.
+  - After transcription failure or no usable transcript, create a recoverable `needs_review` work item linked to the audio source, then run `classify_item`, which should no-op with a not-ready/incomplete result.
+
+## Tests
+- Text import creates `needs_review`, runs `classify_item`, and promotes via `review.memo` only on confident classification.
+- Audio import creates no work item before transcription completes.
+- Audio transcription success creates one `needs_review` work item and uses the same classifier as text.
+- Audio transcription failure creates one recoverable `needs_review` work item.
+- Repeated hooks/jobs are idempotent and do not create duplicate work items or duplicate promotion attempts.
+- Run `npm run typecheck` and targeted API/worker tests; run `npm run verify` if local services are available.
+
+## Assumptions
+- Promotion action id remains `review.memo`.
+- All imported work items enter the workflow through `needs_review`; `memo` is reached by hook-driven workflow action, not direct creation, except existing form/AI paths where project/body are already explicit.
