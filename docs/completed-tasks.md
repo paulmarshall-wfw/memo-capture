@@ -256,3 +256,8 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Added tag nomination readiness, internal project tag lexicons, hidden tags until nomination completes for the current project, project-scoped Strong/Related/Weak suggestions, and desktop tag-editor gating.
   Verification: `npm run verify`, `npm run db:migrate`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed; migration `0020_project_scoped_tag_nomination` applied to the local database.
   Traceability: branch `main`, base HEAD `e00af92`; changed files include `apps/api/db/migrations/0020_project_scoped_tag_nomination.sql`, API tag/work-item repositories and services, API tests, `apps/desktop/src/App.tsx`, `packages/domain/src/index.ts`, and tag nomination docs.
+
+- Task: Add isolated Postgres integration test lane
+  Outcome: Added a dedicated `npm run test:postgres` lane that uses the local Docker Postgres container while resetting only `memo_capture_test`, documented the testing split, kept `FakeDatabase` tests as fast service checks, and recorded the policy for future Codex sessions.
+  Verification: `npm run test:postgres`, `npm run typecheck`, and `npm test` passed outside the sandbox.
+  Traceability: branch `main`, base HEAD `b163a47`; changed files include `package.json`, `apps/api/package.json`, `scripts/prepare-postgres-test-db.mjs`, `apps/api/tests/postgres/integration.test.ts`, `AGENTS.md`, `docs/development.md`, `docs/completed-tasks.md`, and the Codex memory note `2026-06-03-memo-capture-postgres-test-policy.md`.

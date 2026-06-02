@@ -10,6 +10,7 @@
     "db:migrate": "tsx src/migrate.ts",
     "dev": "tsx src/index.ts",
     "test": "node --test --import tsx tests/*.test.ts",
+    "test:postgres": "node --test --import tsx tests/postgres/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

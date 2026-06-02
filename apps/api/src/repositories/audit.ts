@@ -98,11 +98,8 @@ export class AuditRepository {
            linked_work_items.source_memo_id,
            subject_work_items.source_memo_id
          )
-       left join source_memo_artifacts primary_source_artifacts
-         on primary_source_artifacts.source_memo_id = linked_source_memos.id
-        and primary_source_artifacts.relationship = 'primary_original'
        left join artifacts primary_artifacts
-         on primary_artifacts.id = primary_source_artifacts.artifact_id
+         on primary_artifacts.id = linked_source_memos.primary_artifact_id
        left join projects linked_projects
          on linked_projects.id = coalesce(linked_work_items.project_id, subject_work_items.project_id)
        left join projects subject_projects

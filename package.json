@@ -16,7 +16,9 @@
     "dev:worker": "npm run dev -w @memo-capture/worker",
     "doctor": "node scripts/doctor.mjs",
     "lint": "npm run lint --workspaces --if-present",
+    "prepare:test:postgres": "node scripts/prepare-postgres-test-db.mjs",
     "test": "npm run test --workspaces --if-present",
+    "test:postgres": "npm run prepare:test:postgres && DATABASE_URL=postgres://memo_capture:memo_capture@127.0.0.1:5432/memo_capture_test npm run test:postgres -w @memo-capture/api",
     "typecheck": "tsc -b tsconfig.json",
     "verify": "npm run doctor && npm run typecheck && npm test && npm run build"
   },

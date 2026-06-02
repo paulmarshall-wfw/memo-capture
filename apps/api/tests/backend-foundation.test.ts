@@ -14,6 +14,7 @@ import { countIncompatibleActiveWorkflowDependentJobs } from "../src/services/wo
 import { createApiServer } from "../src/server.js";
 import { WorkItemRepository } from "../src/repositories/work-items.js";
 import { WorkflowRepository } from "../src/repositories/workflows.js";
+import { AuditRepository } from "../src/repositories/audit.js";
 import { ObjectStorageService } from "../src/services/object-storage.js";
 import { TranscriptionService } from "../src/services/transcription.js";
 import { KeywordService } from "../src/services/keywords.js";
@@ -93,6 +94,44 @@ test("catalog service deletes unused projects and blocks projects referenced by 
     () => services.catalog.deleteProject("project-used", session.user, "request-delete-used"),
     (error: unknown) => error instanceof HttpError && error.statusCode === 409 && error.code === "project_in_use"
   );
+});
+
+test("audit repository lists events with source memo display context", async () => {
+  const db = new FakeDatabase();
+  db.projects.push(projectRow("project-audit", "Audit Project"));
+  db.artifacts.push({
+    id: "artifact-audit",
+    original_filename: "debug-source.md"
+  });
+  db.sourceMemos.push({
+    id: "source-memo-audit",
+    primary_artifact_id: "artifact-audit",
+    original_path: "/incoming/debug-source.md"
+  });
+  db.workItems.push({
+    id: "work-item-audit",
+    source_memo_id: "source-memo-audit",
+    project_id: "project-audit",
+    title: "Debug source memo"
+  });
+
+  await new AuditRepository(db).record({
+    eventName: "work_item.workflow_action_executed",
+    actor: null,
+    subjectType: "work_item",
+    subjectId: "work-item-audit",
+    requestId: "request-audit",
+    workItemId: "work-item-audit",
+    metadata: { actionId: "review.memo" }
+  });
+
+  const [event] = await new AuditRepository(db).list();
+
+  assert.equal(event?.eventName, "work_item.workflow_action_executed");
+  assert.equal(event?.display.title, "Debug source memo");
+  assert.equal(event?.display.originalFilename, "debug-source.md");
+  assert.equal(event?.display.originalPath, "/incoming/debug-source.md");
+  assert.equal(event?.display.projectName, "Audit Project");
 });
 
 test("workflow activation compatibility lists only workflow-dependent active jobs", async () => {
@@ -2991,8 +3030,59 @@ class FakeDatabase implements Database {
     }
 
     if (text.includes("insert into audit_events")) {
-      this.auditEvents.push({ id: values[0], event_name: values[1] });
+      this.auditEvents.push({
+        id: values[0],
+        event_name: values[1],
+        actor_user_id: values[2],
+        actor_email_snapshot: values[3],
+        actor_display_name_snapshot: values[4],
+        subject_type: values[5],
+        subject_id: values[6],
+        request_id: values[7],
+        job_id: values[8],
+        source_memo_id: values[9],
+        work_item_id: values[10],
+        metadata: JSON.parse(String(values[11] ?? "{}")) as Record<string, unknown>,
+        redaction_applied: values[12],
+        created_at: "2026-05-29T00:00:00.000Z"
+      });
       return rows([]);
+    }
+
+    if (text.includes("from audit_events")) {
+      const filtered = this.auditEvents.filter(
+        (event) =>
+          (values[0] === null || event.event_name === values[0]) &&
+          (values[1] === null || event.actor_user_id === values[1]) &&
+          (values[2] === null || event.subject_type === values[2]) &&
+          (values[3] === null || event.subject_id === values[3]) &&
+          (values[4] === null || event.work_item_id === values[4]) &&
+          (values[5] === null || event.job_id === values[5])
+      );
+      const auditRows = filtered.slice(0, Number(values[8] ?? 100)).map((event) => {
+        const linkedWorkItem = this.workItems.find((row) => row.id === event.work_item_id);
+        const subjectWorkItem =
+          event.subject_type === "work_item"
+            ? this.workItems.find((row) => row.id === event.subject_id)
+            : undefined;
+        const sourceMemoId =
+          event.source_memo_id ?? linkedWorkItem?.source_memo_id ?? subjectWorkItem?.source_memo_id ?? null;
+        const sourceMemo = this.sourceMemos.find((row) => row.id === sourceMemoId);
+        const artifact = this.artifacts.find((row) => row.id === sourceMemo?.primary_artifact_id);
+        const linkedProject = this.projects.find(
+          (row) => row.id === (linkedWorkItem?.project_id ?? subjectWorkItem?.project_id ?? null)
+        );
+        const subjectProject =
+          event.subject_type === "project" ? this.projects.find((row) => row.id === event.subject_id) : undefined;
+        return {
+          ...event,
+          display_title: linkedWorkItem?.title ?? subjectWorkItem?.title ?? null,
+          display_original_filename: artifact?.original_filename ?? null,
+          display_original_path: sourceMemo?.original_path ?? null,
+          display_project_name: linkedProject?.name ?? subjectProject?.name ?? null
+        };
+      });
+      return rows(auditRows as unknown as Row[]);
     }
 
     return rows([]);

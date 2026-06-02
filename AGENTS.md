@@ -28,6 +28,7 @@ Verified from the current workspace scaffold.
 - Install command: `npm install`
 - Development command: `npm run dev:desktop`, `npm run dev:api`, and `npm run dev:worker`
 - Test command: `npm test`
+- Real Postgres integration test command: `npm run test:postgres`
 - Lint or typecheck command: `npm run typecheck`
 - Build command: `npm run build`
 - Full verification command: `npm run verify`
@@ -50,6 +51,9 @@ Dependencies may not be installed yet in a fresh checkout. Run `npm install` bef
 ## Verification Notes
 
 - Prefer `npm run verify` from the repo root after dependencies are installed.
+- Use `npm run test:postgres` for database-sensitive automated checks. This command resets and migrates the isolated `memo_capture_test` database in the local `memo-capture-postgres-16-8` container, then runs Postgres-backed integration tests.
+- Keep `FakeDatabase` tests for fast service-level behavior, but do not treat them as proof of real SQL, migrations, constraints, transactions, indexes, or Postgres locking semantics.
+- Do not point resettable automated test lanes at the shared `memo_capture` development database. Manual smoke testing may use `memo_capture` when the goal is to inspect the current local dev state.
 - Use Chrome for browser validation unless the user asks for another browser.
 - Browser automation is not required for backend-only changes.
 - Report any script that cannot run because dependencies, Rust/Tauri tooling, Postgres, or object storage are unavailable.
