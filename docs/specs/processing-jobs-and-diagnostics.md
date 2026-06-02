@@ -20,6 +20,7 @@ V1 job kinds:
 - `transcribe_audio`
 - `extract_memo_metadata`
 - `generate_keywords`
+- `nominate_tags`
 - `expand_work_item`
 - `generate_export_batch`
 
@@ -195,16 +196,20 @@ Output:
 - title
 - body
 - contributor suggestion
-- tags
 - confidence metadata
 
 Rules:
 
 - Low confidence enters or remains in `needs_review`.
 - Confidence scores do not block promotion once a signed-in user supplies required fields.
-- AI/extraction may suggest projects, contributors, and tags, but project/contributor creation or confirmation follows settings rules.
+- AI/extraction may suggest projects and contributors, but project/contributor creation or confirmation follows settings rules.
+- Tag nomination is deferred until the active workflow's `nominate_tags` `while_in_state` hook is due for an item in `memo`.
 
 ### generate_keywords
+
+Legacy generated-tag job kind retained for backward compatibility. New automatic tag nomination uses `nominate_tags`.
+
+### nominate_tags
 
 Input:
 
@@ -213,6 +218,12 @@ Input:
 Output:
 
 - normalized tag assignments with confidence, per-item counts, corpus/project counts, co-occurrence metadata, and derived grouping paths
+
+Rules:
+
+- Runs only when the active workflow defines a due `while_in_state` hook with handler key `nominate_tags` for the work item's current state.
+- If the work item has left `memo` before the job runs, the job skips tag assignment.
+- Recurring workflow schedules are read from the active bundle; intervals are not hardcoded in app code.
 
 ### expand_work_item
 

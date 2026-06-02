@@ -10,6 +10,7 @@ import { SourceMemoRepository } from "../repositories/source-memos.js";
 import { TagRepository } from "../repositories/tags.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { HttpError } from "./errors.js";
+import { WorkflowHookScheduler } from "./workflow-hooks.js";
 import {
   createLlmProvider,
   normalizePromptContextConfig,
@@ -258,6 +259,10 @@ export class AiExpansionService {
         ...workItem,
         tags: suggestion.tags
       };
+      await new WorkflowHookScheduler(client).scheduleStateResidentHooksForWorkItem({
+        workItem: taggedWorkItem,
+        actorUserId: actor.id
+      });
       const applied = await suggestions.markApplied({
         suggestionId,
         appliedWorkItemId: workItem.id,

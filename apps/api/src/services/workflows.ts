@@ -6,6 +6,7 @@ import type { AppUserRecord } from "../repositories/rows.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { WorkflowRepository, type ActiveWorkflowRow } from "../repositories/workflows.js";
 import { HttpError, optionalString } from "./errors.js";
+import { WorkflowHookScheduler } from "./workflow-hooks.js";
 import {
   WorkflowRuntimeAdapter,
   type WorkflowIdentity,
@@ -425,6 +426,16 @@ export class WorkflowService {
               acceptedSnapshotId: createdSnapshotId,
               actorUserId: actor.id
             });
+      const hookScheduler = new WorkflowHookScheduler(client);
+      if (current.workflowState === "memo" && finalWorkItem.workflowState !== "memo") {
+        await hookScheduler.cancelPendingNominationJobs(finalWorkItem.id);
+      }
+      if (current.workflowState !== "memo" && finalWorkItem.workflowState === "memo") {
+        await hookScheduler.scheduleStateResidentHooksForWorkItem({
+          workItem: finalWorkItem,
+          actorUserId: actor.id
+        });
+      }
 
       const allowedActions = this.runtime.getAllowedActions(active.bundle, finalWorkItem.workflowState);
       await audit.record({

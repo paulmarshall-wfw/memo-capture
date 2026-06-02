@@ -45,7 +45,9 @@ Current supported capability:
 ```json
 {
   "requiredAppCapabilities": [
-    "memo-capture.workflow-hooks.create_accepted_snapshot.v1"
+    "memo-capture.workflow-hooks.create_accepted_snapshot.v1",
+    "memo-capture.workflow-hooks.classify_item.v1",
+    "memo-capture.workflow-hooks.nominate_tags.v1"
   ]
 }
 ```
@@ -53,7 +55,7 @@ Current supported capability:
 The app also validates hook `handlerKey` values. V1 supports:
 
 ```json
-["create_accepted_snapshot", "classify_item"]
+["create_accepted_snapshot", "classify_item", "nominate_tags"]
 ```
 
 ## Runtime Capabilities
@@ -257,7 +259,7 @@ Response:
     "contentHash": "sha256:...",
     "activatedAt": "2026-05-29T00:00:00.000Z"
   },
-  "supportedHookHandlers": ["create_accepted_snapshot"]
+  "supportedHookHandlers": ["create_accepted_snapshot", "classify_item", "nominate_tags"]
 }
 ```
 

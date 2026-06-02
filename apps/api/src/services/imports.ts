@@ -439,7 +439,6 @@ async function finalizeWatchedTextImport(input: {
   const sourceMemoArtifacts = new SourceMemoArtifactRepository(input.client);
   const importEvents = new ImportEventRepository(input.client);
   const workItems = new WorkItemRepository(input.client);
-  const jobs = new ProcessingJobRepository(input.client);
   const audit = new AuditRepository(input.client);
   const contributor = await new ContributorRepository(input.client).findOrCreateForWatchedFolder({
     contributorText: session.contributorText,
@@ -529,17 +528,10 @@ async function finalizeWatchedTextImport(input: {
     workItemId: workItem.id,
     metadata: { workflowState: workItem.workflowState }
   });
-  await new ClassificationService(input.client).runInitialStateHooksForWorkItem({
+  const classification = await new ClassificationService(input.client).runInitialStateHooksForWorkItem({
     workItem,
     actor: input.actor,
     requestId: input.requestId
-  });
-  const keywordJob = await jobs.create({
-    jobKind: "generate_keywords",
-    sourceMemoId: sourceMemo.id,
-    workItemId: workItem.id,
-    maxAttempts: 3,
-    initiatedBy: input.actor.id
   });
 
   return {
@@ -548,7 +540,7 @@ async function finalizeWatchedTextImport(input: {
     artifactId: session.artifactId,
     importEventId: importEvent.id,
     initialWorkflowState: workItem.workflowState,
-    processingJobs: [keywordJob.id]
+    processingJobs: classification.scheduledJobIds
   };
 }
 

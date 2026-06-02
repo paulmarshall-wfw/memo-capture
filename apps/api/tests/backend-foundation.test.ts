@@ -14,8 +14,10 @@ import { createApiServer } from "../src/server.js";
 import { WorkItemRepository } from "../src/repositories/work-items.js";
 import { ObjectStorageService } from "../src/services/object-storage.js";
 import { TranscriptionService } from "../src/services/transcription.js";
+import { KeywordService } from "../src/services/keywords.js";
 
 const originalFileModifiedAt = "2026-05-28T23:45:00.000Z";
+const testNominateTagsIntervalMs = 123456;
 
 test("local-dev auth creates a fixed development session when explicitly enabled", async () => {
   const config = readApiConfig({
@@ -26,6 +28,7 @@ test("local-dev auth creates a fixed development session when explicitly enabled
     MEMO_CAPTURE_COMMIT_SHA: "test-sha"
   });
   const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
   const services = createAppServicesFromDatabase(config, db);
 
   const session = await services.auth.createLocalDevSession();
@@ -42,6 +45,7 @@ test("form memo service creates source memo, work item, import event, and audit 
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
   });
   const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
   const services = createAppServicesFromDatabase(config, db);
   const session = await services.auth.createLocalDevSession();
 
@@ -60,6 +64,8 @@ test("form memo service creates source memo, work item, import event, and audit 
   assert.equal(db.workItems.length, 1);
   assert.equal(db.importEvents.length, 1);
   assert.equal(db.auditEvents.length, 2);
+  assert.equal(db.processingJobs.length, 1);
+  assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
   assert.equal(result.workItem.workflowState, "memo");
   assert.equal(result.workItem.title, "Capture this");
 });
@@ -436,6 +442,7 @@ test("text import classify_item promotes only on one confident active project ma
   );
   await services.imports.uploadSessionArtifact(uploadSession.sessionId, body);
 
+  const beforeFinalize = Date.now();
   const finalized = await services.imports.finalizeUploadSession(
     uploadSession.sessionId,
     { machineId: "machine-1", archivePlanned: true },
@@ -446,8 +453,135 @@ test("text import classify_item promotes only on one confident active project ma
   assert.equal(finalized.initialWorkflowState, "needs_review");
   assert.equal(db.workItems[0]?.project_id, "project-memo-capture");
   assert.equal(db.workItems[0]?.workflow_state, "memo");
-  assert.equal(db.processingJobs[0]?.job_kind, "generate_keywords");
+  assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
+  const scheduledDelayMs = new Date(String(db.processingJobs[0]?.run_after)).getTime() - beforeFinalize;
+  assert.equal(scheduledDelayMs > 0, true);
+  assert.notEqual(scheduledDelayMs, 900000);
   assert.equal(db.auditEvents.some((event) => event.event_name === "work_item.workflow_action_executed"), true);
+});
+
+test("manual workflow action into memo schedules nominate_tags", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  db.sourceMemos.push({
+    id: "00000000-0000-4000-8000-000000000101",
+    source_type: "watched_text_file",
+    extracted_text: "Memo Capture",
+    current_transcript_text: null,
+    original_file_modified_at: originalFileModifiedAt
+  });
+  db.workItems.push({
+    id: "00000000-0000-4000-8000-000000000201",
+    source_memo_id: "00000000-0000-4000-8000-000000000101",
+    project_id: "00000000-0000-4000-8000-000000000301",
+    contributor_text: null,
+    contributor_id: null,
+    title: "Reviewed memo",
+    body: "Ready for memo",
+    body_format: "markdown",
+    workflow_state: "needs_review",
+    tags: [],
+    workflow_item_version: 1,
+    accepted_snapshot_id: null,
+    accepted_unexported_changes: false,
+    original_file_modified_at: originalFileModifiedAt,
+    created_at: "2026-05-29T00:00:00.000Z",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+
+  await services.workflows.executeAction(
+    "00000000-0000-4000-8000-000000000201",
+    "review.memo",
+    {},
+    session.user,
+    "request-action"
+  );
+
+  assert.equal(db.workItems[0]?.workflow_state, "memo");
+  assert.equal(db.processingJobs.length, 1);
+  assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
+});
+
+test("nominate_tags job assigns generated tags and reschedules recurring memo hook", async () => {
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  seedWorkItemRow({
+    db,
+    title: "Project Falcon launch notes",
+    body: "Project Falcon Project Falcon launch sequencing and release notes.",
+    sourceText: "Project Falcon launch sequencing."
+  });
+
+  const result = await new KeywordService(db).runNominateTagsJob({
+    jobId: "job-nominate",
+    workItemId: "00000000-0000-4000-8000-000000000201",
+    sourceMemoId: "00000000-0000-4000-8000-000000000101"
+  });
+
+  assert.equal(result.workItemId, "00000000-0000-4000-8000-000000000201");
+  assert.equal(result.tags.length > 0, true);
+  assert.equal((db.workItems[0]?.tags as unknown[]).length > 0, true);
+  assert.equal(db.processingJobs.length, 1);
+  assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
+});
+
+test("nominate_tags job skips tag assignment when the work item is no longer in memo", async () => {
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  seedWorkItemRow({
+    db,
+    workflowState: "parked",
+    title: "Project Falcon launch notes",
+    body: "Project Falcon Project Falcon launch sequencing."
+  });
+
+  const result = await new KeywordService(db).runNominateTagsJob({
+    jobId: "job-nominate",
+    workItemId: "00000000-0000-4000-8000-000000000201",
+    sourceMemoId: "00000000-0000-4000-8000-000000000101"
+  });
+
+  assert.deepEqual(result.tags, []);
+  assert.deepEqual(db.workItems[0]?.tags, []);
+  assert.equal(db.processingJobs.length, 0);
+});
+
+test("leaving memo cancels pending nominate_tags jobs", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  seedWorkItemRow({ db, workflowState: "memo" });
+  db.processingJobs.push({
+    id: "job-pending",
+    job_kind: "nominate_tags",
+    status: "queued",
+    source_memo_id: "00000000-0000-4000-8000-000000000101",
+    work_item_id: "00000000-0000-4000-8000-000000000201"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  await services.workflows.executeAction(
+    "00000000-0000-4000-8000-000000000201",
+    "memo.parked",
+    {},
+    session.user,
+    "request-park"
+  );
+
+  assert.equal(db.workItems[0]?.workflow_state, "parked");
+  assert.equal(db.processingJobs[0]?.status, "cancelled");
 });
 
 test("watched text imports link contributor records by normalized contributor name", async () => {
@@ -562,6 +696,7 @@ test("text import classify_item leaves ambiguous project matches in review", asy
 
   assert.equal(db.workItems[0]?.project_id, null);
   assert.equal(db.workItems[0]?.workflow_state, "needs_review");
+  assert.equal(db.processingJobs.length, 0);
   assert.equal(db.auditEvents.some((event) => event.event_name === "work_item.workflow_action_executed"), false);
 });
 
@@ -2024,6 +2159,8 @@ class FakeDatabase implements Database {
   readonly importEvents: Record<string, unknown>[] = [];
   readonly processingJobs: Record<string, unknown>[] = [];
   readonly auditEvents: Record<string, unknown>[] = [];
+  readonly tags: Record<string, unknown>[] = [];
+  readonly workItemTags: Record<string, unknown>[] = [];
   activeWorkflow: Record<string, unknown> | null = null;
   extractionSettings: Record<string, unknown> | null = {
     project_confidence_threshold: 0.65,
@@ -2432,6 +2569,26 @@ class FakeDatabase implements Database {
       return rows(item === undefined ? [] : [item as Row]);
     }
 
+    if (text.includes("where work_items.id <>")) {
+      return rows(
+        this.workItems
+          .filter((row) => row.id !== values[0])
+          .map((row) => {
+            const sourceMemo = this.sourceMemos.find((source) => source.id === row.source_memo_id);
+            return {
+              corpus_text: [
+                row.title,
+                row.body,
+                sourceMemo?.extracted_text,
+                sourceMemo?.current_transcript_text
+              ]
+                .filter((value) => value !== undefined && value !== null)
+                .join("\n")
+            };
+          }) as unknown as Row[]
+      );
+    }
+
     if (text.includes("from work_items") && text.includes("where work_items.id =")) {
       const item = this.workItems.find((row) => row.id === values[0]);
       return rows(item === undefined ? [] : [item as Row]);
@@ -2496,9 +2653,83 @@ class FakeDatabase implements Database {
       this.processingJobs.push({
         id: values[0],
         job_kind: values[1],
+        status: values[2],
         source_memo_id: values[3],
-        work_item_id: values[4]
+        work_item_id: values[4],
+        export_batch_id: values[5],
+        max_attempts: values[6],
+        initiated_by: values[7],
+        run_after: values[8] ?? "2026-05-29T00:00:00.000Z",
+        completed_at: null,
+        claim_expires_at: null
       });
+      return rows([]);
+    }
+
+    if (text.includes("with cancelled as") && text.includes("update processing_jobs")) {
+      let cancelled = 0;
+      for (const job of this.processingJobs) {
+        if (
+          job.work_item_id === values[0] &&
+          job.job_kind === values[1] &&
+          ["queued", "retry_scheduled", "claimed"].includes(String(job.status))
+        ) {
+          job.status = "cancelled";
+          job.completed_at = "2026-05-29T00:00:00.000Z";
+          job.claim_expires_at = null;
+          cancelled += 1;
+        }
+      }
+      return rows([{ cancelled_count: cancelled }] as unknown as Row[]);
+    }
+
+    if (text.includes("delete from work_item_tags")) {
+      const workItemId = values[0];
+      for (let index = this.workItemTags.length - 1; index >= 0; index -= 1) {
+        if (this.workItemTags[index]?.work_item_id === workItemId) {
+          this.workItemTags.splice(index, 1);
+        }
+      }
+      const item = this.workItems.find((row) => row.id === workItemId);
+      if (item !== undefined) {
+        item.tags = [];
+      }
+      return rows([]);
+    }
+
+    if (text.includes("insert into tags")) {
+      const normalizedName = values[2];
+      const existing = this.tags.find((row) => row.normalized_name === normalizedName);
+      if (existing !== undefined) {
+        return rows([existing as Row]);
+      }
+      const row = {
+        id: values[0],
+        name: values[1],
+        normalized_name: normalizedName
+      };
+      this.tags.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("insert into work_item_tags")) {
+      const row = {
+        work_item_id: values[0],
+        tag_id: values[1],
+        assignment_source: values[2],
+        confidence: values[3],
+        item_count: values[4]
+      };
+      this.workItemTags.push(row);
+      const item = this.workItems.find((workItem) => workItem.id === values[0]);
+      const tag = this.tags.find((candidate) => candidate.id === values[1]);
+      if (item !== undefined && tag !== undefined) {
+        item.tags = [...new Set([...(Array.isArray(item.tags) ? item.tags : []), tag.name])];
+      }
+      return rows([]);
+    }
+
+    if (text.includes("insert into tag_statistics") || text.includes("insert into tag_co_occurrences")) {
       return rows([]);
     }
 
@@ -2609,8 +2840,8 @@ function seedMediaParserRegistry(db: FakeDatabase): void {
 function seedActiveClassifyWorkflow(db: FakeDatabase): void {
   db.activeWorkflow = {
     workflow_id: "memo-capture_workflow",
-    workflow_version: "0.2.3",
-    state_machine_version: "0.2.3",
+    workflow_version: "0.2.4",
+    state_machine_version: "0.2.4",
     content_hash: "sha256:test-classify",
     required_app_capabilities: [],
     activated_by: null,
@@ -2618,11 +2849,11 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
     bundle: {
       schemaVersion: "0.7.0",
       appName: "memo-capture",
-      workflowVersion: "0.2.3",
+      workflowVersion: "0.2.4",
       id: "memo-capture_workflow",
       stateMachine: {
         id: "memo_capture_state",
-        definitionVersion: "0.2.3"
+        definitionVersion: "0.2.4"
       },
       states: [
         {
@@ -2631,6 +2862,10 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
         },
         {
           id: "memo",
+          visible: true
+        },
+        {
+          id: "parked",
           visible: true
         }
       ],
@@ -2642,6 +2877,14 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
           to: "memo",
           trigger: "user",
           visible: true
+        },
+        {
+          id: "memo.parked",
+          label: "Park",
+          from: "memo",
+          to: "parked",
+          trigger: "user",
+          visible: true
         }
       ],
       hooks: [
@@ -2651,6 +2894,17 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
           targetType: "state",
           targetId: "needs_review",
           handlerKey: "classify_item"
+        },
+        {
+          id: "while_in_state_memo",
+          phase: "while_in_state",
+          targetType: "state",
+          targetId: "memo",
+          schedule: {
+            trigger: "every_interval",
+            intervalMs: testNominateTagsIntervalMs
+          },
+          handlerKey: "nominate_tags"
         }
       ],
       buckets: [
@@ -2665,16 +2919,22 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
           label: "Memos",
           visible: true,
           states: ["memo"]
+        },
+        {
+          id: "parked",
+          label: "Parked",
+          visible: true,
+          states: ["parked"]
         }
       ],
       embeddedStateMachineDefinition: {
         schemaVersion: "0.3.0",
         appName: "memo-capture",
-        definitionVersion: "0.2.3",
-        version: "0.2.3",
+        definitionVersion: "0.2.4",
+        version: "0.2.4",
         id: "memo_capture_state",
         initialState: "needs_review",
-        states: ["needs_review", "memo"],
+        states: ["needs_review", "memo", "parked"],
         entryStates: ["needs_review"],
         terminalStates: [],
         transitions: [
@@ -2682,6 +2942,11 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
             from: "needs_review",
             to: "memo",
             actionId: "review.memo"
+          },
+          {
+            from: "memo",
+            to: "parked",
+            actionId: "memo.parked"
           }
         ]
       }
@@ -2699,6 +2964,44 @@ function projectRow(id: string, name: string): Record<string, unknown> {
     created_at: "2026-05-29T00:00:00.000Z",
     updated_at: "2026-05-29T00:00:00.000Z"
   };
+}
+
+function seedWorkItemRow(input: {
+  db: FakeDatabase;
+  sourceMemoId?: string;
+  workItemId?: string;
+  workflowState?: string;
+  title?: string;
+  body?: string;
+  sourceText?: string;
+}): void {
+  const sourceMemoId = input.sourceMemoId ?? "00000000-0000-4000-8000-000000000101";
+  const workItemId = input.workItemId ?? "00000000-0000-4000-8000-000000000201";
+  input.db.sourceMemos.push({
+    id: sourceMemoId,
+    source_type: "watched_text_file",
+    extracted_text: input.sourceText ?? input.body ?? "Memo Capture",
+    current_transcript_text: null,
+    original_file_modified_at: originalFileModifiedAt
+  });
+  input.db.workItems.push({
+    id: workItemId,
+    source_memo_id: sourceMemoId,
+    project_id: "00000000-0000-4000-8000-000000000301",
+    contributor_text: null,
+    contributor_id: null,
+    title: input.title ?? "Reviewed memo",
+    body: input.body ?? "Ready for memo",
+    body_format: "markdown",
+    workflow_state: input.workflowState ?? "memo",
+    tags: [],
+    workflow_item_version: 1,
+    accepted_snapshot_id: null,
+    accepted_unexported_changes: false,
+    original_file_modified_at: originalFileModifiedAt,
+    created_at: "2026-05-29T00:00:00.000Z",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
 }
 
 function rows<Row extends Record<string, unknown>>(resultRows: Row[]): QueryResult<Row> {

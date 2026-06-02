@@ -105,13 +105,6 @@ export class TranscriptionService {
         actor: null,
         requestId: input.jobId
       });
-      await new ProcessingJobRepository(client).create({
-        jobKind: "generate_keywords",
-        sourceMemoId: input.sourceMemoId,
-        workItemId: workItem.id,
-        maxAttempts: 3,
-        initiatedBy: originalArtifact.createdBy
-      });
 
       await client.query(
         `update processing_jobs

@@ -7,6 +7,7 @@ test("worker knows the v1 processing job kinds", () => {
     "transcribe_audio",
     "extract_memo_metadata",
     "generate_keywords",
+    "nominate_tags",
     "expand_work_item",
     "generate_export_batch"
   ]);

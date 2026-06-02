@@ -115,6 +115,36 @@ test("workflow runtime executes only actions allowed from the current state", ()
   assert.equal(adapter.executeAction(bundle, "accepted", "memo.accepted"), null);
 });
 
+test("workflow runtime validates and projects scheduled nominate_tags hooks", () => {
+  const adapter = new WorkflowRuntimeAdapter();
+  const bundle = createBundle();
+  bundle.workflowVersion = "0.2.4";
+  bundle.stateMachine.definitionVersion = "0.2.4";
+  bundle.embeddedStateMachineDefinition.definitionVersion = "0.2.4";
+  bundle.embeddedStateMachineDefinition.version = "0.2.4";
+  (bundle.hooks as Array<Record<string, unknown>>).push({
+    id: "while_in_state_memo",
+    phase: "while_in_state",
+    targetType: "state",
+    targetId: "memo",
+    schedule: {
+      trigger: "every_interval",
+      intervalMs: 123456
+    },
+    handlerKey: "nominate_tags"
+  });
+
+  const validation = adapter.validateBundle(bundle);
+  const hooks = adapter.getStateResidentHooks(bundle, "memo");
+
+  assert.equal(validation.ok, true);
+  assert.equal(validation.identity?.workflowVersion, "0.2.4");
+  assert.equal(hooks.length, 1);
+  assert.equal(hooks[0]?.handlerKey, "nominate_tags");
+  assert.equal(hooks[0]?.targetState, "memo");
+  assert.deepEqual(hooks[0]?.schedule, { trigger: "every_interval", intervalMs: 123456 });
+});
+
 test("workflow debugger step mode blocks runtime steps until commanded", async () => {
   const service = new WorkflowDebuggerService();
   const actor = {

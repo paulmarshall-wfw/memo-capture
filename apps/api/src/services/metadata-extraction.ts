@@ -2,7 +2,7 @@ import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import { ProjectRepository } from "../repositories/catalog.js";
 import { SourceMemoRepository } from "../repositories/source-memos.js";
-import { TagRepository, type TagAssignmentInput } from "../repositories/tags.js";
+import type { TagAssignmentInput } from "../repositories/tags.js";
 import { WorkItemRepository } from "../repositories/work-items.js";
 import { extractKeywords, KeywordJobError } from "./keywords.js";
 
@@ -66,12 +66,6 @@ export class MetadataExtractionService {
       existingContributorText: workItem.contributorText,
       projects
     });
-    const tags = await new TagRepository(this.db).setForWorkItem({
-      workItemId: workItem.id,
-      tags: extracted.tagAssignments,
-      actorUserId: null
-    });
-
     await workItems.applyMetadataExtraction({
       workItemId: workItem.id,
       title: extracted.title,
@@ -91,8 +85,7 @@ export class MetadataExtractionService {
       metadata: {
         updateSource: "metadata_extraction",
         projectSuggestion: extracted.projectSuggestion,
-        contributorSuggested: extracted.contributorText !== null,
-        tags
+        contributorSuggested: extracted.contributorText !== null
       },
       redactionApplied: true
     });
@@ -103,7 +96,7 @@ export class MetadataExtractionService {
       body: extracted.body,
       contributorText: extracted.contributorText,
       projectSuggestion: extracted.projectSuggestion,
-      tags
+      tags: []
     };
   }
 }

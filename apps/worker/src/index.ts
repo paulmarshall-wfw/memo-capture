@@ -27,6 +27,7 @@ const supportedJobKinds = [
   "transcribe_audio",
   "extract_memo_metadata",
   "generate_keywords",
+  "nominate_tags",
   "generate_export_batch"
 ] satisfies ProcessingJobKind[];
 const db = createPgDatabase(config.databaseUrl, logger);
@@ -114,7 +115,13 @@ async function runClaimedJob(job: {
         sourceMemoId: job.sourceMemoId
       });
     } else if (job.jobKind === "generate_keywords" && job.workItemId !== null) {
-      await keywordService.runKeywordJob({
+      await keywordService.runNominateTagsJob({
+        jobId: job.id,
+        workItemId: job.workItemId,
+        sourceMemoId: job.sourceMemoId
+      });
+    } else if (job.jobKind === "nominate_tags" && job.workItemId !== null) {
+      await keywordService.runNominateTagsJob({
         jobId: job.id,
         workItemId: job.workItemId,
         sourceMemoId: job.sourceMemoId

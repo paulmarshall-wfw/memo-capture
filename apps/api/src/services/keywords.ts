@@ -2,7 +2,10 @@ import type { Database, Queryable } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import { SourceMemoRepository } from "../repositories/source-memos.js";
 import { TagRepository, normalizeTagName, type TagAssignmentInput } from "../repositories/tags.js";
-import { WorkItemRepository } from "../repositories/work-items.js";
+import { WorkflowRepository } from "../repositories/workflows.js";
+import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
+import { WorkflowHookScheduler } from "./workflow-hooks.js";
+import { WorkflowRuntimeAdapter } from "./workflow-runtime.js";
 
 export interface KeywordGenerationResult {
   workItemId: string;
@@ -16,6 +19,8 @@ export interface KeywordGenerationResult {
 }
 
 export class KeywordService {
+  private readonly runtime = new WorkflowRuntimeAdapter();
+
   constructor(private readonly db: Database | Queryable) {}
 
   async runKeywordJob(input: {
@@ -23,23 +28,80 @@ export class KeywordService {
     workItemId: string;
     sourceMemoId: string | null;
   }): Promise<KeywordGenerationResult> {
+    const workItem = await this.requireWorkItem(input.workItemId);
+    return this.assignKeywordTags({
+      jobId: input.jobId,
+      workItem,
+      sourceMemoId: input.sourceMemoId,
+      updateSource: "keyword_generation"
+    });
+  }
+
+  async runNominateTagsJob(input: {
+    jobId: string;
+    workItemId: string;
+    sourceMemoId: string | null;
+  }): Promise<KeywordGenerationResult> {
+    const workItem = await this.requireWorkItem(input.workItemId);
+    const active = await new WorkflowRepository(this.db).getActive();
+    const hook =
+      active === null
+        ? undefined
+        : this.runtime
+            .getStateResidentHooks(active.bundle, workItem.workflowState)
+            .find((candidate) => candidate.handlerKey === "nominate_tags");
+    if (hook === undefined) {
+      return {
+        workItemId: workItem.id,
+        tags: [],
+        groupingPaths: []
+      };
+    }
+
+    const result = await this.assignKeywordTags({
+      jobId: input.jobId,
+      workItem,
+      sourceMemoId: input.sourceMemoId,
+      updateSource: "nominate_tags",
+      hookId: hook.id
+    });
+    const latest = await new WorkItemRepository(this.db).findById(workItem.id);
+    if (latest?.workflowState === workItem.workflowState && hook.schedule?.trigger === "every_interval") {
+      await new WorkflowHookScheduler(this.db).scheduleStateResidentHooksForWorkItem({
+        workItem: latest,
+        actorUserId: null
+      });
+    }
+    return result;
+  }
+
+  private async requireWorkItem(workItemId: string): Promise<WorkItemRecord> {
     const workItems = new WorkItemRepository(this.db);
-    const workItem = await workItems.findById(input.workItemId);
+    const workItem = await workItems.findById(workItemId);
     if (workItem === null) {
       throw new KeywordJobError("work_item_not_found", "Keyword generation could not find the work item.", false);
     }
+    return workItem;
+  }
 
+  private async assignKeywordTags(input: {
+    jobId: string;
+    workItem: WorkItemRecord;
+    sourceMemoId: string | null;
+    updateSource: "keyword_generation" | "nominate_tags";
+    hookId?: string;
+  }): Promise<KeywordGenerationResult> {
     const sourceMemo =
       input.sourceMemoId === null ? null : await new SourceMemoRepository(this.db).findById(input.sourceMemoId);
     const text = [
-      workItem.title,
-      workItem.body,
+      input.workItem.title,
+      input.workItem.body,
       sourceMemo?.extractedText ?? "",
       sourceMemo?.currentTranscriptText ?? ""
     ]
       .join("\n")
       .trim();
-    const corpusTexts = await loadKeywordCorpus(this.db, workItem.id);
+    const corpusTexts = await loadKeywordCorpus(this.db, input.workItem.id);
     const keywords = extractKeywords(text, { corpusTexts });
     const assignments: TagAssignmentInput[] = keywords.map((keyword) => ({
       name: keyword.name,
@@ -49,23 +111,24 @@ export class KeywordService {
     }));
 
     const assignedTags = await new TagRepository(this.db).setForWorkItem({
-      workItemId: workItem.id,
+      workItemId: input.workItem.id,
       tags: assignments,
       actorUserId: null
     });
     await refreshKeywordStatistics(this.db);
-    await refreshKeywordCoOccurrences(this.db, workItem.id);
+    await refreshKeywordCoOccurrences(this.db, input.workItem.id);
 
     await new AuditRepository(this.db).record({
       eventName: "work_item.updated",
       actor: null,
       subjectType: "work_item",
-      subjectId: workItem.id,
+      subjectId: input.workItem.id,
       requestId: input.jobId,
-      sourceMemoId: workItem.sourceMemoId,
-      workItemId: workItem.id,
+      sourceMemoId: input.workItem.sourceMemoId,
+      workItemId: input.workItem.id,
       metadata: {
-        updateSource: "keyword_generation",
+        updateSource: input.updateSource,
+        hookId: input.hookId,
         tags: assignedTags,
         groupingPaths: buildGroupingPaths(keywords)
       },
@@ -73,7 +136,7 @@ export class KeywordService {
     });
 
     return {
-      workItemId: workItem.id,
+      workItemId: input.workItem.id,
       tags: keywords,
       groupingPaths: buildGroupingPaths(keywords)
     };

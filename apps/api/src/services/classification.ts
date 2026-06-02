@@ -8,6 +8,7 @@ import { SourceMemoRepository } from "../repositories/source-memos.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { WorkflowRepository } from "../repositories/workflows.js";
 import { extractDeterministicMemoMetadata } from "./metadata-extraction.js";
+import { WorkflowHookScheduler } from "./workflow-hooks.js";
 import { WorkflowRuntimeAdapter, type WorkflowHook } from "./workflow-runtime.js";
 
 export const DEFAULT_PROJECT_CLASSIFICATION_CONFIDENCE_THRESHOLD = 0.65;
@@ -17,6 +18,7 @@ export interface InitialStateHookResult {
   workItem: WorkItemRecord;
   promoted: boolean;
   classification: ClassificationResult | null;
+  scheduledJobIds: string[];
 }
 
 interface ClassificationResult {
@@ -44,13 +46,15 @@ export class ClassificationService {
       return {
         workItem: input.workItem,
         promoted: false,
-        classification: null
+        classification: null,
+        scheduledJobIds: []
       };
     }
 
     let current = input.workItem;
     let classification: ClassificationResult | null = null;
     let promoted = false;
+    const scheduledJobIds: string[] = [];
     for (const hook of this.runtime.getStateEntryHooks(active.bundle, current.workflowState)) {
       if (hook.handlerKey !== "classify_item") {
         continue;
@@ -67,9 +71,10 @@ export class ClassificationService {
       current = result.workItem;
       classification = result.classification;
       promoted = promoted || result.promoted;
+      scheduledJobIds.push(...result.scheduledJobIds);
     }
 
-    return { workItem: current, promoted, classification };
+    return { workItem: current, promoted, classification, scheduledJobIds };
   }
 
   async runClassifyItemForWorkItem(input: {
@@ -108,7 +113,8 @@ export class ClassificationService {
       return {
         workItem: current,
         promoted: false,
-        classification: null
+        classification: null,
+        scheduledJobIds: []
       };
     }
 
@@ -188,7 +194,8 @@ export class ClassificationService {
       return {
         workItem: classified,
         promoted: false,
-        classification: { status, projectSuggestion, threshold }
+        classification: { status, projectSuggestion, threshold },
+        scheduledJobIds: []
       };
     }
 
@@ -201,7 +208,8 @@ export class ClassificationService {
       return {
         workItem: classified,
         promoted: false,
-        classification: { status: "action_unavailable", projectSuggestion, threshold }
+        classification: { status: "action_unavailable", projectSuggestion, threshold },
+        scheduledJobIds: []
       };
     }
 
@@ -215,7 +223,8 @@ export class ClassificationService {
       return {
         workItem: classified,
         promoted: false,
-        classification: { status, projectSuggestion, threshold }
+        classification: { status, projectSuggestion, threshold },
+        scheduledJobIds: []
       };
     }
 
@@ -242,10 +251,16 @@ export class ClassificationService {
       redactionApplied: true
     });
 
+    const scheduledJobIds = await new WorkflowHookScheduler(this.client).scheduleStateResidentHooksForWorkItem({
+      workItem: promoted,
+      actorUserId: input.actor?.id ?? null
+    });
+
     return {
       workItem: promoted,
       promoted: true,
-      classification: { status: "promoted", projectSuggestion, threshold }
+      classification: { status: "promoted", projectSuggestion, threshold },
+      scheduledJobIds
     };
   }
 }

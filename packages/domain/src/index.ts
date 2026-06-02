@@ -66,14 +66,16 @@ export const TERMINAL_WORK_ITEM_STATES = [] as const satisfies readonly WorkItem
 
 export const SUPPORTED_WORKFLOW_HOOK_HANDLERS = [
   "create_accepted_snapshot",
-  "classify_item"
+  "classify_item",
+  "nominate_tags"
 ] as const;
 
 export type SupportedWorkflowHookHandler = (typeof SUPPORTED_WORKFLOW_HOOK_HANDLERS)[number];
 
 export const SUPPORTED_WORKFLOW_APP_CAPABILITIES = [
   "memo-capture.workflow-hooks.create_accepted_snapshot.v1",
-  "memo-capture.workflow-hooks.classify_item.v1"
+  "memo-capture.workflow-hooks.classify_item.v1",
+  "memo-capture.workflow-hooks.nominate_tags.v1"
 ] as const;
 
 export type SupportedWorkflowAppCapability =
@@ -103,6 +105,7 @@ export const PROCESSING_JOB_KINDS = [
   "transcribe_audio",
   "extract_memo_metadata",
   "generate_keywords",
+  "nominate_tags",
   "expand_work_item",
   "generate_export_batch"
 ] as const;

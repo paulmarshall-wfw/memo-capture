@@ -4,97 +4,107 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-02T06:42:15Z
+- Created timestamp UTC: 2026-06-02T11:33:57Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: watched-folder contributor attribution, dense watched-folder Settings layout, verification, native app rebuild, completed-task ledger update.
+- Session scope: move generated tag nomination to workflow-owned `nominate_tags`, verify, rebuild native Tauri `.app`, update continuity docs.
 
 ### Checkpoint Status
 
-- Git HEAD: `955f0d1`
+- Git HEAD: `50dd7b5`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/src/repositories/catalog.ts`
-  - `apps/api/src/repositories/import-upload-sessions.ts`
-  - `apps/api/src/repositories/source-memos.ts`
+  - `apps/api/src/repositories/jobs.ts`
+  - `apps/api/src/services/ai-expansion.ts`
+  - `apps/api/src/services/classification.ts`
+  - `apps/api/src/services/form-memos.ts`
   - `apps/api/src/services/imports.ts`
+  - `apps/api/src/services/keywords.ts`
+  - `apps/api/src/services/metadata-extraction.ts`
   - `apps/api/src/services/transcription.ts`
+  - `apps/api/src/services/workflow-runtime.ts`
+  - `apps/api/src/services/workflows.ts`
   - `apps/api/tests/backend-foundation.test.ts`
-  - `apps/desktop/src/App.tsx`
-  - `apps/desktop/src/styles.css`
-  - `apps/desktop/tests/app-copy.test.ts`
+  - `apps/api/tests/workflow-runtime.test.ts`
+  - `apps/worker/src/index.ts`
+  - `apps/worker/tests/job-kinds.test.ts`
   - `docs/completed-tasks.md`
-  - `docs/specs/ingestion-and-artifacts.md`
-  - `docs/specs/settings-and-audit.md`
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/processing-jobs-and-diagnostics.md`
+  - `docs/specs/workflow-runtime-integration.md`
   - `handoff.md`
+  - `packages/domain/src/index.ts`
+  - `packages/domain/tests/states.test.ts`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `apps/api/db/migrations/0019_watched_folder_contributor_key.sql`
-  - `docs/plans/Watched-Folder_Contributor_Attribution.md`
+  - `apps/api/src/services/workflow-hooks.ts`
+  - `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
   - `handoff.md`
   - `docs/completed-tasks.md`
-  - `docs/specs/ingestion-and-artifacts.md`
-  - `docs/specs/settings-and-audit.md`
-  - `docs/plans/Watched-Folder_Contributor_Attribution.md`
+  - `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/processing-jobs-and-diagnostics.md`
+  - `docs/specs/workflow-runtime-integration.md`
 - Last verification:
-  - command: `npm run typecheck`; `npm test`; `npm run build`; `npm run verify`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`; `git diff --check`; `curl -sSI http://127.0.0.1:5173/`
+  - command: `npm run typecheck`; `npm test`; `npm run verify`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`; `git diff --check`; `python3 -m json.tool docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`
   - result: passed
-  - timestamp UTC: 2026-06-02T06:39Z
+  - timestamp UTC: 2026-06-02T11:33Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD`, dirty/untracked file list, completed-task ledger entry, verification commands, Vite availability check, and native `.app` rebuild are recorded here. This repo lacks `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
-- Next checkpoint action: apply migration `0019` to the target local database, then native-smoke a watched-folder import with contributor attribution; commit only if explicitly requested.
+- Safe-to-continue basis: current `HEAD`, dirty/untracked file list, completed-task ledger entry, verification results, and native `.app` rebuild are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
+- Next checkpoint action: import/activate workflow `0.2.5` in local app runtime and smoke-test scheduled tag nomination; commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-Watched-folder contributor attribution is implemented in the dirty tree. Each desktop-local watched-folder row now has a `Contributor name` field, and watched imports pass that value to the backend upload-session contract as `contributorText`.
+Generated tag nomination is now workflow-owned. Automatic tag assignment no longer runs directly during watched text import, post-transcription audio handling, or metadata extraction. Work items entering `memo` schedule the active workflow's `while_in_state` hook with handler key `nominate_tags`; the worker assigns generated tags only when that scheduled job becomes due and the item is still in a state whose active workflow defines that hook.
 
-The backend now maintains a hidden normalized `contributors.contributor_key` for watched-folder attribution. The visible contributor name remains the user-facing value, while the normalized key is internal and derived by trimming, lowercasing, and removing non-alphanumeric characters. Watched import finalization finds or creates a contributor by that key, stores contributor text and UUID linkage on source memos, and stores the same contributor data on created work items. Audio imports carry the contributor on the source memo and post-transcription/recoverable audio work items inherit it.
+The app supports `nominate_tags` as a workflow hook handler, app capability, and processing job kind. The workflow runtime projection preserves hook phase, target state, handler key, and schedule. The schedule interval is read from the active workflow bundle, not hardcoded.
 
-The Settings watched-folder section was tightened into a dense table-like grid with a compact status strip, contributor field, watched path, archive path, recursive/enabled toggles, stability field, and icon actions.
+Native app rebuild completed. The rebuilt bundle is `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`, timestamp `Jun 2 21:12 2026`, size `8.4M`.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: preserve a current handoff for the completed watched-folder contributor attribution implementation so the next session can apply the migration and smoke-test the native import path without reopening settled design choices.
+Immediate goal: continue from the completed hook-driven tag nomination implementation and validate it against the active/local workflow bundle.
 
-Definition of done for this workstream:
+Definition of done for the current workstream:
 
-- Each watched folder has one contributor name field.
-- Imported files use the watched folder contributor name as work-item contributor text.
-- A hidden normalized contributor key links punctuation/case variants to one contributor record.
-- Existing UUID `contributor_id` columns remain canonical links.
-- Audio-created work items inherit contributor data from their source memo.
-- Watched-folder Settings information is denser and still accessible.
-- Automated verification and native `.app` rebuild pass.
+- Workflow bundle `0.2.5` with `while_in_state` / `nominate_tags` can be imported and activated.
+- Imports and manual transitions into `memo` schedule tag nomination from the workflow hook.
+- Generated tags are assigned only by due `nominate_tags` jobs while the work item remains in the hook target state.
+- Native app can run from the rebuilt `.app` bundle.
+- Any remaining dirty-tree changes are reviewed and committed only when explicitly requested.
 
 ## 4. Current State
 
 ### Working
 
-- `apps/api/db/migrations/0019_watched_folder_contributor_key.sql` adds `contributors.contributor_key`, backfills it from display names, creates a partial unique index, and adds `import_upload_sessions.contributor_text`.
-- `apps/api/src/repositories/catalog.ts` normalizes contributor keys and upserts watched-folder contributors without exposing the key in the UI/API response.
-- `apps/api/src/repositories/import-upload-sessions.ts` persists contributor text through upload sessions.
-- `apps/api/src/services/imports.ts` parses optional `contributorText`, resolves contributors during watched import finalization, and writes contributor text/ID to source memos and work items.
-- `apps/api/src/repositories/source-memos.ts` now reads source memo contributor text/ID so downstream services can inherit it.
-- `apps/api/src/services/transcription.ts` passes source memo contributor data into audio recovery/transcription-created work items.
-- `apps/desktop/src/App.tsx` adds `contributorName` to watched-folder settings, defaults old localStorage rows to `""`, and sends trimmed contributor text during upload-session creation.
-- `apps/desktop/src/App.tsx` and `apps/desktop/src/styles.css` render watched folders as a dense table-like grid with compact metadata.
-- `apps/api/tests/backend-foundation.test.ts` covers text contributor attribution, empty contributor names, punctuation/case normalization reuse, audio source memo attribution, and audio work-item inheritance.
-- `apps/desktop/tests/app-copy.test.ts` asserts the contributor field and dense watched-folder UI hooks.
-- Specs updated:
-  - `docs/specs/ingestion-and-artifacts.md`
-  - `docs/specs/settings-and-audit.md`
-- Native app bundle rebuilt at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+- `packages/domain/src/index.ts` now includes `nominate_tags` in supported workflow hook handlers, app capabilities, and processing job kinds.
+- `apps/api/src/services/workflow-runtime.ts` projects state-resident hooks and preserves schedule metadata.
+- `apps/api/src/services/workflow-hooks.ts` schedules delayed `nominate_tags` jobs from the active workflow bundle and cancels pending nomination jobs on state exit.
+- `apps/api/src/services/classification.ts`, `workflows.ts`, `form-memos.ts`, and `ai-expansion.ts` schedule memo-state hooks when work items enter `memo`.
+- `apps/api/src/services/imports.ts` no longer creates eager `generate_keywords` jobs for watched text imports.
+- `apps/api/src/services/transcription.ts` no longer creates eager keyword jobs after audio transcription.
+- `apps/api/src/services/metadata-extraction.ts` no longer persists generated tags.
+- `apps/api/src/services/keywords.ts` keeps the existing keyword extraction/assignment logic and exposes it through guarded `runNominateTagsJob`.
+- `apps/worker/src/index.ts` claims `nominate_tags`; legacy `generate_keywords` jobs route through the same guarded nomination path.
+- Tests cover workflow `nominate_tags` validation/projection, memo-entry scheduling, ambiguous review no-scheduling, manual action scheduling, nomination assignment, state-exit skip/cancel, and worker job-kind support.
+- Docs updated:
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/processing-jobs-and-diagnostics.md`
+  - `docs/specs/workflow-runtime-integration.md`
+  - `docs/completed-tasks.md`
+- Native Tauri app rebuilt successfully.
 
 ### Partially Working
 
-- The feature is verified by automated tests/build and the app bundle is rebuilt, but migration `0019` has not yet been applied to a live local Postgres database in this session.
+- The code path is verified by automated tests/build, but local runtime activation of `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json` has not yet been smoke-tested in the app.
+- The untracked workflow bundle `0.2.5` defines `nominate_tags` on `memo` with `intervalMs: 10000`. Treat that value as workflow data, not app code.
 
 ### Not Working Yet
 
@@ -102,8 +112,9 @@ Definition of done for this workstream:
 
 ### Not Yet Verified
 
-- Live native watched-folder import with a configured contributor name after applying migration `0019`.
-- Visual screenshot automation of the dense watched-folder UI; Playwright was unavailable in the Node REPL environment. A Vite availability check returned `HTTP 200 OK`.
+- Live import/activation of workflow bundle `0.2.5` through the Operations UI or API.
+- Native app smoke test proving a work item entering `memo` schedules `nominate_tags` and receives generated tags after the due interval.
+- Browser/native screenshot verification for this backend-focused change was not run.
 
 ## 5. Active Constraints
 
@@ -111,13 +122,13 @@ Definition of done for this workstream:
 - Do not commit, tag, release, publish, delete files, or install dependencies unless explicitly requested.
 - Never use `latest`; always use numbered versions.
 - Apply `engineering-project-standard` for repo maintenance and verification work.
-- Apply `web-app-design-standard` for browser-rendered/Tauri UI changes.
 - Use Chrome for browser automation unless the user asks otherwise.
 - For Memo Capture user-facing/native-testable changes, rebuild the runnable `.app`; do not create a DMG unless explicitly requested.
 - Desktop clients must not connect directly to Postgres or object storage.
-- Backend settings and canonical contributor records are backend-owned; watched-folder paths, archive paths, and watched-folder contributor names are desktop-local settings.
-- V1 contributor attribution is memo metadata, separate from authenticated user identity.
-- The normalized contributor key is internal only and must not be displayed in the UI.
+- Workflow actions, buckets, reopen behavior, and lifecycle hooks should be driven by the active workflow definition wherever possible.
+- AI/code-consumed generated output must remain structured and validated before storage.
+- Tag editing remains flat in V1; generated tags and user tags should not create hierarchy/provenance UI.
+- `nominate_tags` timing is owned by workflow schedule data. Do not hardcode the interval in app code.
 
 ## 6. Commands and Verification
 
@@ -126,54 +137,52 @@ Passed in this slice:
 ```bash
 npm run typecheck
 npm test
-npm run build
 npm run verify
 npm run tauri:build -w @memo-capture/desktop -- --bundles app
 git diff --check
-curl -sSI http://127.0.0.1:5173/
+python3 -m json.tool docs/design/memo-capture-0.2.5-workflow-definition-bundled.json
 ```
 
 Verification notes:
 
-- Initial sandboxed `npm test` failed only because protected-route tests could not bind `127.0.0.1` (`listen EPERM`); the approved unsandboxed rerun passed.
-- Initial sandboxed `npm run dev:desktop` failed with `listen EPERM`; the approved unsandboxed Vite run served `http://127.0.0.1:5173/` and `curl -sSI` returned `HTTP/1.1 200 OK`.
-- Playwright was unavailable in the Node REPL environment, so no automated screenshot was captured.
-- `npm run verify` passed and included doctor, typecheck, tests, and build.
-- `npm run tauri:build -w @memo-capture/desktop -- --bundles app` rebuilt the runnable `Memo Capture.app`.
+- Sandboxed `npm test` initially failed only because protected-route tests could not bind `127.0.0.1` (`listen EPERM`); the approved unsandboxed rerun passed.
+- `npm run verify` passed outside the sandbox and included doctor, typecheck, tests, and build.
+- Tauri build produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+- Bundle check after build: `ls -ld` timestamp `Jun 2 21:12`; `du -sh` size `8.4M`.
+- `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json` is valid JSON.
 - `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are absent in this repo; handoff freshness was checked manually.
 
 Useful next commands:
 
 ```bash
-npm run db:migrate
-npm run tauri:dev
 git status --short
 git diff --check
+npm run dev:api
+npm run dev:desktop
+npm run dev:worker
+npm run tauri:dev
 ```
 
 ## 7. Files to Open First
 
 - `AGENTS.md`: repo-local constraints and verification expectations.
-- `docs/plans/Watched-Folder_Contributor_Attribution.md`: implementation plan for this workstream.
-- `apps/api/db/migrations/0019_watched_folder_contributor_key.sql`: pending schema change to apply.
-- `apps/api/src/repositories/catalog.ts`: contributor key normalization and watched-folder contributor upsert.
-- `apps/api/src/services/imports.ts`: upload-session parsing and watched import contributor attribution.
-- `apps/api/src/services/transcription.ts`: audio work-item contributor inheritance.
-- `apps/desktop/src/App.tsx`: watched-folder contributor field, upload payload, and dense Settings markup.
-- `apps/desktop/src/styles.css`: dense watched-folder layout and mobile fallback.
+- `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`: workflow bundle with scheduled `nominate_tags`.
+- `apps/api/src/services/workflow-hooks.ts`: scheduling/cancel behavior for state-resident hooks.
+- `apps/api/src/services/workflow-runtime.ts`: hook projection and schedule metadata.
+- `apps/api/src/services/keywords.ts`: guarded `nominate_tags` execution and existing tag assignment logic.
+- `apps/api/src/services/classification.ts`: classify-item promotion and memo hook scheduling.
+- `apps/api/src/services/workflows.ts`: manual workflow action entry/exit scheduling and cancellation.
+- `apps/api/tests/backend-foundation.test.ts`: behavioral coverage for scheduling, skipping, cancellation, and nomination.
 - `docs/completed-tasks.md`: append-only completed work ledger.
 
 ## 8. Next Actions
 
 Next:
 
-- Run `npm run db:migrate` against the intended local Postgres database to apply `0019_watched_folder_contributor_key.sql`.
-- Launch the native app and smoke-test:
-  - add or edit a watched folder with a contributor name
-  - import a watched text file and confirm the resulting work item shows that contributor name
-  - import/recover an audio file and confirm the audio-created work item inherits the same contributor
-  - confirm punctuation/case variants reuse one contributor record internally
-- Review the dirty diff, including the untracked plan file.
+- Review the dirty diff and untracked files.
+- Import/stage/activate `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json` in a local runtime.
+- Launch API, worker, and native app; verify a work item entering `memo` schedules `nominate_tags` and receives generated tags after the workflow-defined due interval.
+- Confirm a work item moved out of `memo` before the due time does not receive generated tags.
 - Commit only if explicitly requested.
 
 Blocked:
@@ -182,8 +191,8 @@ Blocked:
 
 Later:
 
-- Add visual/browser screenshot coverage once a browser automation path with Playwright or Chrome tooling is available in the environment.
+- Consider whether old queued `generate_keywords` jobs need an operator note; current worker routes legacy jobs through the same guarded nomination path.
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Review `AGENTS.md`, `docs/plans/Watched-Folder_Contributor_Attribution.md`, `apps/api/db/migrations/0019_watched_folder_contributor_key.sql`, `apps/api/src/repositories/catalog.ts`, `apps/api/src/services/imports.ts`, `apps/api/src/services/transcription.ts`, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, and `docs/completed-tasks.md` first. Treat watched-folder contributor attribution and the dense watched-folder Settings layout as implemented and verified in the dirty tree at HEAD `955f0d1`. Continue by applying migration `0019`, smoke-testing the native import path with configured contributor names, and distinguishing confirmed runtime behavior from any new recommendations.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Review `AGENTS.md`, `docs/design/memo-capture-0.2.5-workflow-definition-bundled.json`, `apps/api/src/services/workflow-hooks.ts`, `apps/api/src/services/workflow-runtime.ts`, `apps/api/src/services/keywords.ts`, `apps/api/src/services/classification.ts`, `apps/api/src/services/workflows.ts`, `apps/api/tests/backend-foundation.test.ts`, and `docs/completed-tasks.md` first. Treat hook-driven `nominate_tags` scheduling as implemented and verified in the dirty tree at HEAD `50dd7b5`. Continue by validating local workflow `0.2.5` activation and native/worker runtime behavior, and distinguish confirmed runtime behavior from any new recommendations.

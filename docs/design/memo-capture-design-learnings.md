@@ -54,7 +54,7 @@ Watched-folder imports always create source memo provenance first. Text imports 
 
 Watched-folder source memo provenance preserves the source file's filesystem creation timestamp as the original memo time, falling back to filesystem modified time only when creation time is unavailable. Work queue rows and the work item detail header should show this original file time rather than workflow processing timestamps; processing dates belong in audit, diagnostics, and logs.
 
-Automatic extraction should produce candidate project, title, body, contributor, tags, and derived grouping metadata with confidence metadata. The shared `classify_item` hook promotes an imported `needs_review` item through workflow action `review.memo` only when exactly one active project name matches the item text and that match meets the backend project-confidence threshold. Low-confidence, ambiguous, or incomplete imports remain in `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block manual promotion.
+Automatic extraction should produce candidate project, title, body, and contributor metadata with confidence metadata. The shared `classify_item` hook promotes an imported `needs_review` item through workflow action `review.memo` only when exactly one active project name matches the item text and that match meets the backend project-confidence threshold. Low-confidence, ambiguous, or incomplete imports remain in `needs_review`. Once a signed-in user supplies required fields, confidence scores should not block manual promotion. Generated tags are nominated only after a work item reaches `memo` and the active workflow's `nominate_tags` `while_in_state` hook is due.
 
 Promotion from `needs_review` to `memo` requires:
 
@@ -274,6 +274,7 @@ V1 job kinds:
 - `transcribe_audio`
 - `extract_memo_metadata`
 - `generate_keywords`
+- `nominate_tags`
 - `expand_work_item`
 - `generate_export_batch`
 

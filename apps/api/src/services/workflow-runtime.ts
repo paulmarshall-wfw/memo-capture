@@ -51,7 +51,15 @@ export interface WorkflowHook {
   phase: string;
   targetType: string;
   targetId: string;
+  targetState: string | null;
   handlerKey: string;
+  schedule: WorkflowHookSchedule | null;
+}
+
+export interface WorkflowHookSchedule {
+  trigger: "after_duration" | "every_interval";
+  delayMs?: number;
+  intervalMs?: number;
 }
 
 interface WorkflowActionDefinition {
@@ -241,6 +249,12 @@ export class WorkflowRuntimeAdapter {
       (hook) => hook.phase === "on_state_entry" && hook.targetType === "state" && hook.targetId === workflowState
     );
   }
+
+  getStateResidentHooks(bundle: unknown, workflowState: string): WorkflowHook[] {
+    return (projectWorkflowBundle(bundle)?.hooks ?? []).filter(
+      (hook) => hook.phase === "while_in_state" && hook.targetType === "state" && hook.targetId === workflowState
+    );
+  }
 }
 
 export function hashBundle(bundle: unknown): string {
@@ -353,8 +367,40 @@ function projectWorkflowHooks(workflow: WorkflowDefinition): WorkflowHook[] {
       return [];
     }
 
-    return [{ id, phase, targetType, targetId, handlerKey }];
+    return [{
+      id,
+      phase,
+      targetType,
+      targetId,
+      targetState: targetType === "state" ? targetId : null,
+      handlerKey,
+      schedule: readWorkflowHookSchedule(hook)
+    }];
   });
+}
+
+function readWorkflowHookSchedule(hook: unknown): WorkflowHookSchedule | null {
+  if (!isRecord(hook) || !isRecord(hook.schedule)) {
+    return null;
+  }
+  const trigger = hook.schedule.trigger;
+  if (trigger === "after_duration" && isPositiveInteger(hook.schedule.delayMs)) {
+    return {
+      trigger,
+      delayMs: hook.schedule.delayMs
+    };
+  }
+  if (trigger === "every_interval" && isPositiveInteger(hook.schedule.intervalMs)) {
+    return {
+      trigger,
+      intervalMs: hook.schedule.intervalMs
+    };
+  }
+  return null;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function readStringArray(

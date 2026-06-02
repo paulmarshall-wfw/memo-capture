@@ -7,6 +7,7 @@ import { TagRepository } from "../repositories/tags.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
+import { WorkflowHookScheduler } from "./workflow-hooks.js";
 
 export interface FormMemoRequest {
   projectId: string;
@@ -77,6 +78,10 @@ async function createFormMemoWithClient(
     actorUserId: actor.id
   });
   const taggedWorkItem = (await workItems.findById(workItem.id)) ?? { ...workItem, tags: assignedTags };
+  await new WorkflowHookScheduler(client).scheduleStateResidentHooksForWorkItem({
+    workItem: taggedWorkItem,
+    actorUserId: actor.id
+  });
 
   await importEvents.create({
     sourceMemoId: sourceMemo.id,

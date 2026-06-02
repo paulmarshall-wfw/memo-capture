@@ -10,6 +10,7 @@ export interface ProcessingJobInput {
   exportBatchId?: string | null;
   maxAttempts?: number;
   initiatedBy?: string | null;
+  runAfter?: Date | string | null;
 }
 
 export interface ProcessingJobFilters {
@@ -122,7 +123,7 @@ export class ProcessingJobRepository {
          created_at,
          run_after
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())`,
+       values ($1, $2, $3, $4, $5, $6, $7, $8, now(), coalesce($9::timestamptz, now()))`,
       [
         id,
         input.jobKind,
@@ -131,10 +132,35 @@ export class ProcessingJobRepository {
         input.workItemId ?? null,
         input.exportBatchId ?? null,
         input.maxAttempts ?? 1,
-        input.initiatedBy ?? null
+        input.initiatedBy ?? null,
+        input.runAfter ?? null
       ]
     );
     return { id };
+  }
+
+  async cancelPendingWorkItemJobs(input: {
+    workItemId: string;
+    jobKind: ProcessingJobKind;
+  }): Promise<number> {
+    const result = await this.db.query<{ cancelled_count: number | string }>(
+      `with cancelled as (
+         update processing_jobs
+         set
+           status = 'cancelled',
+           completed_at = now(),
+           claim_expires_at = null
+         where work_item_id = $1
+           and job_kind = $2
+           and status in ('queued', 'retry_scheduled', 'claimed')
+         returning id
+       )
+       select count(*) as cancelled_count
+       from cancelled`,
+      [input.workItemId, input.jobKind]
+    );
+    const count = result.rows[0]?.cancelled_count ?? 0;
+    return typeof count === "number" ? count : Number.parseInt(count, 10);
   }
 
   async list(filters: ProcessingJobFilters = {}): Promise<ProcessingJobRecord[]> {
