@@ -15,7 +15,8 @@
   "dependencies": {
     "@memo-capture/config": "0.1.0",
     "@memo-capture/domain": "0.1.0",
-    "pg": "8.13.1"
+    "pg": "8.13.1",
+    "state-workflow-runtime": "file:../../../state-workflow-runtime"
   },
   "devDependencies": {
     "@types/pg": "8.11.10"

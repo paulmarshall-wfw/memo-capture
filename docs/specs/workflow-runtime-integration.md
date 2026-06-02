@@ -53,7 +53,7 @@ Current supported capability:
 The app also validates hook `handlerKey` values. V1 supports:
 
 ```json
-["create_accepted_snapshot"]
+["create_accepted_snapshot", "classify_item"]
 ```
 
 ## Runtime Capabilities
@@ -61,13 +61,17 @@ The app also validates hook `handlerKey` values. V1 supports:
 The backend workflow adapter must provide these operations:
 
 - load active definition
-- validate bundle structure
+- validate bundle structure with `state-workflow-runtime` package normalization
 - validate app compatibility
 - resolve bucket metadata
 - get item state
 - get allowed actions for caller and work item
 - execute action
 - return transition result and side-effect instructions
+
+The adapter accepts both editor-exported top-level workflow bundles and normalized runtime bundles with
+`workflowDefinition` plus `embeddedStateMachineDefinition`, using the numbered runtime package family that supports the
+bundle schema version. App-owned capability, migration, and hook-handler checks remain Memo Capture responsibility.
 
 Adapter interface shape:
 

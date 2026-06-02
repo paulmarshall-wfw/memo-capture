@@ -277,21 +277,21 @@ export class WorkItemRepository {
     actorUserId: string | null;
   }): Promise<WorkItemRecord | null> {
     const result = await this.db.query<WorkItemRow>(
-      `update work_items
+       `update work_items
        set
-         title = $2,
-         body = $3,
-         contributor_text = coalesce(contributor_text, $4),
-         project_id = coalesce(project_id, $5),
+         title = $2::text,
+         body = $3::text,
+         contributor_text = coalesce(contributor_text, $4::text),
+         project_id = coalesce(project_id, $5::uuid),
          workflow_item_version = workflow_item_version + 1,
-         updated_by = coalesce($6, updated_by),
+         updated_by = coalesce($6::uuid, updated_by),
          updated_at = now()
        where id = $1
          and (
-           title is distinct from $2
-           or body is distinct from $3
-           or (contributor_text is null and $4 is not null)
-           or (project_id is null and $5 is not null)
+           title is distinct from $2::text
+           or body is distinct from $3::text
+           or (contributor_text is null and $4::text is not null)
+           or (project_id is null and $5::uuid is not null)
          )
        returning *`,
       [

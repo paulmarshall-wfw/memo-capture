@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 import {
+  importDefinitionBundle,
+  validateDefinitionBundle,
+  type DefinitionBundle,
+  type WorkflowBucketDefinition,
+  type WorkflowDefinition
+} from "state-workflow-runtime";
+import {
   INITIAL_WORK_ITEM_STATES,
   SUPPORTED_WORKFLOW_APP_CAPABILITIES,
   SUPPORTED_WORKFLOW_HOOK_HANDLERS,
@@ -58,6 +65,17 @@ interface WorkflowActionDefinition {
   confirmationRequired: boolean;
 }
 
+interface WorkflowBundleProjection {
+  workflowId: string;
+  workflowVersion: string;
+  stateMachineVersion: string;
+  requiredMigrationKey: string | null;
+  states: Set<string>;
+  actions: WorkflowActionDefinition[];
+  buckets: WorkflowBucket[];
+  hooks: WorkflowHook[];
+}
+
 export class WorkflowRuntimeAdapter {
   validateBundle(bundle: unknown): WorkflowValidationResult {
     const errors: WorkflowValidationIssue[] = [];
@@ -73,19 +91,8 @@ export class WorkflowRuntimeAdapter {
     }
 
     const contentHash = hashBundle(bundle);
-    const workflowId = readRequiredString(bundle, ["workflow_id", "workflowId", "id"], errors, "workflow_id");
-    const workflowVersion = readRequiredString(
-      bundle,
-      ["workflowVersion", "workflow_version", "version"],
-      errors,
-      "workflowVersion"
-    );
-    const stateMachineVersion = readStateMachineVersion(bundle, errors);
-    const requiredAppCapabilities = readStringArray(
-      bundle.requiredAppCapabilities ?? bundle.required_app_capabilities,
-      "requiredAppCapabilities",
-      errors
-    );
+    const projection = projectWorkflowBundle(bundle, errors);
+    const requiredAppCapabilities = readRequiredAppCapabilities(bundle, errors);
 
     for (const capability of requiredAppCapabilities) {
       if (!(SUPPORTED_WORKFLOW_APP_CAPABILITIES as readonly string[]).includes(capability)) {
@@ -99,7 +106,7 @@ export class WorkflowRuntimeAdapter {
       }
     }
 
-    if (bundle.requiresAppCodeMigration === true) {
+    if (requiresAppCodeMigration(bundle) || (projection?.requiredMigrationKey ?? null) !== null) {
       errors.push(
         issue(
           "app_code_migration_required",
@@ -109,7 +116,7 @@ export class WorkflowRuntimeAdapter {
       );
     }
 
-    const requiredMigrations = readOptionalUnknownArray(bundle.requiredAppMigrations);
+    const requiredMigrations = readRequiredAppMigrations(bundle);
     if (requiredMigrations.length > 0) {
       errors.push(
         issue(
@@ -120,56 +127,60 @@ export class WorkflowRuntimeAdapter {
       );
     }
 
-    const stateIds = readStateIds(bundle, errors);
-    for (const state of WORK_ITEM_STATES) {
-      if (!stateIds.has(state)) {
-        errors.push(issue("missing_state", `Workflow bundle must define state ${state}.`, "states"));
+    if (projection !== null) {
+      for (const state of WORK_ITEM_STATES) {
+        if (!projection.states.has(state)) {
+          errors.push(issue("missing_state", `Workflow bundle must define state ${state}.`, "states"));
+        }
       }
-    }
 
-    for (const state of INITIAL_WORK_ITEM_STATES) {
-      if (!stateIds.has(state)) {
-        errors.push(issue("missing_initial_state", `Workflow bundle must support initial state ${state}.`, "states"));
+      for (const state of INITIAL_WORK_ITEM_STATES) {
+        if (!projection.states.has(state)) {
+          errors.push(issue("missing_initial_state", `Workflow bundle must support initial state ${state}.`, "states"));
+        }
       }
-    }
 
-    const actions = readActions(bundle, stateIds, errors);
-    if (actions.length === 0) {
-      warnings.push(issue("no_user_actions", "Workflow bundle has no valid user-triggered actions.", "actions"));
-    }
+      if (projection.actions.length === 0) {
+        warnings.push(issue("no_user_actions", "Workflow bundle has no valid user-triggered actions.", "actions"));
+      }
 
-    const buckets = readBuckets(bundle, stateIds, errors);
-    if (buckets.length === 0) {
-      errors.push(issue("missing_buckets", "Workflow bundle must define at least one bucket.", "buckets"));
-    }
+      if (projection.buckets.length === 0) {
+        errors.push(issue("missing_buckets", "Workflow bundle must define at least one bucket.", "buckets"));
+      }
 
-    const hooks = readHooks(bundle, errors);
-    if (
-      actions.some((action) => action.to === "accepted") &&
-      !hooks.some(
-        (hook) =>
-          hook.phase === "on_state_entry" &&
-          hook.targetType === "state" &&
-          hook.targetId === "accepted" &&
-          hook.handlerKey === "create_accepted_snapshot"
-      )
-    ) {
-      errors.push(
-        issue(
-          "missing_accepted_snapshot_hook",
-          "Workflow actions that enter accepted must define the create_accepted_snapshot state-entry hook.",
-          "hooks"
+      for (const hook of projection.hooks) {
+        if (!(SUPPORTED_WORKFLOW_HOOK_HANDLERS as readonly string[]).includes(hook.handlerKey)) {
+          errors.push(issue("unsupported_hook_handler", `Unsupported workflow hook handler ${hook.handlerKey}.`, "hooks"));
+        }
+      }
+
+      if (
+        projection.actions.some((action) => action.to === "accepted") &&
+        !projection.hooks.some(
+          (hook) =>
+            hook.phase === "on_state_entry" &&
+            hook.targetType === "state" &&
+            hook.targetId === "accepted" &&
+            hook.handlerKey === "create_accepted_snapshot"
         )
-      );
+      ) {
+        errors.push(
+          issue(
+            "missing_accepted_snapshot_hook",
+            "Workflow actions that enter accepted must define the create_accepted_snapshot state-entry hook.",
+            "hooks"
+          )
+        );
+      }
     }
 
     const identity =
-      workflowId === null || workflowVersion === null || stateMachineVersion === null
+      projection === null
         ? null
         : {
-            workflowId,
-            workflowVersion,
-            stateMachineVersion,
+            workflowId: projection.workflowId,
+            workflowVersion: projection.workflowVersion,
+            stateMachineVersion: projection.stateMachineVersion,
             contentHash,
             requiredAppCapabilities
           };
@@ -183,25 +194,11 @@ export class WorkflowRuntimeAdapter {
   }
 
   getBuckets(bundle: unknown): WorkflowBucket[] {
-    if (!isRecord(bundle) || !Array.isArray(bundle.buckets)) {
-      return [];
-    }
-
-    return bundle.buckets
-      .filter(isRecord)
-      .filter((bucket) => bucket.visible !== false)
-      .map((bucket, index) => ({
-        id: String(bucket.id ?? ""),
-        label: String(bucket.label ?? bucket.id ?? ""),
-        order: typeof bucket.order === "number" ? bucket.order : (index + 1) * 10,
-        states: readStringArrayLenient(bucket.states)
-      }))
-      .filter((bucket) => bucket.id !== "" && bucket.label !== "" && bucket.states.length > 0)
-      .sort((left, right) => left.order - right.order || left.label.localeCompare(right.label));
+    return projectWorkflowBundle(bundle)?.buckets ?? [];
   }
 
   getAllowedActions(bundle: unknown, workflowState: string): AllowedWorkflowAction[] {
-    return readActionDefinitions(bundle)
+    return (projectWorkflowBundle(bundle)?.actions ?? [])
       .filter((action) => action.trigger === "user" && action.from === workflowState)
       .map(({ id, label, visible, trigger, requiresInput, confirmationRequired }) => ({
         id,
@@ -214,7 +211,12 @@ export class WorkflowRuntimeAdapter {
   }
 
   executeAction(bundle: unknown, workflowState: string, actionId: string): WorkflowActionResult | null {
-    const action = readActionDefinitions(bundle).find(
+    const projection = projectWorkflowBundle(bundle);
+    if (projection === null) {
+      return null;
+    }
+
+    const action = projection.actions.find(
       (candidate) => candidate.id === actionId && candidate.trigger === "user" && candidate.from === workflowState
     );
     if (action === undefined) {
@@ -228,14 +230,14 @@ export class WorkflowRuntimeAdapter {
       newState: action.to,
       requiresInput: action.requiresInput,
       confirmationRequired: action.confirmationRequired,
-      entryHooks: readHookDefinitions(bundle).filter(
+      entryHooks: projection.hooks.filter(
         (hook) => hook.phase === "on_state_entry" && hook.targetType === "state" && hook.targetId === action.to
       )
     };
   }
 
   getStateEntryHooks(bundle: unknown, workflowState: string): WorkflowHook[] {
-    return readHookDefinitions(bundle).filter(
+    return (projectWorkflowBundle(bundle)?.hooks ?? []).filter(
       (hook) => hook.phase === "on_state_entry" && hook.targetType === "state" && hook.targetId === workflowState
     );
   }
@@ -245,143 +247,103 @@ export function hashBundle(bundle: unknown): string {
   return `sha256:${createHash("sha256").update(stableStringify(bundle)).digest("hex")}`;
 }
 
-function readStateMachineVersion(
-  bundle: Record<string, unknown>,
-  errors: WorkflowValidationIssue[]
-): string | null {
-  const stateMachine = isRecord(bundle.stateMachine) ? bundle.stateMachine : null;
-  const embedded = isRecord(bundle.embeddedStateMachineDefinition)
-    ? bundle.embeddedStateMachineDefinition
-    : null;
-  const value =
-    readFirstString(stateMachine, ["definitionVersion", "definition_version", "version"]) ??
-    readFirstString(embedded, ["definitionVersion", "definition_version", "version"]);
-
-  if (value === null) {
-    errors.push(issue("missing_state_machine_version", "stateMachine.definitionVersion is required.", "stateMachine"));
-  }
-
-  return value;
-}
-
-function readRequiredString(
-  record: Record<string, unknown>,
-  keys: string[],
-  errors: WorkflowValidationIssue[],
-  path: string
-): string | null {
-  const value = readFirstString(record, keys);
-  if (value === null) {
-    errors.push(issue("missing_required_field", `${path} is required.`, path));
-  }
-  return value;
-}
-
-function readStateIds(bundle: Record<string, unknown>, errors: WorkflowValidationIssue[]): Set<string> {
-  if (!Array.isArray(bundle.states)) {
-    errors.push(issue("missing_states", "states must be an array.", "states"));
-    return new Set();
-  }
-
-  const stateIds = new Set<string>();
-  for (const state of bundle.states) {
-    if (typeof state === "string" && state.trim() !== "") {
-      stateIds.add(state.trim());
-    } else if (isRecord(state) && typeof state.id === "string" && state.id.trim() !== "") {
-      stateIds.add(state.id.trim());
-    } else {
-      errors.push(issue("invalid_state", "Each state must be a string or object with an id.", "states"));
+function projectWorkflowBundle(bundle: unknown, errors?: WorkflowValidationIssue[]): WorkflowBundleProjection | null {
+  const validation = validateDefinitionBundle(bundle);
+  if (!validation.valid) {
+    if (errors !== undefined) {
+      for (const validationIssue of validation.issues) {
+        errors.push(issue("invalid_definition_bundle", validationIssue.message, validationIssue.path));
+      }
     }
+    return null;
   }
-  return stateIds;
+
+  let definitionBundle: DefinitionBundle;
+  try {
+    definitionBundle = importDefinitionBundle(bundle).bundle;
+  } catch (error) {
+    if (errors !== undefined) {
+      errors.push(
+        issue(
+          "invalid_definition_bundle",
+          error instanceof Error ? error.message : "Workflow bundle could not be imported."
+        )
+      );
+    }
+    return null;
+  }
+
+  const workflowRecord = readWorkflowRecord(bundle);
+  const workflow = definitionBundle.workflowDefinition;
+  const stateMachine = definitionBundle.embeddedStateMachineDefinition;
+
+  return {
+    workflowId: workflow.workflowId,
+    workflowVersion: workflow.workflowVersion,
+    stateMachineVersion: workflow.stateMachine.definitionVersion || stateMachine.definitionVersion || stateMachine.version,
+    requiredMigrationKey:
+      typeof workflow.requiredMigrationKey === "string" && workflow.requiredMigrationKey.trim() !== ""
+        ? workflow.requiredMigrationKey.trim()
+        : null,
+    states: new Set(workflow.states.map((state) => state.id).filter(Boolean)),
+    actions: projectWorkflowActions(workflow, workflowRecord),
+    buckets: projectWorkflowBuckets(workflow, workflowRecord),
+    hooks: projectWorkflowHooks(workflow)
+  };
 }
 
-function readActions(
-  bundle: Record<string, unknown>,
-  stateIds: Set<string>,
-  errors: WorkflowValidationIssue[]
+function projectWorkflowActions(
+  workflow: WorkflowDefinition,
+  workflowRecord: Record<string, unknown> | null
 ): WorkflowActionDefinition[] {
-  if (!Array.isArray(bundle.actions)) {
-    errors.push(issue("missing_actions", "actions must be an array.", "actions"));
-    return [];
-  }
+  const rawActionsById = readRawDefinitionsById(workflowRecord?.actions);
 
-  const actions = readActionDefinitions(bundle);
-  for (const action of actions) {
-    if (!stateIds.has(action.from)) {
-      errors.push(issue("unknown_action_from_state", `Action ${action.id} references unknown from state.`, "actions"));
-    }
-    if (!stateIds.has(action.to)) {
-      errors.push(issue("unknown_action_to_state", `Action ${action.id} references unknown to state.`, "actions"));
-    }
-  }
-  return actions;
-}
-
-function readActionDefinitions(bundle: unknown): WorkflowActionDefinition[] {
-  if (!isRecord(bundle) || !Array.isArray(bundle.actions)) {
-    return [];
-  }
-
-  return bundle.actions.filter(isRecord).flatMap((action) => {
-    const id = typeof action.id === "string" ? action.id.trim() : "";
+  return workflow.actions.flatMap((action) => {
+    const rawAction = rawActionsById.get(action.id) ?? null;
     const from = typeof action.from === "string" ? action.from.trim() : "";
-    const to = typeof action.to === "string" ? action.to.trim() : "";
-    if (id === "" || from === "" || to === "") {
+    const to = action.to.trim();
+    if (action.id.trim() === "" || from === "" || to === "") {
       return [];
     }
 
     return [
       {
-        id,
-        label: typeof action.label === "string" && action.label.trim() !== "" ? action.label.trim() : id,
+        id: action.id.trim(),
+        label: action.label.trim() !== "" ? action.label.trim() : action.id.trim(),
         from,
         to,
         trigger: action.trigger === "automatic" ? "automatic" : "user",
         visible: action.visible !== false,
-        requiresInput: action.requiresInput === true || action.inputSchema !== undefined,
-        confirmationRequired: action.confirmationRequired === true
+        requiresInput: rawAction?.requiresInput === true || rawAction?.inputSchema !== undefined,
+        confirmationRequired: rawAction?.confirmationRequired === true
       }
     ];
   });
 }
 
-function readBuckets(
-  bundle: Record<string, unknown>,
-  stateIds: Set<string>,
-  errors: WorkflowValidationIssue[]
+function projectWorkflowBuckets(
+  workflow: WorkflowDefinition,
+  workflowRecord: Record<string, unknown> | null
 ): WorkflowBucket[] {
-  if (!Array.isArray(bundle.buckets)) {
-    return [];
-  }
+  const rawBucketsById = readRawDefinitionsById(workflowRecord?.buckets);
 
-  const buckets = new WorkflowRuntimeAdapter().getBuckets(bundle);
-  for (const bucket of buckets) {
-    for (const state of bucket.states) {
-      if (!stateIds.has(state)) {
-        errors.push(issue("unknown_bucket_state", `Bucket ${bucket.id} references unknown state ${state}.`, "buckets"));
-      }
-    }
-  }
-  return buckets;
+  return workflow.buckets
+    .filter((bucket) => bucket.visible !== false)
+    .map((bucket, index) => {
+      const rawBucket = rawBucketsById.get(bucket.id) ?? null;
+      return {
+        id: bucket.id,
+        label: bucket.label,
+        order: typeof rawBucket?.order === "number" ? rawBucket.order : (index + 1) * 10,
+        states: readBucketStates(bucket)
+      };
+    })
+    .filter((bucket) => bucket.id !== "" && bucket.label !== "" && bucket.states.length > 0)
+    .sort((left, right) => left.order - right.order || left.label.localeCompare(right.label));
 }
 
-function readHooks(bundle: Record<string, unknown>, errors: WorkflowValidationIssue[]): WorkflowHook[] {
-  const hooks = readHookDefinitions(bundle);
-  for (const hook of hooks) {
-    if (!(SUPPORTED_WORKFLOW_HOOK_HANDLERS as readonly string[]).includes(hook.handlerKey)) {
-      errors.push(issue("unsupported_hook_handler", `Unsupported workflow hook handler ${hook.handlerKey}.`, "hooks"));
-    }
-  }
-  return hooks;
-}
-
-function readHookDefinitions(bundle: unknown): WorkflowHook[] {
-  if (!isRecord(bundle) || !Array.isArray(bundle.hooks)) {
-    return [];
-  }
-
-  return bundle.hooks.filter(isRecord).flatMap((hook) => {
+function projectWorkflowHooks(workflow: WorkflowDefinition): WorkflowHook[] {
+  return workflow.hooks.flatMap((hook) => {
     const id = typeof hook.id === "string" ? hook.id.trim() : "";
     const phase = typeof hook.phase === "string" ? hook.phase.trim() : "";
     const targetType = typeof hook.targetType === "string" ? hook.targetType.trim() : "";
@@ -393,20 +355,6 @@ function readHookDefinitions(bundle: unknown): WorkflowHook[] {
 
     return [{ id, phase, targetType, targetId, handlerKey }];
   });
-}
-
-function readFirstString(record: Record<string, unknown> | null, keys: string[]): string | null {
-  if (record === null) {
-    return null;
-  }
-
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim() !== "") {
-      return value.trim();
-    }
-  }
-  return null;
 }
 
 function readStringArray(
@@ -430,8 +378,53 @@ function readStringArrayLenient(value: unknown): string[] {
     : [];
 }
 
-function readOptionalUnknownArray(value: unknown): unknown[] {
+function readRequiredAppCapabilities(bundle: Record<string, unknown>, errors: WorkflowValidationIssue[]): string[] {
+  const workflowRecord = readWorkflowRecord(bundle);
+  return readStringArray(
+    bundle.requiredAppCapabilities ??
+      bundle.required_app_capabilities ??
+      workflowRecord?.requiredAppCapabilities ??
+      workflowRecord?.required_app_capabilities,
+    "requiredAppCapabilities",
+    errors
+  );
+}
+
+function requiresAppCodeMigration(bundle: Record<string, unknown>): boolean {
+  const workflowRecord = readWorkflowRecord(bundle);
+  return bundle.requiresAppCodeMigration === true || workflowRecord?.requiresAppCodeMigration === true;
+}
+
+function readRequiredAppMigrations(bundle: Record<string, unknown>): unknown[] {
+  const workflowRecord = readWorkflowRecord(bundle);
+  const value = bundle.requiredAppMigrations ?? workflowRecord?.requiredAppMigrations;
   return Array.isArray(value) ? value : [];
+}
+
+function readWorkflowRecord(bundle: unknown): Record<string, unknown> | null {
+  if (!isRecord(bundle)) {
+    return null;
+  }
+  return isRecord(bundle.workflowDefinition) ? bundle.workflowDefinition : bundle;
+}
+
+function readRawDefinitionsById(value: unknown): Map<string, Record<string, unknown>> {
+  const definitions = new Map<string, Record<string, unknown>>();
+  if (!Array.isArray(value)) {
+    return definitions;
+  }
+  for (const definition of value) {
+    if (!isRecord(definition) || typeof definition.id !== "string") {
+      continue;
+    }
+    definitions.set(definition.id, definition);
+  }
+  return definitions;
+}
+
+function readBucketStates(bucket: WorkflowBucketDefinition): string[] {
+  const states = bucket.states.length > 0 ? bucket.states : bucket.stateIds;
+  return readStringArrayLenient(states);
 }
 
 function issue(code: string, message: string, path?: string): WorkflowValidationIssue {

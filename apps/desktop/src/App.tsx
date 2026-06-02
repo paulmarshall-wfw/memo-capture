@@ -1719,7 +1719,12 @@ export function App() {
       setContributors(contributorsResponse.contributors);
       setActiveBucketId(nextBucketId);
       setWorkItems(itemResponse.workItems);
-      await loadRowActionsForItems(token, itemResponse.workItems);
+      const rowActionsLoaded = await loadRowActionsForItems(token, itemResponse.workItems);
+      if (!rowActionsLoaded) {
+        setStatusMessage("Work items loaded. Some workflow actions could not be loaded.");
+      } else {
+        setStatusMessage(null);
+      }
       if (itemResponse.workItems.length === 0) {
         setSelectedItem(null);
         setDraft(null);
@@ -1737,22 +1742,29 @@ export function App() {
     }
   }
 
-  async function loadRowActionsForItems(token: string, items: WorkItem[]): Promise<void> {
+  async function loadRowActionsForItems(token: string, items: WorkItem[]): Promise<boolean> {
     if (items.length === 0) {
       setRowActionsByItemId({});
-      return;
+      return true;
     }
 
+    let allRowsLoaded = true;
     const actionEntries = await Promise.all(
       items.map(async (item) => {
-        const response = await authedJson<{ actions: AllowedWorkflowAction[] }>(
-          token,
-          `/api/work-items/${encodeURIComponent(item.id)}/actions`
-        );
-        return [item.id, response.actions.filter((action) => action.visible && !action.requiresInput)] as const;
+        try {
+          const response = await authedJson<{ actions: AllowedWorkflowAction[] }>(
+            token,
+            `/api/work-items/${encodeURIComponent(item.id)}/actions`
+          );
+          return [item.id, response.actions.filter((action) => action.visible && !action.requiresInput)] as const;
+        } catch {
+          allRowsLoaded = false;
+          return [item.id, []] as const;
+        }
       })
     );
     setRowActionsByItemId(Object.fromEntries(actionEntries));
+    return allRowsLoaded;
   }
 
   function applyProjects(nextProjects: Project[]) {
@@ -1788,7 +1800,12 @@ export function App() {
       ]);
       setBuckets([...bucketResponse.buckets].sort((left, right) => left.order - right.order));
       setWorkItems(itemResponse.workItems);
-      await loadRowActionsForItems(accessToken, itemResponse.workItems);
+      const rowActionsLoaded = await loadRowActionsForItems(accessToken, itemResponse.workItems);
+      if (!rowActionsLoaded) {
+        setStatusMessage("Work items loaded. Some workflow actions could not be loaded.");
+      } else {
+        setStatusMessage(null);
+      }
       if (itemResponse.workItems.length === 0) {
         setSelectedItem(null);
         setDraft(null);
@@ -2086,7 +2103,12 @@ export function App() {
     try {
       const itemResponse = await loadWorkItems(accessToken, bucketId);
       setWorkItems(itemResponse.workItems);
-      await loadRowActionsForItems(accessToken, itemResponse.workItems);
+      const rowActionsLoaded = await loadRowActionsForItems(accessToken, itemResponse.workItems);
+      if (!rowActionsLoaded) {
+        setStatusMessage("Work items loaded. Some workflow actions could not be loaded.");
+      } else {
+        setStatusMessage(null);
+      }
       setSelectedItemId(itemResponse.workItems[0]?.id ?? null);
       setWorkQueueLastRefreshedAt(new Date());
       setWorkQueueSyncState("connected");

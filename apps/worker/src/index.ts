@@ -37,6 +37,18 @@ const transcriptionService = new TranscriptionService(db, new ObjectStorageServi
 let stopping = false;
 let lastHeartbeatAt = 0;
 
+class JobCancelledError extends Error {
+  constructor() {
+    super("Job cancellation was requested.");
+  }
+}
+
+class NonRetryableJobError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
+}
+
 logger.info("worker_started", {
   version: config.appVersion,
   commitSha: config.commitSha,
@@ -265,16 +277,4 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, milliseconds);
   });
-}
-
-class JobCancelledError extends Error {
-  constructor() {
-    super("Job cancellation was requested.");
-  }
-}
-
-class NonRetryableJobError extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-  }
 }

@@ -40,6 +40,42 @@ test("workflow runtime validates bundled contract, buckets, and allowed actions"
   ]);
 });
 
+test("workflow runtime accepts normalized runtime definition bundles", () => {
+  const adapter = new WorkflowRuntimeAdapter();
+  const bundle = createRuntimeBundle();
+
+  const validation = adapter.validateBundle(bundle);
+
+  assert.equal(validation.ok, true);
+  assert.equal(validation.identity?.workflowId, "memo-capture_workflow");
+  assert.equal(validation.identity?.workflowVersion, "0.2.2");
+  assert.equal(validation.identity?.stateMachineVersion, "0.2.2");
+
+  assert.deepEqual(adapter.getBuckets(bundle), [
+    { id: "review", label: "Review", order: 10, states: ["needs_review"] },
+    { id: "memos", label: "Memos", order: 20, states: ["memo"] }
+  ]);
+
+  assert.deepEqual(adapter.getAllowedActions(bundle, "memo"), [
+    {
+      id: "memo.accepted",
+      label: "Accept",
+      visible: true,
+      trigger: "user",
+      requiresInput: false,
+      confirmationRequired: false
+    },
+    {
+      id: "memo.parked",
+      label: "Park",
+      visible: true,
+      trigger: "user",
+      requiresInput: false,
+      confirmationRequired: false
+    }
+  ]);
+});
+
 test("workflow runtime rejects unsupported capabilities and hook handlers", () => {
   const adapter = new WorkflowRuntimeAdapter();
   const validation = adapter.validateBundle({
@@ -209,6 +245,54 @@ function createBundle() {
         targetId: "accepted",
         handlerKey: "create_accepted_snapshot"
       }
-    ]
+    ],
+    embeddedStateMachineDefinition: {
+      schemaVersion: "0.3.0",
+      appName: "memo-capture",
+      definitionVersion: "0.2.2",
+      version: "0.2.2",
+      id: "memo_capture_state",
+      initialState: "needs_review",
+      states: ["needs_review", "memo", "accepted", "parked", "rejected", "ignored", "failed"],
+      entryStates: ["needs_review", "memo"],
+      terminalStates: [],
+      transitions: [
+        {
+          from: "memo",
+          to: "accepted",
+          actionId: "memo.accepted"
+        },
+        {
+          from: "memo",
+          to: "parked",
+          actionId: "memo.parked"
+        }
+      ]
+    }
+  };
+}
+
+function createRuntimeBundle() {
+  const bundle = createBundle();
+  return {
+    workflowDefinition: {
+      schemaVersion: bundle.schemaVersion,
+      appName: bundle.appName,
+      version: bundle.workflowVersion,
+      workflowVersion: bundle.workflowVersion,
+      id: bundle.id,
+      workflowId: bundle.id,
+      variantKey: "default",
+      stateMachine: bundle.stateMachine,
+      stateMachineDefinitionId: bundle.stateMachine.id,
+      states: bundle.states,
+      actions: bundle.actions,
+      buckets: bundle.buckets.map((bucket) => ({
+        ...bucket,
+        stateIds: bucket.states
+      })),
+      hooks: bundle.hooks
+    },
+    embeddedStateMachineDefinition: bundle.embeddedStateMachineDefinition
   };
 }

@@ -2397,6 +2397,24 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
     activated_by: null,
     activated_at: "2026-05-29T00:00:00.000Z",
     bundle: {
+      schemaVersion: "0.7.0",
+      appName: "memo-capture",
+      workflowVersion: "0.2.3",
+      id: "memo-capture_workflow",
+      stateMachine: {
+        id: "memo_capture_state",
+        definitionVersion: "0.2.3"
+      },
+      states: [
+        {
+          id: "needs_review",
+          visible: true
+        },
+        {
+          id: "memo",
+          visible: true
+        }
+      ],
       actions: [
         {
           id: "review.memo",
@@ -2415,7 +2433,39 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
           targetId: "needs_review",
           handlerKey: "classify_item"
         }
-      ]
+      ],
+      buckets: [
+        {
+          id: "review",
+          label: "Review",
+          visible: true,
+          states: ["needs_review"]
+        },
+        {
+          id: "memos",
+          label: "Memos",
+          visible: true,
+          states: ["memo"]
+        }
+      ],
+      embeddedStateMachineDefinition: {
+        schemaVersion: "0.3.0",
+        appName: "memo-capture",
+        definitionVersion: "0.2.3",
+        version: "0.2.3",
+        id: "memo_capture_state",
+        initialState: "needs_review",
+        states: ["needs_review", "memo"],
+        entryStates: ["needs_review"],
+        terminalStates: [],
+        transitions: [
+          {
+            from: "needs_review",
+            to: "memo",
+            actionId: "review.memo"
+          }
+        ]
+      }
     }
   };
 }

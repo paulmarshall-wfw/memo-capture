@@ -114,7 +114,7 @@ export class TranscriptionService {
 
       await client.query(
         `update processing_jobs
-         set provider_name = $2, model_name = $3, latency_ms = $4
+         set provider_name = $2::text, model_name = $3::text, latency_ms = $4::integer
          where id = $1`,
         [input.jobId, this.provider.providerName, this.provider.modelName, result.latencyMs]
       );
