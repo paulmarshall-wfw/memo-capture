@@ -54,15 +54,18 @@ export class WorkItemService {
     }
 
     const sourceMemo = await new SourceMemoRepository(this.db).findById(workItem.sourceMemoId);
-    const candidates = await new TagRepository(this.db).listSuggestionCandidates({
+    const tags = new TagRepository(this.db);
+    const candidates = await tags.listSuggestionCandidates({
       projectId: workItem.projectId,
       selectedTagNames: workItem.tags
     });
+    const suppressedTags = await tags.listSuppressed();
 
     return buildTagSuggestionResponse({
       workItem,
       sourceText: [sourceMemo?.extractedText ?? "", sourceMemo?.currentTranscriptText ?? ""].join("\n"),
-      candidates
+      candidates,
+      suppressedTagNames: suppressedTags.map((tag) => tag.normalizedName)
     });
   }
 
@@ -245,8 +248,10 @@ export function buildTagSuggestionResponse(input: {
   workItem: Pick<WorkItemRecord, "id" | "title" | "body" | "tags">;
   sourceText: string;
   candidates: TagSuggestionCandidate[];
+  suppressedTagNames?: string[];
 }): TagSuggestionResponse {
   const selectedNames = new Set(input.workItem.tags.map(normalizeTagName));
+  const suppressedNames = new Set((input.suppressedTagNames ?? []).map(normalizeTagName));
   const rawText = [input.workItem.title, input.workItem.body, input.sourceText].join("\n");
   const normalizedText = normalizeTagName(rawText);
   const textKeywords = extractKeywords(rawText);
@@ -254,7 +259,7 @@ export function buildTagSuggestionResponse(input: {
   const candidateByName = new Map<string, ScoredTagSuggestion>();
 
   for (const candidate of input.candidates) {
-    if (selectedNames.has(candidate.normalizedName)) {
+    if (selectedNames.has(candidate.normalizedName) || suppressedNames.has(candidate.normalizedName)) {
       continue;
     }
     candidateByName.set(
@@ -269,7 +274,7 @@ export function buildTagSuggestionResponse(input: {
 
   for (const keyword of textKeywords) {
     const normalizedName = normalizeTagName(keyword.name);
-    if (selectedNames.has(normalizedName) || candidateByName.has(normalizedName)) {
+    if (selectedNames.has(normalizedName) || suppressedNames.has(normalizedName) || candidateByName.has(normalizedName)) {
       continue;
     }
     candidateByName.set(

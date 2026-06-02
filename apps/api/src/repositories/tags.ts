@@ -23,6 +23,13 @@ export interface TagSuggestionCandidate {
   selectedCoDocumentCount: number;
 }
 
+export interface SuppressedTagRecord {
+  normalizedName: string;
+  displayName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface TagRow extends Record<string, unknown> {
   id: string;
   name: string;
@@ -36,6 +43,13 @@ interface TagSuggestionCandidateRow extends Record<string, unknown> {
   total_item_count: string | number;
   project_document_count: string | number;
   selected_co_document_count: string | number;
+}
+
+interface SuppressedTagRow extends Record<string, unknown> {
+  normalized_name: string;
+  display_name: string;
+  created_at: Date | string;
+  updated_at: Date | string;
 }
 
 export class TagRepository {
@@ -124,6 +138,11 @@ export class TagRepository {
            or (tag_co_occurrences.co_tag_id = tags.id and tag_co_occurrences.tag_id = selected_tags.id)
        ) co_occurrence_totals on true
        where not (tags.normalized_name = any($2::text[]))
+        and not exists (
+          select 1
+          from suppressed_tags
+          where suppressed_tags.normalized_name = tags.normalized_name
+        )
        order by
          coalesce(co_occurrence_totals.selected_co_document_count, 0) desc,
          coalesce((tag_statistics.project_distribution ->> projects.slug)::integer, 0) desc,
@@ -142,6 +161,48 @@ export class TagRepository {
       projectDocumentCount: toNumber(row.project_document_count),
       selectedCoDocumentCount: toNumber(row.selected_co_document_count)
     }));
+  }
+
+  async listSuppressed(): Promise<SuppressedTagRecord[]> {
+    const result = await this.db.query<SuppressedTagRow>(
+      `select normalized_name, display_name, created_at, updated_at
+       from suppressed_tags
+       order by lower(display_name), display_name`
+    );
+    return result.rows.map(mapSuppressedTag);
+  }
+
+  async suppress(input: { name: string; actorUserId: string | null }): Promise<SuppressedTagRecord> {
+    const cleaned = normalizeTagDisplayName(input.name);
+    if (cleaned === "") {
+      throw new Error("Suppressed tag name must not be empty.");
+    }
+
+    const result = await this.db.query<SuppressedTagRow>(
+      `insert into suppressed_tags (normalized_name, display_name, created_by, created_at, updated_at)
+       values ($1, $2, $3, now(), now())
+       on conflict (normalized_name) do update
+       set display_name = suppressed_tags.display_name,
+           updated_at = suppressed_tags.updated_at
+       returning normalized_name, display_name, created_at, updated_at`,
+      [normalizeTagName(cleaned), cleaned, input.actorUserId]
+    );
+    const row = result.rows[0];
+    if (row === undefined) {
+      throw new Error("Failed to suppress tag.");
+    }
+    return mapSuppressedTag(row);
+  }
+
+  async unsuppress(normalizedName: string): Promise<SuppressedTagRecord | null> {
+    const result = await this.db.query<SuppressedTagRow>(
+      `delete from suppressed_tags
+       where normalized_name = $1
+       returning normalized_name, display_name, created_at, updated_at`,
+      [normalizeTagName(normalizedName)]
+    );
+    const row = result.rows[0];
+    return row === undefined ? null : mapSuppressedTag(row);
   }
 
   private async upsertTag(name: string, actorUserId: string | null): Promise<TagRecord> {
@@ -185,10 +246,27 @@ export function normalizeTagAssignments(tags: string[] | TagAssignmentInput[]): 
   return normalized.slice(0, 20);
 }
 
+export function normalizeTagDisplayName(name: string): string {
+  return name.trim().replace(/\s+/g, " ");
+}
+
 export function normalizeTagName(name: string): string {
   return name.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function toNumber(value: string | number): number {
   return typeof value === "number" ? value : Number.parseInt(value, 10);
+}
+
+function mapSuppressedTag(row: SuppressedTagRow): SuppressedTagRecord {
+  return {
+    normalizedName: row.normalized_name,
+    displayName: row.display_name,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
 }

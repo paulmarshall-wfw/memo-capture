@@ -31,6 +31,7 @@ import {
   FolderOpen,
   FolderSearch,
   Headphones,
+  Minus,
   Moon,
   PackageCheck,
   PackagePlus,
@@ -54,6 +55,7 @@ type WorkflowRuntimeEventFilter = "journal" | keyof WorkflowEventViews;
 type SettingsSectionId =
   | "watched"
   | "file-types"
+  | "suppressed-tags"
   | "prompts"
   | "providers"
   | "export"
@@ -219,6 +221,13 @@ interface TagSuggestionRows {
 interface TagSuggestionResponse {
   workItemId: string;
   suggestions: TagSuggestionRows;
+}
+
+interface SuppressedTag {
+  normalizedName: string;
+  displayName: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface ExportableSnapshot {
@@ -501,6 +510,7 @@ const workflowRuntimeEventFilters: readonly { id: WorkflowRuntimeEventFilter; la
 const settingsSections: readonly { id: SettingsSectionId; label: string }[] = [
   { id: "watched", label: "Watched folders" },
   { id: "file-types", label: "File types" },
+  { id: "suppressed-tags", label: "Suppressed Tags" },
   { id: "prompts", label: "AI prompts" },
   { id: "providers", label: "Providers" },
   { id: "export", label: "Export contract" },
@@ -1198,6 +1208,7 @@ function TagSuggestionRow(props: {
   label: string;
   tags: string[];
   onSelect(tags: string[]): void;
+  onSuppress(tag: string): void;
 }): ReactElement {
   return (
     <div className="tag-suggestion-row">
@@ -1205,9 +1216,20 @@ function TagSuggestionRow(props: {
       <div className="tag-suggestion-list">
         {props.tags.length === 0 ? <span className="tag-empty">None</span> : null}
         {props.tags.map((tag) => (
-          <button className="tag-chip" type="button" key={tag} onClick={() => props.onSelect([tag])}>
-            {tag}
-          </button>
+          <span className="tag-chip split-tag-chip" key={tag}>
+            <button
+              className="tag-chip-icon-action"
+              type="button"
+              title={`Suppress ${tag} suggestions`}
+              aria-label={`Suppress ${tag} suggestions`}
+              onClick={() => props.onSuppress(tag)}
+            >
+              <Minus size={13} />
+            </button>
+            <button className="tag-chip-main-action" type="button" onClick={() => props.onSelect([tag])}>
+              <span>{tag}</span>
+            </button>
+          </span>
         ))}
       </div>
     </div>
@@ -1254,6 +1276,9 @@ export function App() {
   const [transcriptSaving, setTranscriptSaving] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([]);
   const [tagSuggestions, setTagSuggestions] = useState<TagSuggestionRows>({ strong: [], related: [], weak: [] });
+  const [suppressedTags, setSuppressedTags] = useState<SuppressedTag[]>([]);
+  const [suppressedTagsLoading, setSuppressedTagsLoading] = useState(false);
+  const [suppressedTagInFlight, setSuppressedTagInFlight] = useState<string | null>(null);
   const [aiExpanding, setAiExpanding] = useState(false);
   const [suggestionIdInFlight, setSuggestionIdInFlight] = useState<string | null>(null);
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
@@ -1352,6 +1377,16 @@ export function App() {
       weak: filterRow(tagSuggestions.weak)
     };
   }, [draft?.tags, tagSuggestions]);
+  const suppressedTagTableRows = useMemo(() => {
+    const columns = 3;
+    const sortedTags = [...suppressedTags].sort((left, right) =>
+      left.displayName.localeCompare(right.displayName)
+    );
+    const rowCount = Math.ceil(sortedTags.length / columns);
+    return Array.from({ length: rowCount }, (_, rowIndex) =>
+      Array.from({ length: columns }, (_unused, columnIndex) => sortedTags[rowIndex * columns + columnIndex] ?? null)
+    );
+  }, [suppressedTags]);
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (query === "") {
@@ -1644,6 +1679,16 @@ export function App() {
   }, [accessToken, activeView, activeSettingsSection]);
 
   useEffect(() => {
+    if (accessToken === null || activeView !== "settings" || activeSettingsSection !== "suppressed-tags") {
+      return;
+    }
+
+    void loadSuppressedTags(accessToken).catch((error) => {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to load suppressed tags.");
+    });
+  }, [accessToken, activeView, activeSettingsSection]);
+
+  useEffect(() => {
     if (!activeFolderWatching) {
       return;
     }
@@ -1895,6 +1940,19 @@ export function App() {
       );
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  async function loadSuppressedTags(token = accessToken): Promise<void> {
+    if (token === null) {
+      return;
+    }
+    setSuppressedTagsLoading(true);
+    try {
+      const response = await authedJson<{ suppressedTags: SuppressedTag[] }>(token, "/api/tags/suppressed");
+      setSuppressedTags([...response.suppressedTags].sort((left, right) => left.displayName.localeCompare(right.displayName)));
+    } finally {
+      setSuppressedTagsLoading(false);
     }
   }
 
@@ -2238,6 +2296,87 @@ export function App() {
     );
     if (saveState === "saved" || saveState === "conflict") {
       setSaveState("idle");
+    }
+  }
+
+  async function refreshTagSuggestions(workItemId = selectedItem?.id ?? null) {
+    if (accessToken === null || workItemId === null) {
+      return;
+    }
+
+    const response = await authedJson<TagSuggestionResponse>(
+      accessToken,
+      `/api/work-items/${encodeURIComponent(workItemId)}/tag-suggestions`
+    );
+    setTagSuggestions(response.suggestions);
+  }
+
+  async function suppressTag(tag: string, options: { removeFromDraft: boolean }) {
+    if (accessToken === null) {
+      return;
+    }
+
+    const cleaned = tag.trim().replace(/\s+/g, " ");
+    if (cleaned === "") {
+      return;
+    }
+    const normalized = cleaned.toLowerCase();
+
+    setSuppressedTagInFlight(normalized);
+    setStatusMessage(null);
+    try {
+      const response = await authedJson<{ suppressedTag: SuppressedTag }>(
+        accessToken,
+        "/api/tags/suppressed",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: cleaned,
+            sourceWorkItemId: selectedItem?.id
+          })
+        }
+      );
+      setSuppressedTags((current) =>
+        [...current.filter((item) => item.normalizedName !== response.suppressedTag.normalizedName), response.suppressedTag]
+          .sort((left, right) => left.displayName.localeCompare(right.displayName))
+      );
+      setTagSuggestions((current) => ({
+        strong: current.strong.filter((candidate) => candidate.trim().toLowerCase() !== normalized),
+        related: current.related.filter((candidate) => candidate.trim().toLowerCase() !== normalized),
+        weak: current.weak.filter((candidate) => candidate.trim().toLowerCase() !== normalized)
+      }));
+      if (options.removeFromDraft) {
+        removeDraftTag(cleaned);
+      }
+      await refreshTagSuggestions();
+      setStatusMessage(`${response.suppressedTag.displayName} suppressed from suggestions.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to suppress tag.");
+    } finally {
+      setSuppressedTagInFlight(null);
+    }
+  }
+
+  async function unsuppressTag(tag: SuppressedTag) {
+    if (accessToken === null) {
+      return;
+    }
+
+    setSuppressedTagInFlight(tag.normalizedName);
+    setStatusMessage(null);
+    try {
+      await authedJson<{ suppressedTag: SuppressedTag | null }>(
+        accessToken,
+        `/api/tags/suppressed/${encodeURIComponent(tag.normalizedName)}`,
+        { method: "DELETE" }
+      );
+      setSuppressedTags((current) => current.filter((item) => item.normalizedName !== tag.normalizedName));
+      await refreshTagSuggestions();
+      setStatusMessage(`${tag.displayName} restored to suggestions.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to restore suppressed tag.");
+    } finally {
+      setSuppressedTagInFlight(null);
     }
   }
 
@@ -3628,16 +3767,28 @@ export function App() {
                       <div className="tag-chip-list">
                         {draft.tags.length === 0 ? <span className="tag-empty">No tags selected</span> : null}
                         {draft.tags.map((tag) => (
-                          <button
-                            className="tag-chip selected"
-                            type="button"
-                            key={tag}
-                            onClick={() => removeDraftTag(tag)}
-                            title={`Remove ${tag}`}
-                          >
-                            <span>{tag}</span>
-                            <X size={14} />
-                          </button>
+                          <span className="tag-chip selected split-tag-chip" key={tag}>
+                            <button
+                              className="tag-chip-icon-action"
+                              type="button"
+                              title={`Suppress ${tag} suggestions`}
+                              aria-label={`Suppress ${tag} suggestions`}
+                              disabled={suppressedTagInFlight === tag.trim().toLowerCase()}
+                              onClick={() => void suppressTag(tag, { removeFromDraft: true })}
+                            >
+                              <Minus size={13} />
+                            </button>
+                            <span className="tag-chip-label">{tag}</span>
+                            <button
+                              className="tag-chip-icon-action"
+                              type="button"
+                              title={`Remove ${tag}`}
+                              aria-label={`Remove ${tag}`}
+                              onClick={() => removeDraftTag(tag)}
+                            >
+                              <X size={13} />
+                            </button>
+                          </span>
                         ))}
                       </div>
                     </section>
@@ -3664,16 +3815,19 @@ export function App() {
                         label="Strong"
                         tags={visibleTagSuggestions.strong}
                         onSelect={addDraftTags}
+                        onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
                       />
                       <TagSuggestionRow
                         label="Related"
                         tags={visibleTagSuggestions.related}
                         onSelect={addDraftTags}
+                        onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
                       />
                       <TagSuggestionRow
                         label="Weak"
                         tags={visibleTagSuggestions.weak}
                         onSelect={addDraftTags}
+                        onSuppress={(tag) => void suppressTag(tag, { removeFromDraft: false })}
                       />
                     </div>
                   </div>
@@ -4801,6 +4955,52 @@ export function App() {
                       );
                     })}
                   </div>
+                </section>
+              ) : activeSettingsSection === "suppressed-tags" ? (
+                <section className="detail-section" aria-label="Suppressed Tags">
+                  <div className="settings-row-header">
+                    <div className="section-title">
+                      <Minus size={18} />
+                      <h3>Suppressed Tags</h3>
+                    </div>
+                    <div className="detail-meta">
+                      <span>{suppressedTags.length} labels</span>
+                      <span>{suppressedTagsLoading ? "Loading" : "Loaded"}</span>
+                    </div>
+                  </div>
+
+                  {suppressedTags.length === 0 ? (
+                    <div className="empty-detail compact-empty">
+                      <Plus size={22} />
+                      <span>No suppressed tags</span>
+                    </div>
+                  ) : (
+                    <div className="suppressed-tags-table" role="table" aria-label="Suppressed Tags">
+                      {suppressedTagTableRows.map((row, rowIndex) => (
+                        <div className="suppressed-tags-row" role="row" key={`suppressed-row-${rowIndex}`}>
+                          {row.map((tag, columnIndex) => (
+                            <div className="suppressed-tag-cell" role="cell" key={`${rowIndex}-${columnIndex}`}>
+                              {tag === null ? null : (
+                                <>
+                                  <button
+                                    className="tag-chip-icon-action restore-tag-action"
+                                    type="button"
+                                    title={`Restore ${tag.displayName} suggestions`}
+                                    aria-label={`Restore ${tag.displayName} suggestions`}
+                                    disabled={suppressedTagInFlight === tag.normalizedName}
+                                    onClick={() => void unsuppressTag(tag)}
+                                  >
+                                    <Plus size={14} />
+                                  </button>
+                                  <span>{tag.displayName}</span>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               ) : activeSettingsSection === "prompts" ? (
                 <section className="detail-section" aria-label="AI prompts">

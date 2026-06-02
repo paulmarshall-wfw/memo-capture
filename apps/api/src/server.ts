@@ -246,6 +246,25 @@ function matchProtectedRoute(
     });
   }
 
+  if (method === "GET" && pathname === "/api/tags/suppressed") {
+    return async () => services.tags.listSuppressed();
+  }
+
+  if (method === "POST" && pathname === "/api/tags/suppressed") {
+    return async (context, session) =>
+      services.tags.suppress(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const suppressedTagMatch = /^\/api\/tags\/suppressed\/([^/]+)$/.exec(pathname);
+  if (method === "DELETE" && suppressedTagMatch !== null) {
+    return async (context, session) =>
+      services.tags.unsuppress(
+        decodeURIComponent(suppressedTagMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
+
   if (method === "GET" && pathname === "/api/jobs") {
     return async (context) => services.jobs.list(context.url.searchParams);
   }

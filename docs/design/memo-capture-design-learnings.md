@@ -524,6 +524,7 @@ Tag and grouping rules:
 
 - tags are global normalized labels that can be reused across projects
 - users can edit tags during ingestion review and detail editing
+- a global suppressed-tag list hides labels from automatic Strong, Related, and Weak suggestions without blocking manual tag entry or existing selected tags
 - extraction can assign noun-phrase and named-entity tags with confidence and per-item counts
 - derived grouping paths are recalculated metadata, not canonical hierarchy
 - existing feature-group assignments from earlier builds are migrated into ordinary tags

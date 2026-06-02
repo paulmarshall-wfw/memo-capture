@@ -35,9 +35,14 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /label="Strong"/);
   assert.match(appSource, /label="Related"/);
   assert.match(appSource, /label="Weak"/);
+  assert.match(appSource, /Suppressed Tags/);
+  assert.match(appSource, /Suppress \$\{tag\} suggestions/);
+  assert.match(appSource, /Restore \$\{tag\.displayName\} suggestions/);
+  assert.match(appSource, /\/api\/tags\/suppressed/);
   assert.match(appSource, /projectDeleteConfirmId/);
   assert.doesNotMatch(appSource, /Delete \$\{projectName\}/);
   assert.doesNotMatch(appSource, />\s*Import\s*</);
+  assert.doesNotMatch(appSource, />\s*Do not use\s*</i);
   assert.doesNotMatch(appSource, /manual per-file import/i);
 });
 

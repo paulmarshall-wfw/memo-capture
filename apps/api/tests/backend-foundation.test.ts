@@ -736,6 +736,28 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.deepEqual(tagSuggestions.body.suggestions.related, ["review queue"]);
     assert.deepEqual(tagSuggestions.body.suggestions.weak, ["local dev"]);
 
+    const suppressedCreate = await authedJson(baseUrl, "/api/tags/suppressed", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Review Queue",
+        sourceWorkItemId: "work-item-1"
+      })
+    });
+    assert.equal(suppressedCreate.response.status, 200);
+    assert.equal(suppressedCreate.body.suppressedTag.normalizedName, "review queue");
+
+    const suppressedList = await authedJson(baseUrl, "/api/tags/suppressed");
+    assert.equal(suppressedList.response.status, 200);
+    assert.deepEqual(suppressedList.body.suppressedTags.map((tag: { displayName: string }) => tag.displayName), [
+      "Review Queue"
+    ]);
+
+    const suppressedDelete = await authedJson(baseUrl, "/api/tags/suppressed/review%20queue", {
+      method: "DELETE"
+    });
+    assert.equal(suppressedDelete.response.status, 200);
+    assert.equal(suppressedDelete.body.suppressedTag.displayName, "Review Queue");
+
     const workItemPatch = await authedJson(baseUrl, "/api/work-items/work-item-1", {
       method: "PATCH",
       body: JSON.stringify({
@@ -1137,6 +1159,15 @@ function stubServices(): AppServices {
         throw new Error("not used");
       }
     } as unknown as AppServices["settings"],
+    tags: {
+      listSuppressed: async () => ({ suppressedTags: [] }),
+      suppress: async () => {
+        throw new Error("not used");
+      },
+      unsuppress: async () => {
+        throw new Error("not used");
+      }
+    } as unknown as AppServices["tags"],
     workflows: {
       getStatus: async () => ({ active: null, supportedHookHandlers: [] }),
       getBuckets: async () => ({ buckets: [] }),
@@ -1240,6 +1271,7 @@ function captureRouteServices(): AppServices {
     includeMemoMetadata: true,
     includeMemoTranscriptText: true
   };
+  let suppressedTags: { normalizedName: string; displayName: string; createdAt: string; updatedAt: string }[] = [];
 
   return {
     ai: {
@@ -1647,6 +1679,36 @@ function captureRouteServices(): AppServices {
         };
       }
     } as unknown as AppServices["settings"],
+    tags: {
+      listSuppressed: async () => ({ suppressedTags }),
+      suppress: async (body: unknown) => {
+        const record = body as { name?: string };
+        const displayName = String(record.name ?? "").trim().replace(/\s+/g, " ");
+        const normalizedName = displayName.toLowerCase();
+        const existing = suppressedTags.find((tag) => tag.normalizedName === normalizedName);
+        if (existing !== undefined) {
+          return { suppressedTag: existing };
+        }
+        const suppressedTag = {
+          normalizedName,
+          displayName,
+          createdAt: "2026-05-29T00:08:00.000Z",
+          updatedAt: "2026-05-29T00:08:00.000Z"
+        };
+        suppressedTags = [...suppressedTags, suppressedTag].sort((left, right) =>
+          left.displayName.localeCompare(right.displayName)
+        );
+        return { suppressedTag };
+      },
+      unsuppress: async (normalizedName: string) => {
+        const index = suppressedTags.findIndex((tag) => tag.normalizedName === normalizedName);
+        if (index === -1) {
+          return { suppressedTag: null };
+        }
+        const [suppressedTag] = suppressedTags.splice(index, 1);
+        return { suppressedTag };
+      }
+    } as unknown as AppServices["tags"],
     workflows: {
       getStatus: async () => ({
         active: {

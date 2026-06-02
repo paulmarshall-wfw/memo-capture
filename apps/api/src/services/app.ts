@@ -16,6 +16,7 @@ import { ImportService, type FinalizeUploadSessionResponse, type UploadSessionRe
 import { JobService } from "./jobs.js";
 import { ObjectStorageService } from "./object-storage.js";
 import { SettingsService } from "./settings.js";
+import { TagService } from "./tags.js";
 import { WorkItemService, type TagSuggestionResponse } from "./work-items.js";
 import { WorkflowService } from "./workflows.js";
 import { AuditRepository } from "../repositories/audit.js";
@@ -32,6 +33,7 @@ export interface AppServices {
   imports: ImportOperations;
   jobs: JobOperations;
   settings: SettingsOperations;
+  tags: TagOperations;
   workflows: WorkflowService;
   workItems: WorkItemOperations;
   close(): Promise<void>;
@@ -91,6 +93,12 @@ export interface SettingsOperations {
   updateFileType(fileTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   deleteFileType(fileTypeId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createPromptVersion(promptDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+}
+
+export interface TagOperations {
+  listSuppressed(): Promise<unknown>;
+  suppress(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  unsuppress(normalizedName: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
 }
 
 export interface ImportOperations {
@@ -169,6 +177,7 @@ export function createAppServicesFromDatabase(config: ApiConfig, db: Database): 
     imports: new ImportService(db, objectStorage),
     jobs: new JobService(db),
     settings: new SettingsService(db, config),
+    tags: new TagService(db),
     workflows: new WorkflowService(db, config.authMode),
     workItems: new WorkItemService(db, objectStorage),
     close: () => db.close()

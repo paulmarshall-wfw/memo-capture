@@ -1,0 +1,41 @@
+# Global_Do-Not-Use_Tag_Suppression
+
+## Summary
+Add a global suppressed-tag list that prevents labels from appearing in Strong / Related / Weak suggestions, while still allowing a user to manually add the same label as a selected tag on a work item. In the right-side work item detail panel, Selected / Strong / Related / Weak remain the only visible tag categories.
+
+## Key Changes
+- Add a numbered migration, `0018_global_suppressed_tags.sql`, with a global suppressed-tag table keyed by normalized tag text, including display name, creator, and timestamps
+
+- Add repository/service support for creating suppressed tags, listing them for Settings, and filtering them out of `GET /api/work-items/:id/tag-suggestions`.
+- Keep the existing `tags` / `work_item_tags` model unchanged for selected tags. Suppressed labels are not deleted from existing work items and do not block manual add/save.
+- Add API endpoints:
+  - `GET /api/tags/suppressed`
+  - `POST /api/tags/suppressed` with `{ "name": string, "sourceWorkItemId"?: string }`
+  - `DELETE /api/tags/suppressed/:normalizedName`
+- In the detail panel:
+  - Selected chips get a left-side minus button that adds the tag to the global suppressed list and removes it from the current selected draft.
+  - Existing right-side `X` continues to remove the tag from the selected draft only.
+  - Strong / Related / Weak chips get a left-side minus button that adds the tag to the global suppressed list.
+  - Clicking the main body of Strong / Related / Weak chips still adds the tag to Selected.
+  - After suppression, refresh tag suggestions and remove the suppressed label from visible suggestion rows immediately.
+- Add a Settings management section for the global suppressed list so users can review and remove suppressed labels later. Make this a new page in Settings called “Suppressed Tags”. List the tags in a multi-column table showing the display name of each suppressed tag in cells in alphabetic order by display name. One tag only per cell moving left to right and top to bottom in alphabetic order. Clicking on a plus sign on a tag / label removes it from the suppressed list.
+- Do not add a “Do not use” category to the work item detail panel.
+
+## Tests
+- Migration test: suppressed tags table exists, normalized names are unique, duplicate display variants do not create duplicate rows.
+- Backend tests:
+  - Suppressed tags are excluded from Strong / Related / Weak suggestions.
+  - A suppressed tag can still be manually saved in `work_item_tags`.
+  - Suppressing a selected tag removes it from the work item draft/save payload only when the user uses the minus action.
+  - Deleting a suppressed tag in Settings allows it to appear in suggestions again.
+- Frontend tests or app-copy checks:
+  - Selected chip has distinct minus and X controls.
+  - Suggestion chip minus suppresses; suggestion chip body selects.
+  - Detail panel labels remain Selected / Strong / Related / Weak.
+- Verification: run `npm run verify`; if frontend behavior is changed, rebuild and validate the Tauri app bundle as the primary user-facing surface.
+
+## Assumptions
+- The suppression list is global across all projects and work items.
+- Suppression affects automatic suggestions only, not manual entry or existing saved selected tags.
+- The detail panel must not expose a “Do not use” row or category.
+- A Settings management view is acceptable for undoing global suppressions because the detail panel only provides the fast add-to-suppression action.

@@ -79,6 +79,61 @@ test("tag suggestions are ranked into strong, related, and weak rows without sel
   assert.equal(response.suggestions.weak.includes("Local Dev"), true);
 });
 
+test("tag suggestions exclude globally suppressed candidate and keyword tags", () => {
+  const workItem = {
+    id: "work-item-1",
+    sourceMemoId: "source-memo-1",
+    projectId: "project-1",
+    contributorText: null,
+    contributorId: null,
+    title: "Workflow Routing",
+    body: "Workflow Routing captures review queue routing decisions.",
+    tags: [],
+    bodyFormat: "markdown",
+    workflowState: "memo",
+    workflowItemVersion: 1,
+    acceptedSnapshotId: null,
+    acceptedUnexportedChanges: false,
+    originalFileModifiedAt: "2026-05-28T23:45:00.000Z",
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:00.000Z"
+  } satisfies WorkItemRecord;
+
+  const response = buildTagSuggestionResponse({
+    workItem,
+    sourceText: "Workflow Routing connects capture review and project grouping.",
+    candidates: [
+      {
+        name: "Workflow Routing",
+        normalizedName: "workflow routing",
+        documentCount: 8,
+        totalItemCount: 12,
+        projectDocumentCount: 5,
+        selectedCoDocumentCount: 3
+      },
+      {
+        name: "Review Queue",
+        normalizedName: "review queue",
+        documentCount: 5,
+        totalItemCount: 7,
+        projectDocumentCount: 2,
+        selectedCoDocumentCount: 0
+      }
+    ],
+    suppressedTagNames: ["workflow routing", "project grouping"]
+  });
+
+  const allSuggestions = [
+    ...response.suggestions.strong,
+    ...response.suggestions.related,
+    ...response.suggestions.weak
+  ].map((tag) => tag.toLowerCase());
+
+  assert.equal(allSuggestions.includes("workflow routing"), false);
+  assert.equal(allSuggestions.includes("project grouping"), false);
+  assert.equal(allSuggestions.includes("review queue"), true);
+});
+
 test("keyword extraction filters generic verbs and stop words from generated tags", () => {
   const keywords = extractKeywords("Smoke test memo\nThis memo was created during the local run/test smoke pass.");
   const names = new Set(keywords.map((keyword) => keyword.name.toLowerCase()));
