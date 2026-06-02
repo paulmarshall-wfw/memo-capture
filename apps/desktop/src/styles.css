@@ -1224,6 +1224,10 @@ button:disabled {
   gap: 8px;
 }
 
+.detail-header-actions {
+  padding-bottom: 2px;
+}
+
 .inline-status,
 .muted-text {
   display: inline-flex;
@@ -1246,6 +1250,18 @@ button:disabled {
 
 .section-title {
   display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title.with-actions {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-title-main {
+  display: inline-flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
 }

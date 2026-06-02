@@ -1322,6 +1322,7 @@ export function App() {
   const [detailPanelWidth, setDetailPanelWidth] = useState(440);
   const nextProjectDraftId = useRef(1);
   const projectListRef = useRef<HTMLDivElement | null>(null);
+  const workItemRowButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const watchScanInFlightRef = useRef(false);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
@@ -2395,6 +2396,32 @@ export function App() {
     }
     event.preventDefault();
     addDraftTags(parseTagsText(event.currentTarget.value));
+  }
+
+  function handleWorkItemRowKeyDown(event: ReactKeyboardEvent<HTMLElement>, itemId: string) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+      return;
+    }
+
+    event.preventDefault();
+    const currentIndex = filteredItems.findIndex((item) => item.id === itemId);
+    if (currentIndex === -1) {
+      return;
+    }
+
+    const nextIndex =
+      event.key === "ArrowDown"
+        ? Math.min(currentIndex + 1, filteredItems.length - 1)
+        : Math.max(currentIndex - 1, 0);
+    const nextItem = filteredItems[nextIndex];
+    if (nextItem === undefined || nextItem.id === itemId) {
+      return;
+    }
+
+    setSelectedItemId(nextItem.id);
+    window.requestAnimationFrame(() => {
+      workItemRowButtonRefs.current.get(nextItem.id)?.focus();
+    });
   }
 
   function addWatchedFolder() {
@@ -3615,28 +3642,43 @@ export function App() {
             {filteredItems.map((item) => {
               const rowActions = rowActionsByItemId[item.id] ?? [];
               return (
-                <article className={`item-row ${item.id === selectedItemId ? "selected" : ""}`} key={item.id}>
-	                  <button className="item-row-select" type="button" onClick={() => setSelectedItemId(item.id)}>
-	                    <div className="item-row-main">
-	                      <div className="item-title-line">
-	                        <FileText size={18} />
-	                        <h2>{item.title}</h2>
-	                        <p>{item.body}</p>
-	                      </div>
-	                    </div>
-	                  </button>
-	                  <span className={`item-row-state state-chip state-${item.workflowState}`}>
-	                    {stateLabel(item.workflowState)}
-	                  </span>
-	                  <button
-	                    className="item-row-meta-select"
-	                    type="button"
-	                    onClick={() => setSelectedItemId(item.id)}
-	                    aria-label={`Select ${item.title}`}
-	                  >
-	                    <span className="item-project">{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
-	                    <span className="updated-time">{formatDate(item.originalFileModifiedAt ?? item.createdAt)}</span>
-	                  </button>
+                <article
+                  className={`item-row ${item.id === selectedItemId ? "selected" : ""}`}
+                  key={item.id}
+                  onKeyDown={(event) => handleWorkItemRowKeyDown(event, item.id)}
+                >
+                  <button
+                    className="item-row-select"
+                    type="button"
+                    ref={(element) => {
+                      if (element === null) {
+                        workItemRowButtonRefs.current.delete(item.id);
+                        return;
+                      }
+                      workItemRowButtonRefs.current.set(item.id, element);
+                    }}
+                    onClick={() => setSelectedItemId(item.id)}
+                  >
+                    <div className="item-row-main">
+                      <div className="item-title-line">
+                        <FileText size={18} />
+                        <h2>{item.title}</h2>
+                        <p>{item.body}</p>
+                      </div>
+                    </div>
+                  </button>
+                  <span className={`item-row-state state-chip state-${item.workflowState}`}>
+                    {stateLabel(item.workflowState)}
+                  </span>
+                  <button
+                    className="item-row-meta-select"
+                    type="button"
+                    onClick={() => setSelectedItemId(item.id)}
+                    aria-label={`Select ${item.title}`}
+                  >
+                    <span className="item-project">{projectById.get(item.projectId ?? "")?.name ?? "No project"}</span>
+                    <span className="updated-time">{formatDate(item.originalFileModifiedAt ?? item.createdAt)}</span>
+                  </button>
                   <div className="row-action-groups" aria-label={`Workflow actions for ${item.title}`}>
                     {rowActions.length === 0 ? <span className="row-action-empty">No actions</span> : null}
                     {rowActions.map((action) => {
@@ -3698,6 +3740,32 @@ export function App() {
                   <span>Version {selectedItem.workflowItemVersion}</span>
                   <span>Original {formatDate(selectedItem.originalFileModifiedAt ?? selectedItem.createdAt)}</span>
                   {selectedItem.acceptedUnexportedChanges ? <span>Accepted changes pending export</span> : null}
+                </div>
+
+                <div className="detail-actions detail-header-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={!hasDraftChanges || saveState === "saving"}
+                    onClick={() => void saveDraft()}
+                  >
+                    {saveState === "saving" ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
+                    Save
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!hasDraftChanges}
+                    onClick={() => setDraft(createDraft(selectedItem))}
+                  >
+                    Reset
+                  </button>
+                  {saveState === "saved" ? (
+                    <span className="inline-status">
+                      <Check size={16} />
+                      Saved
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="field-group">
@@ -3836,38 +3904,12 @@ export function App() {
                   </div>
                 </div>
 
-                <div className="detail-actions">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={!hasDraftChanges || saveState === "saving"}
-                    onClick={() => void saveDraft()}
-                  >
-                    {saveState === "saving" ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
-                    Save
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={!hasDraftChanges}
-                    onClick={() => setDraft(createDraft(selectedItem))}
-                  >
-                    Reset
-                  </button>
-                  {saveState === "saved" ? (
-                    <span className="inline-status">
-                      <Check size={16} />
-                      Saved
-                    </span>
-                  ) : null}
-                </div>
-
                 <section className="detail-section" aria-label="AI expansion">
-                  <div className="section-title">
-                    <Settings size={18} />
-                    <h3>AI expansion</h3>
-                  </div>
-                  <div className="detail-actions">
+                  <div className="section-title with-actions">
+                    <div className="section-title-main">
+                      <Settings size={18} />
+                      <h3>AI expansion</h3>
+                    </div>
                     <button
                       className="secondary-button"
                       type="button"
@@ -3877,8 +3919,8 @@ export function App() {
                       {aiExpanding ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
                       Generate
                     </button>
-                    {hasDraftChanges ? <span className="muted-text">Save or reset edits before generating</span> : null}
                   </div>
+                  {hasDraftChanges ? <span className="muted-text">Save or reset edits before generating</span> : null}
                   <div className="suggestion-list">
                     {aiSuggestions.length === 0 ? <span className="muted-text">No AI suggestions</span> : null}
                     {aiSuggestions.map((suggestion) => (
@@ -4016,12 +4058,6 @@ export function App() {
                         >
                           <Copy size={15} />
                         </button>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Original file time</dt>
-                      <dd>
-                        <span>{formatDate(selectedItem.originalFileModifiedAt ?? selectedItem.createdAt)}</span>
                       </dd>
                     </div>
                     <div>
