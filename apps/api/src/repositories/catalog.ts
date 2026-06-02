@@ -111,6 +111,11 @@ export interface ContributorInput {
   actorUserId: string;
 }
 
+export interface WatchedContributorInput {
+  contributorText: string | null;
+  actorUserId: string;
+}
+
 export class ContributorRepository {
   constructor(private readonly db: Queryable) {}
 
@@ -124,31 +129,62 @@ export class ContributorRepository {
   }
 
   async create(input: ContributorInput): Promise<ContributorRecord> {
+    const contributorKey = normalizeContributorKey(input.displayName);
     const result = await this.db.query<ContributorRow>(
       `insert into contributors (
          id,
          display_name,
+         contributor_key,
          created_by,
          updated_by,
          created_at,
          updated_at
        )
-       values ($1, $2, $3, $3, now(), now())
+       values ($1, $2, $3, $4, $4, now(), now())
        returning *`,
-      [randomUUID(), input.displayName.trim(), input.actorUserId]
+      [randomUUID(), input.displayName.trim(), contributorKey, input.actorUserId]
     );
     return requiredRow(result.rows[0], "contributor create failed", mapContributor);
   }
 
   async update(contributorId: string, input: ContributorInput): Promise<ContributorRecord | null> {
+    const contributorKey = normalizeContributorKey(input.displayName);
     const result = await this.db.query<ContributorRow>(
       `update contributors
-       set display_name = $2, updated_by = $3, updated_at = now()
+       set display_name = $2, contributor_key = $3, updated_by = $4, updated_at = now()
        where id = $1
        returning *`,
-      [contributorId, input.displayName.trim(), input.actorUserId]
+      [contributorId, input.displayName.trim(), contributorKey, input.actorUserId]
     );
     return result.rows[0] === undefined ? null : mapContributor(result.rows[0]);
+  }
+
+  async findOrCreateForWatchedFolder(input: WatchedContributorInput): Promise<ContributorRecord | null> {
+    const contributorText = input.contributorText?.trim() ?? "";
+    const contributorKey = normalizeContributorKey(contributorText);
+    if (contributorKey === null) {
+      return null;
+    }
+
+    const result = await this.db.query<ContributorRow>(
+      `insert into contributors (
+         id,
+         display_name,
+         contributor_key,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at
+       )
+       values ($1, $2, $3, $4, $4, now(), now())
+       on conflict (contributor_key) where contributor_key is not null
+       do update set
+         updated_by = coalesce(contributors.updated_by, excluded.updated_by),
+         updated_at = contributors.updated_at
+       returning *`,
+      [randomUUID(), contributorText, contributorKey, input.actorUserId]
+    );
+    return requiredRow(result.rows[0], "contributor upsert failed", mapContributor);
   }
 
   async addAlias(contributorId: string, alias: string, actorUserId: string): Promise<void> {
@@ -170,6 +206,11 @@ export class ContributorRepository {
     );
     return result.rows[0] === undefined ? null : mapContributor(result.rows[0]);
   }
+}
+
+export function normalizeContributorKey(value: string | null | undefined): string | null {
+  const normalized = (value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return normalized === "" ? null : normalized;
 }
 
 function requiredRow<Row, Result>(

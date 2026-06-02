@@ -3,6 +3,7 @@ import { INGESTION_REVIEW_WORK_ITEM_STATE, type ArtifactKind, type SourceMemoTyp
 import type { Database, Queryable } from "../db/types.js";
 import { ArtifactRepository } from "../repositories/artifacts.js";
 import { AuditRepository } from "../repositories/audit.js";
+import { ContributorRepository } from "../repositories/catalog.js";
 import {
   ImportUploadSessionRepository,
   type ImportUploadSessionRecord
@@ -40,6 +41,7 @@ interface CreateUploadSessionRequest {
   mimeType: string;
   byteSize: number;
   contentHash: string;
+  contributorText: string | null;
 }
 
 interface FinalizeUploadSessionRequest {
@@ -123,6 +125,7 @@ export class ImportService {
           mimeType: input.mimeType,
           byteSize: input.byteSize,
           contentHash: input.contentHash,
+          contributorText: input.contributorText,
           objectKey: null,
           bucket: null,
           artifactId: null,
@@ -153,6 +156,7 @@ export class ImportService {
         mimeType: input.mimeType,
         byteSize: input.byteSize,
         contentHash: input.contentHash,
+        contributorText: input.contributorText,
         objectKey,
         bucket: this.objectStorage.bucket,
         artifactId,
@@ -332,6 +336,11 @@ async function finalizeWatchedAudioImport(input: {
   const importEvents = new ImportEventRepository(input.client);
   const jobs = new ProcessingJobRepository(input.client);
   const audit = new AuditRepository(input.client);
+  const contributor = await new ContributorRepository(input.client).findOrCreateForWatchedFolder({
+    contributorText: session.contributorText,
+    actorUserId: input.actor.id
+  });
+  const contributorText = contributor === null ? null : session.contributorText?.trim() ?? contributor.displayName;
 
   await artifacts.create({
     id: session.artifactId,
@@ -353,6 +362,8 @@ async function finalizeWatchedAudioImport(input: {
     contentHash: session.contentHash,
     originalPath: session.originalPath,
     originalFileModifiedAt: session.originalFileModifiedAt,
+    contributorText,
+    contributorId: contributor?.id ?? null,
     createdBy: input.actor.id
   });
   await sourceMemoArtifacts.link({
@@ -430,6 +441,11 @@ async function finalizeWatchedTextImport(input: {
   const workItems = new WorkItemRepository(input.client);
   const jobs = new ProcessingJobRepository(input.client);
   const audit = new AuditRepository(input.client);
+  const contributor = await new ContributorRepository(input.client).findOrCreateForWatchedFolder({
+    contributorText: session.contributorText,
+    actorUserId: input.actor.id
+  });
+  const contributorText = contributor === null ? null : session.contributorText?.trim() ?? contributor.displayName;
 
   const objectBody = await input.objectStorage.getObject(session.objectKey);
   const extractedText = decodeTextArtifact(objectBody);
@@ -457,6 +473,8 @@ async function finalizeWatchedTextImport(input: {
     contentHash: session.contentHash,
     originalPath: session.originalPath,
     originalFileModifiedAt: session.originalFileModifiedAt,
+    contributorText,
+    contributorId: contributor?.id ?? null,
     createdBy: input.actor.id
   });
   await sourceMemoArtifacts.link({
@@ -468,8 +486,8 @@ async function finalizeWatchedTextImport(input: {
   const workItem = await workItems.create({
     sourceMemoId: sourceMemo.id,
     projectId: null,
-    contributorText: null,
-    contributorId: null,
+    contributorText,
+    contributorId: contributor?.id ?? null,
     title,
     body: extractedText,
     bodyFormat: "markdown",
@@ -561,6 +579,11 @@ async function finalizeUnsupportedWatchedImport(input: {
   const importEvents = new ImportEventRepository(input.client);
   const workItems = new WorkItemRepository(input.client);
   const audit = new AuditRepository(input.client);
+  const contributor = await new ContributorRepository(input.client).findOrCreateForWatchedFolder({
+    contributorText: session.contributorText,
+    actorUserId: input.actor.id
+  });
+  const contributorText = contributor === null ? null : session.contributorText?.trim() ?? contributor.displayName;
   const title = `Add file type support for ${fileType.extension}`;
 
   await artifacts.create({
@@ -583,6 +606,8 @@ async function finalizeUnsupportedWatchedImport(input: {
     contentHash: session.contentHash,
     originalPath: session.originalPath,
     originalFileModifiedAt: session.originalFileModifiedAt,
+    contributorText,
+    contributorId: contributor?.id ?? null,
     createdBy: input.actor.id
   });
   await sourceMemoArtifacts.link({
@@ -594,8 +619,8 @@ async function finalizeUnsupportedWatchedImport(input: {
   const workItem = await workItems.create({
     sourceMemoId: sourceMemo.id,
     projectId: null,
-    contributorText: null,
-    contributorId: null,
+    contributorText,
+    contributorId: contributor?.id ?? null,
     title,
     body: buildUnsupportedFileTypeBody(session, fileType),
     bodyFormat: "markdown",
@@ -676,7 +701,8 @@ function parseCreateUploadSessionRequest(body: unknown): CreateUploadSessionRequ
     originalFileModifiedAt: parseIsoDateTime(record.originalFileModifiedAt, "originalFileModifiedAt"),
     mimeType: assertNonEmptyString(record.mimeType, "mimeType"),
     byteSize: parseByteSize(record.byteSize),
-    contentHash: assertContentHash(record.contentHash)
+    contentHash: assertContentHash(record.contentHash),
+    contributorText: optionalString(record.contributorText, "contributorText")?.trim() || null
   };
 }
 

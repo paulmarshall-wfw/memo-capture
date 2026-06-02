@@ -265,6 +265,7 @@ interface WatchedFolderSetting {
   id: string;
   path: string;
   archivePath: string;
+  contributorName: string;
   recursive: boolean;
   enabled: boolean;
   stabilityMs: number;
@@ -2404,6 +2405,7 @@ export function App() {
         id: `watch-${crypto.randomUUID()}`,
         path: "",
         archivePath: "",
+        contributorName: "",
         recursive: false,
         enabled: true,
         stabilityMs: 3000
@@ -2581,7 +2583,8 @@ export function App() {
           originalFileModifiedAt: normalizeWatchedFileTimestamp(candidate.createdAt, candidate.modifiedAt),
           mimeType: mimeTypeForExtension(candidate.extension, fileType?.mediaKind),
           byteSize: bytes.byteLength,
-          contentHash
+          contentHash,
+          contributorText: watchFolder.contributorName.trim() === "" ? null : watchFolder.contributorName.trim()
         })
       });
 
@@ -4390,16 +4393,14 @@ export function App() {
                       </button>
                     </div>
                   </div>
-                  <div className="detail-meta">
-                    <span>Machine {machineId ?? "not loaded"}</span>
-                    <span>{watchedFolders.filter((folder) => folder.enabled).length} enabled</span>
-                    <span>{watchedFolderStatus}</span>
-                    <span>{activeFileExtensions.length} active file types</span>
-                    <span>
-                      Last scan {watchedLastScanAt === null ? "not run" : formatRelativeTime(watchedLastScanAt)}
-                    </span>
-                    <span>{watchedLastProcessedCount} processed last scan</span>
-                    <span>{watchedSettingsSaved ? "Settings saved" : "Unsaved settings allowed"}</span>
+                  <div className="detail-meta watched-status-strip">
+                    <span>Machine: {machineId ?? "not loaded"}</span>
+                    <span>Enabled: {watchedFolders.filter((folder) => folder.enabled).length}</span>
+                    <span>Status: {watchedFolderStatus}</span>
+                    <span>Types: {activeFileExtensions.length}</span>
+                    <span>Scan: {watchedLastScanAt === null ? "not run" : formatRelativeTime(watchedLastScanAt)}</span>
+                    <span>Processed: {watchedLastProcessedCount}</span>
+                    <span>{watchedSettingsSaved ? "Saved" : "Unsaved"}</span>
                   </div>
 
                   {watchedFolders.length === 0 ? (
@@ -4409,89 +4410,113 @@ export function App() {
                     </div>
                   ) : null}
 
-                  <div className="watch-folder-list">
+                  <div className="watch-folder-list dense-watch-folder-list">
+                    {watchedFolders.length > 0 ? (
+                      <div className="watch-folder-table-header" aria-hidden="true">
+                        <span>On</span>
+                        <span>Contributor name</span>
+                        <span>Watched path</span>
+                        <span>Archive path</span>
+                        <span>Recursive</span>
+                        <span>Stability</span>
+                        <span>Actions</span>
+                      </div>
+                    ) : null}
                     {watchedFolders.map((folder) => (
                       <article className="watch-folder-row" key={folder.id}>
-                        <div className="field-grid">
-                          <div className="field-group">
-                            <label htmlFor={`${folder.id}-path`}>Watched path</label>
-                            <div className="path-picker-field">
-                              <input
-                                id={`${folder.id}-path`}
-                                value={folder.path}
-                                onChange={(event) => updateWatchedFolder(folder.id, "path", event.currentTarget.value)}
-                              />
-                              <button
-                                className="secondary-button icon-only"
-                                type="button"
-                                title="Choose watched folder"
-                                aria-label="Choose watched folder"
-                                onClick={() => void pickWatchedFolderPath(folder.id, "path")}
-                              >
-                                <FolderOpen size={18} />
-                              </button>
-                            </div>
-                          </div>
-                          <div className="field-group">
-                            <label htmlFor={`${folder.id}-archive`}>Archive path</label>
-                            <div className="path-picker-field">
-                              <input
-                                id={`${folder.id}-archive`}
-                                value={folder.archivePath}
-                                onChange={(event) =>
-                                  updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
-                                }
-                              />
-                              <button
-                                className="secondary-button icon-only"
-                                type="button"
-                                title="Choose archive folder"
-                                aria-label="Choose archive folder"
-                                onClick={() => void pickWatchedFolderPath(folder.id, "archivePath")}
-                              >
-                                <FolderOpen size={18} />
-                              </button>
-                            </div>
+                        <label className="watch-folder-check" title="Enable watched folder">
+                          <span className="sr-only">Enabled</span>
+                          <input
+                            type="checkbox"
+                            checked={folder.enabled}
+                            onChange={(event) =>
+                              updateWatchedFolder(folder.id, "enabled", event.currentTarget.checked)
+                            }
+                          />
+                        </label>
+                        <label className="watch-folder-cell">
+                          <span className="watch-folder-mobile-label">Contributor name</span>
+                          <input
+                            id={`${folder.id}-contributor`}
+                            value={folder.contributorName}
+                            placeholder="Contributor name"
+                            onChange={(event) =>
+                              updateWatchedFolder(folder.id, "contributorName", event.currentTarget.value)
+                            }
+                          />
+                        </label>
+                        <div className="watch-folder-cell">
+                          <label className="watch-folder-mobile-label" htmlFor={`${folder.id}-path`}>
+                            Watched path
+                          </label>
+                          <div className="path-picker-field">
+                            <input
+                              id={`${folder.id}-path`}
+                              value={folder.path}
+                              onChange={(event) => updateWatchedFolder(folder.id, "path", event.currentTarget.value)}
+                            />
+                            <button
+                              className="secondary-button icon-only"
+                              type="button"
+                              title="Choose watched folder"
+                              aria-label="Choose watched folder"
+                              onClick={() => void pickWatchedFolderPath(folder.id, "path")}
+                            >
+                              <FolderOpen size={18} />
+                            </button>
                           </div>
                         </div>
-                        <div className="watch-folder-controls">
-                          <label>
-                            <input
-                              type="checkbox"
-                              checked={folder.enabled}
-                              onChange={(event) =>
-                                updateWatchedFolder(folder.id, "enabled", event.currentTarget.checked)
-                              }
-                            />
-                            Enabled
+                        <div className="watch-folder-cell">
+                          <label className="watch-folder-mobile-label" htmlFor={`${folder.id}-archive`}>
+                            Archive path
                           </label>
-                          <label>
+                          <div className="path-picker-field">
                             <input
-                              type="checkbox"
-                              checked={folder.recursive}
+                              id={`${folder.id}-archive`}
+                              value={folder.archivePath}
                               onChange={(event) =>
-                                updateWatchedFolder(folder.id, "recursive", event.currentTarget.checked)
+                                updateWatchedFolder(folder.id, "archivePath", event.currentTarget.value)
                               }
                             />
-                            Recursive
-                          </label>
-                          <div className="field-group compact">
-                            <label htmlFor={`${folder.id}-stability`}>Stability ms</label>
-                            <input
-                              id={`${folder.id}-stability`}
-                              type="number"
-                              min={1000}
-                              step={500}
-                              value={folder.stabilityMs}
-                              onChange={(event) =>
-                                updateWatchedFolder(
-                                  folder.id,
-                                  "stabilityMs",
-                                  Number.parseInt(event.currentTarget.value, 10) || 3000
-                                )
-                              }
-                            />
+                            <button
+                              className="secondary-button icon-only"
+                              type="button"
+                              title="Choose archive folder"
+                              aria-label="Choose archive folder"
+                              onClick={() => void pickWatchedFolderPath(folder.id, "archivePath")}
+                            >
+                              <FolderOpen size={18} />
+                            </button>
                           </div>
+                        </div>
+                        <label className="watch-folder-check" title="Scan child folders">
+                          <span className="sr-only">Recursive</span>
+                          <input
+                            type="checkbox"
+                            checked={folder.recursive}
+                            onChange={(event) =>
+                              updateWatchedFolder(folder.id, "recursive", event.currentTarget.checked)
+                            }
+                          />
+                        </label>
+                        <label className="watch-folder-cell">
+                          <span className="watch-folder-mobile-label">Stability ms</span>
+                          <input
+                            id={`${folder.id}-stability`}
+                            type="number"
+                            min={1000}
+                            step={500}
+                            value={folder.stabilityMs}
+                            onChange={(event) =>
+                              updateWatchedFolder(
+                                folder.id,
+                                "stabilityMs",
+                                Number.parseInt(event.currentTarget.value, 10) || 3000
+                              )
+                            }
+                          />
+                        </label>
+                        <div className="watch-folder-actions">
                           <button
                             className="secondary-button icon-only"
                             type="button"
@@ -5604,6 +5629,7 @@ function readWatchedFolderSettings(): WatchedFolderSetting[] {
         id: typeof item.id === "string" && item.id !== "" ? item.id : `watch-${crypto.randomUUID()}`,
         path: typeof item.path === "string" ? item.path : "",
         archivePath: typeof item.archivePath === "string" ? item.archivePath : "",
+        contributorName: typeof item.contributorName === "string" ? item.contributorName : "",
         recursive: item.recursive === true,
         enabled: item.enabled !== false,
         stabilityMs: typeof item.stabilityMs === "number" && item.stabilityMs >= 1000 ? item.stabilityMs : 3000

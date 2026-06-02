@@ -92,6 +92,7 @@ export class TranscriptionService {
       });
       const workItem = await ensureAudioWorkItem({
         client,
+        sourceMemo,
         sourceMemoId: input.sourceMemoId,
         transcriptText,
         actorUserId: originalArtifact.createdBy,
@@ -135,6 +136,7 @@ export class TranscriptionService {
       const originalArtifact = await new ArtifactRepository(client).findPrimaryForSourceMemo(input.sourceMemoId);
       const workItem = await ensureAudioWorkItem({
         client,
+        sourceMemo,
         sourceMemoId: input.sourceMemoId,
         transcriptText: "",
         actorUserId: input.actorUserId,
@@ -187,6 +189,10 @@ async function storeTranscriptArtifact(input: {
 
 async function ensureAudioWorkItem(input: {
   client: Queryable;
+  sourceMemo: {
+    contributorText?: string | null;
+    contributorId?: string | null;
+  };
   sourceMemoId: string;
   transcriptText: string;
   actorUserId: string | null;
@@ -215,8 +221,8 @@ async function ensureAudioWorkItem(input: {
   const workItem = await workItems.create({
     sourceMemoId: input.sourceMemoId,
     projectId: null,
-    contributorText: null,
-    contributorId: null,
+    contributorText: input.sourceMemo.contributorText ?? null,
+    contributorId: input.sourceMemo.contributorId ?? null,
     title: deriveAudioTitle(input.originalFilename),
     body: input.transcriptText,
     bodyFormat: "markdown",

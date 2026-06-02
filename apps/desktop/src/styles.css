@@ -61,6 +61,15 @@
   box-sizing: border-box;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -1730,7 +1739,19 @@ button:disabled {
 }
 
 .watched-settings-section {
-  gap: 12px;
+  gap: 8px;
+}
+
+.watched-status-strip {
+  gap: 6px;
+}
+
+.watched-status-strip span {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-muted);
+  line-height: 1.25;
 }
 
 .watched-candidate-list {
@@ -1951,33 +1972,90 @@ button:disabled {
 
 .watch-folder-list {
   display: grid;
-  gap: 12px;
+  gap: 4px;
+}
+
+.watch-folder-table-header,
+.watch-folder-row {
+  display: grid;
+  grid-template-columns:
+    36px minmax(120px, 0.7fr) minmax(180px, 1.2fr) minmax(180px, 1.2fr)
+    70px 92px 42px;
+  align-items: center;
+  gap: 6px;
+}
+
+.watch-folder-table-header {
+  padding: 0 8px 2px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 780;
+  text-transform: uppercase;
 }
 
 .watch-folder-row {
-  display: grid;
-  gap: 12px;
-  padding: 12px;
+  min-width: 0;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
 }
 
-.watch-folder-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px;
+.watch-folder-cell {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
 }
 
-.watch-folder-controls label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 38px;
+.watch-folder-cell input {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.watch-folder-cell input[type="number"] {
+  padding-right: 4px;
+}
+
+.watch-folder-mobile-label {
+  display: none;
   color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 640;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.watch-folder-check,
+.watch-folder-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.watch-folder-check {
+  min-height: 30px;
+}
+
+.watch-folder-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.dense-watch-folder-list .path-picker-field {
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 4px;
+}
+
+.dense-watch-folder-list .icon-only {
+  width: 30px;
+  min-height: 30px;
 }
 
 .field-group.compact {
@@ -2150,6 +2228,8 @@ button:disabled {
   .settings-row-header,
   .settings-table-header,
   .settings-table-row,
+  .watch-folder-table-header,
+  .watch-folder-row,
   .settings-inline-form,
   .workflow-validation-grid,
   .project-row-top,
@@ -2161,6 +2241,24 @@ button:disabled {
   .settings-row-header,
   .prompt-editor-header {
     display: grid;
+  }
+
+  .watch-folder-table-header {
+    display: none;
+  }
+
+  .watch-folder-row {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .watch-folder-mobile-label {
+    display: block;
+  }
+
+  .watch-folder-check,
+  .watch-folder-actions {
+    justify-content: flex-start;
   }
 
   .workspace-header-actions,

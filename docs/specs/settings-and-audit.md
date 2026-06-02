@@ -36,6 +36,7 @@ Keeping canonical classification, prompt, provider, and export settings in the b
 
 - watched folder paths
 - archive folder paths
+- watched-folder contributor names
 - local staging/cache path
 - upload behavior
 - local notification preferences
@@ -44,6 +45,8 @@ Keeping canonical classification, prompt, provider, and export settings in the b
 - watched-folder recursion setting
 
 Desktop-local settings do not need backend audit in V1.
+
+Watched-folder contributor names are desktop-local configuration, but imported files pass the configured contributor name to the backend. The backend normalizes the name by trimming, lowercasing, and removing non-alphanumeric characters to find or create a hidden contributor key on canonical contributor records. The key is not shown in the UI.
 
 ## Settings Tables
 

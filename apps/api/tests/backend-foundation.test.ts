@@ -12,6 +12,8 @@ import { createAppServicesFromDatabase } from "../src/services/app.js";
 import { HttpError } from "../src/services/errors.js";
 import { createApiServer } from "../src/server.js";
 import { WorkItemRepository } from "../src/repositories/work-items.js";
+import { ObjectStorageService } from "../src/services/object-storage.js";
+import { TranscriptionService } from "../src/services/transcription.js";
 
 const originalFileModifiedAt = "2026-05-28T23:45:00.000Z";
 
@@ -448,6 +450,69 @@ test("text import classify_item promotes only on one confident active project ma
   assert.equal(db.auditEvents.some((event) => event.event_name === "work_item.workflow_action_executed"), true);
 });
 
+test("watched text imports link contributor records by normalized contributor name", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedMediaParserRegistry(db);
+  db.fileTypes.push({
+    id: "file-type-md",
+    extension: ".md",
+    media_kind: "text",
+    capability_state: "active",
+    parser_key: "markdown",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  async function importText(filename: string, text: string, contributorText: string | null) {
+    const body = Buffer.from(text, "utf8");
+    const uploadSession = await services.imports.createUploadSession(
+      {
+        machineId: "machine-1",
+        watchFolderId: "watch-1",
+        sourceType: "watched_text_file",
+        originalFilename: filename,
+        originalPath: `/watched/${filename}`,
+        originalFileModifiedAt,
+        mimeType: "text/markdown",
+        byteSize: body.byteLength,
+        contentHash: `sha256:${createHash("sha256").update(body).digest("hex")}`,
+        contributorText
+      },
+      session.user,
+      `request-${filename}-create`
+    );
+    await services.imports.uploadSessionArtifact(uploadSession.sessionId, body);
+    await services.imports.finalizeUploadSession(
+      uploadSession.sessionId,
+      { machineId: "machine-1", archivePlanned: true },
+      session.user,
+      `request-${filename}-finalize`
+    );
+  }
+
+  await importText("first.md", "First memo", "Paul-Marshall!");
+  await importText("second.md", "Second memo", "paul marshall");
+  await importText("empty.md", "Empty contributor memo", "***");
+
+  assert.equal(db.contributors.length, 1);
+  assert.equal(db.contributors[0]?.contributor_key, "paulmarshall");
+  assert.equal(db.contributors[0]?.display_name, "Paul-Marshall!");
+  assert.equal(db.sourceMemos[0]?.contributor_text, "Paul-Marshall!");
+  assert.equal(db.workItems[0]?.contributor_text, "Paul-Marshall!");
+  assert.equal(db.sourceMemos[0]?.contributor_id, db.contributors[0]?.id);
+  assert.equal(db.workItems[0]?.contributor_id, db.contributors[0]?.id);
+  assert.equal(db.workItems[1]?.contributor_id, db.contributors[0]?.id);
+  assert.equal(db.workItems[1]?.contributor_text, "paul marshall");
+  assert.equal(db.sourceMemos[2]?.contributor_text, null);
+  assert.equal(db.workItems[2]?.contributor_id, null);
+});
+
 test("text import classify_item leaves ambiguous project matches in review", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -529,10 +594,11 @@ test("audio transcription parser finalization queues transcription jobs", async 
       originalFilename: "memo.m4a",
       originalPath: "/watched/memo.m4a",
       originalFileModifiedAt,
-      mimeType: "audio/mp4",
-      byteSize: body.byteLength,
-      contentHash
-    },
+        mimeType: "audio/mp4",
+        byteSize: body.byteLength,
+        contentHash,
+        contributorText: "Audio Contributor"
+      },
     session.user,
     "request-1"
   );
@@ -551,6 +617,19 @@ test("audio transcription parser finalization queues transcription jobs", async 
   assert.equal(db.processingJobs[0]?.job_kind, "transcribe_audio");
   assert.equal(db.processingJobs[0]?.work_item_id, null);
   assert.equal(db.workItems.length, 0);
+  assert.equal(db.sourceMemos[0]?.contributor_text, "Audio Contributor");
+  assert.equal(db.sourceMemos[0]?.contributor_id, db.contributors[0]?.id);
+
+  const transcription = new TranscriptionService(db, new ObjectStorageService(config.objectStorage), config);
+  await transcription.ensureRecoverableAudioWorkItem({
+    sourceMemoId: String(finalized.sourceMemoId),
+    actorUserId: session.user.id,
+    requestId: "request-recovery"
+  });
+
+  assert.equal(db.workItems.length, 1);
+  assert.equal(db.workItems[0]?.contributor_text, "Audio Contributor");
+  assert.equal(db.workItems[0]?.contributor_id, db.contributors[0]?.id);
 });
 
 test("work item repository exposes and orders by original file modified time", async () => {
@@ -1937,8 +2016,11 @@ class FakeDatabase implements Database {
   readonly fileTypes: Record<string, unknown>[] = [];
   readonly importUploadSessions: Record<string, unknown>[] = [];
   readonly sourceMemos: Record<string, unknown>[] = [];
+  readonly sourceMemoArtifacts: Record<string, unknown>[] = [];
+  readonly artifacts: Record<string, unknown>[] = [];
   readonly workItems: Record<string, unknown>[] = [];
   readonly projects: Record<string, unknown>[] = [];
+  readonly contributors: Record<string, unknown>[] = [];
   readonly importEvents: Record<string, unknown>[] = [];
   readonly processingJobs: Record<string, unknown>[] = [];
   readonly auditEvents: Record<string, unknown>[] = [];
@@ -1995,6 +2077,42 @@ class FakeDatabase implements Database {
       return rows(this.extractionSettings === null ? [] : [this.extractionSettings as Row]);
     }
 
+    if (text.includes("insert into contributors")) {
+      const contributorKey = values[2] === null ? null : String(values[2]);
+      const existing =
+        contributorKey === null ? undefined : this.contributors.find((row) => row.contributor_key === contributorKey);
+      if (existing !== undefined) {
+        return rows([existing as Row]);
+      }
+      const row = {
+        id: values[0],
+        display_name: values[1],
+        contributor_key: values[2],
+        is_active: true,
+        merged_into_contributor_id: null,
+        created_by: values[3],
+        updated_by: values[3],
+        created_at: "2026-05-29T00:00:00.000Z",
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.contributors.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("update contributors")) {
+      const contributor = this.contributors.find((row) => row.id === values[0]);
+      if (contributor !== undefined) {
+        contributor.display_name = values[1];
+        contributor.contributor_key = values[2];
+        contributor.updated_by = values[3];
+      }
+      return rows(contributor === undefined ? [] : [contributor as Row]);
+    }
+
+    if (text.includes("from contributors")) {
+      return rows([...this.contributors] as Row[]);
+    }
+
     if (text.includes("insert into source_memos")) {
       this.sourceMemos.push({
         id: values[0],
@@ -2004,9 +2122,47 @@ class FakeDatabase implements Database {
         extracted_text: values[4],
         current_transcript_text: values[5],
         content_hash: values[6],
-        original_file_modified_at: values[9]
+        original_path: values[7],
+        archive_path: values[8],
+        original_file_modified_at: values[9],
+        contributor_text: values[10],
+        contributor_id: values[11]
       });
       return rows([]);
+    }
+
+    if (text.includes("insert into artifacts")) {
+      this.artifacts.push({
+        id: values[0],
+        artifact_kind: values[1],
+        object_key: values[2],
+        bucket: values[3],
+        original_filename: values[4],
+        mime_type: values[5],
+        byte_size: values[6],
+        content_hash: values[7],
+        layout_version: values[8],
+        created_by: values[9],
+        created_at: "2026-05-29T00:00:00.000Z"
+      });
+      return rows([]);
+    }
+
+    if (text.includes("insert into source_memo_artifacts")) {
+      this.sourceMemoArtifacts.push({
+        source_memo_id: values[0],
+        artifact_id: values[1],
+        relationship: values[2]
+      });
+      return rows([]);
+    }
+
+    if (text.includes("from source_memo_artifacts") && text.includes("join artifacts")) {
+      const link = this.sourceMemoArtifacts.find(
+        (row) => row.source_memo_id === values[0] && row.relationship === "primary_original"
+      );
+      const artifact = this.artifacts.find((row) => row.id === link?.artifact_id);
+      return rows(artifact === undefined ? [] : [artifact as Row]);
     }
 
     if (text.includes("delete from projects")) {
@@ -2232,12 +2388,13 @@ class FakeDatabase implements Database {
         mime_type: values[8],
         byte_size: values[9],
         content_hash: values[10],
-        object_key: values[11],
-        bucket: values[12],
-        artifact_id: values[13],
-        reserved_source_memo_id: values[14],
-        duplicate_of_source_memo_id: values[15],
-        created_by: values[16],
+        contributor_text: values[11],
+        object_key: values[12],
+        bucket: values[13],
+        artifact_id: values[14],
+        reserved_source_memo_id: values[15],
+        duplicate_of_source_memo_id: values[16],
+        created_by: values[17],
         created_at: "2026-05-29T00:00:00.000Z",
         updated_at: "2026-05-29T00:00:00.000Z",
         uploaded_at: null,

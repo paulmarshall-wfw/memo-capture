@@ -138,7 +138,7 @@ The backend creates an upload/import session first.
 
 1. Desktop detects stable supported file.
 2. Desktop computes content hash.
-3. Desktop calls create upload session with filename, original path, content hash, byte size, MIME type, and the file's filesystem creation timestamp, falling back to modified timestamp only when creation time is unavailable.
+3. Desktop calls create upload session with filename, original path, content hash, byte size, MIME type, the file's filesystem creation timestamp, and the watched folder's contributor name when configured, falling back to modified timestamp only when creation time is unavailable.
 4. Backend checks exact duplicate by content hash.
 5. Backend returns duplicate result or upload authorization.
 6. Desktop uploads artifact.
@@ -146,7 +146,7 @@ The backend creates an upload/import session first.
 
 The source file creation timestamp is stored as source memo provenance. Work queue rows and the work item detail header display this original memo time; workflow processing timestamps remain available through audit, diagnostics, and logs.
 8. Backend verifies object metadata/hash.
-9. Backend creates artifact, source memo, import event, work item, and processing jobs.
+9. Backend creates artifact, source memo, import event, work item, and processing jobs. If a watched-folder contributor name was supplied, the backend stores it as contributor text and links the source memo/work item to the contributor record found or created by the hidden normalized contributor key.
 10. Desktop archives original after backend confirms managed artifact storage.
 
 If upload succeeds but source/work-item creation fails:
@@ -171,7 +171,8 @@ Request:
   "originalPath": "/local/path/memo.m4a",
   "mimeType": "audio/mp4",
   "byteSize": 12345,
-  "contentHash": "sha256:..."
+  "contentHash": "sha256:...",
+  "contributorText": "Paul Marshall"
 }
 ```
 

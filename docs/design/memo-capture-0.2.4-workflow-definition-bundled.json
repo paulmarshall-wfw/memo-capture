@@ -1,0 +1,343 @@
+{
+  "schemaVersion": "0.7.0",
+  "appName": "memo-capture",
+  "workflowVersion": "0.2.4",
+  "id": "memo-capture_workflow",
+  "stateMachine": {
+    "id": "memo_capture_state",
+    "definitionVersion": "0.2.4"
+  },
+  "states": [
+    {
+      "id": "needs_review",
+      "visible": true
+    },
+    {
+      "id": "memo",
+      "visible": true
+    },
+    {
+      "id": "accepted",
+      "visible": true
+    },
+    {
+      "id": "parked",
+      "visible": true
+    },
+    {
+      "id": "rejected",
+      "visible": true
+    },
+    {
+      "id": "ignored",
+      "visible": true
+    },
+    {
+      "id": "failed",
+      "visible": true
+    }
+  ],
+  "actions": [
+    {
+      "id": "accepted.memo",
+      "label": "Undo Acceptance",
+      "from": "accepted",
+      "to": "memo",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "review.failed",
+      "label": "Fail",
+      "from": "needs_review",
+      "to": "failed",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "review.ignored",
+      "label": "Ignore",
+      "from": "needs_review",
+      "to": "ignored",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "review.memo",
+      "label": "Mark as New Memo",
+      "from": "needs_review",
+      "to": "memo",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "memo.accepted",
+      "label": "Accept",
+      "from": "memo",
+      "to": "accepted",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "memo.failed",
+      "label": "Fail",
+      "from": "memo",
+      "to": "failed",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "memo.ignored",
+      "label": "Ignore",
+      "from": "memo",
+      "to": "ignored",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "memo.parked",
+      "label": "Park",
+      "from": "memo",
+      "to": "parked",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "memo.rejected",
+      "label": "Reject",
+      "from": "memo",
+      "to": "rejected",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "parked.accepted",
+      "label": "Accept",
+      "from": "parked",
+      "to": "accepted",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "parked.failed",
+      "label": "Fail",
+      "from": "parked",
+      "to": "failed",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "parked.ignored",
+      "label": "Ignore",
+      "from": "parked",
+      "to": "ignored",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "parked.memo",
+      "label": "Mark as Memo",
+      "from": "parked",
+      "to": "memo",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "parked.rejected",
+      "label": "Reject",
+      "from": "parked",
+      "to": "rejected",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "failed.review",
+      "label": "Review",
+      "from": "failed",
+      "to": "needs_review",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "rejected.memo",
+      "label": "Mark as Memo",
+      "from": "rejected",
+      "to": "memo",
+      "trigger": "user",
+      "visible": true
+    },
+    {
+      "id": "ignored.memo",
+      "label": "Mark as Memo",
+      "from": "ignored",
+      "to": "memo",
+      "trigger": "user",
+      "visible": true
+    }
+  ],
+  "buckets": [
+    {
+      "id": "review",
+      "label": "Review",
+      "visible": true,
+      "states": [
+        "needs_review"
+      ]
+    },
+    {
+      "id": "memos",
+      "label": "Memos",
+      "visible": true,
+      "states": [
+        "memo"
+      ]
+    },
+    {
+      "id": "accepted",
+      "label": "Accepted",
+      "visible": true,
+      "states": [
+        "accepted"
+      ]
+    },
+    {
+      "id": "parked",
+      "label": "Parked",
+      "visible": true,
+      "states": [
+        "parked"
+      ]
+    },
+    {
+      "id": "archive",
+      "label": "Archive",
+      "visible": true,
+      "states": [
+        "ignored",
+        "rejected"
+      ]
+    },
+    {
+      "id": "failures",
+      "label": "Failures",
+      "visible": true,
+      "states": [
+        "failed"
+      ]
+    }
+  ],
+  "hooks": [
+    {
+      "id": "on_state_entry_accepted",
+      "phase": "on_state_entry",
+      "targetType": "state",
+      "targetId": "accepted",
+      "handlerKey": "create_accepted_snapshot"
+    },
+    {
+      "id": "on_state_entry_needs_review",
+      "phase": "on_state_entry",
+      "targetType": "state",
+      "targetId": "needs_review",
+      "handlerKey": "classify_item"
+    },
+    {
+      "id": "while_in_state_memo",
+      "phase": "while_in_state",
+      "targetType": "state",
+      "targetId": "memo",
+      "schedule": {
+        "trigger": "every_interval",
+        "intervalMs": 900000
+      },
+      "handlerKey": "nominate_tags"
+    }
+  ],
+  "embeddedStateMachineDefinition": {
+    "schemaVersion": "0.3.0",
+    "appName": "memo-capture",
+    "definitionVersion": "0.2.4",
+    "id": "memo_capture_state",
+    "states": [
+      "needs_review",
+      "memo",
+      "accepted",
+      "parked",
+      "rejected",
+      "ignored",
+      "failed"
+    ],
+    "entryStates": [],
+    "terminalStates": [],
+    "transitions": [
+      {
+        "from": "accepted",
+        "to": "memo"
+      },
+      {
+        "from": "needs_review",
+        "to": "failed"
+      },
+      {
+        "from": "needs_review",
+        "to": "ignored"
+      },
+      {
+        "from": "needs_review",
+        "to": "memo"
+      },
+      {
+        "from": "memo",
+        "to": "accepted"
+      },
+      {
+        "from": "memo",
+        "to": "failed"
+      },
+      {
+        "from": "memo",
+        "to": "ignored"
+      },
+      {
+        "from": "memo",
+        "to": "parked"
+      },
+      {
+        "from": "memo",
+        "to": "rejected"
+      },
+      {
+        "from": "parked",
+        "to": "accepted"
+      },
+      {
+        "from": "parked",
+        "to": "failed"
+      },
+      {
+        "from": "parked",
+        "to": "ignored"
+      },
+      {
+        "from": "parked",
+        "to": "memo"
+      },
+      {
+        "from": "parked",
+        "to": "rejected"
+      },
+      {
+        "from": "failed",
+        "to": "needs_review"
+      },
+      {
+        "from": "rejected",
+        "to": "memo"
+      },
+      {
+        "from": "ignored",
+        "to": "memo"
+      }
+    ]
+  }
+}

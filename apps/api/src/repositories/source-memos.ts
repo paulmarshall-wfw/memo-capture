@@ -26,6 +26,8 @@ export interface SourceMemoRecord {
   extractedText?: string | null;
   currentTranscriptText?: string | null;
   originalFileModifiedAt?: string | null;
+  contributorText?: string | null;
+  contributorId?: string | null;
 }
 
 interface SourceMemoRow extends Record<string, unknown> {
@@ -36,6 +38,8 @@ interface SourceMemoRow extends Record<string, unknown> {
   extracted_text: string | null;
   current_transcript_text: string | null;
   original_file_modified_at: Date | string | null;
+  contributor_text: string | null;
+  contributor_id: string | null;
 }
 
 export class SourceMemoRepository {
@@ -85,6 +89,7 @@ export class SourceMemoRepository {
   async findById(sourceMemoId: string): Promise<SourceMemoRecord | null> {
     const result = await this.db.query<SourceMemoRow>(
       `select id, source_type, primary_artifact_id, content_hash, extracted_text, current_transcript_text, original_file_modified_at
+              , contributor_text, contributor_id
        from source_memos
        where id = $1`,
       [sourceMemoId]
@@ -100,7 +105,9 @@ export class SourceMemoRepository {
           contentHash: row.content_hash,
           extractedText: row.extracted_text,
           currentTranscriptText: row.current_transcript_text,
-          originalFileModifiedAt: row.original_file_modified_at === null ? null : toIso(row.original_file_modified_at)
+          originalFileModifiedAt: row.original_file_modified_at === null ? null : toIso(row.original_file_modified_at),
+          contributorText: row.contributor_text,
+          contributorId: row.contributor_id
         };
   }
 

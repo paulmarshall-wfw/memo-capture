@@ -32,6 +32,10 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /\/api\/workflow\/buckets/);
   assert.match(appSource, /Active watching every/);
   assert.match(appSource, /watchedFolderPollingIntervalMs/);
+  assert.match(appSource, /contributorName: ""/);
+  assert.match(appSource, /Contributor name/);
+  assert.match(appSource, /contributorText: watchFolder\.contributorName\.trim\(\)/);
+  assert.match(appSource, /dense-watch-folder-list/);
   assert.match(appSource, /label="Strong"/);
   assert.match(appSource, /label="Related"/);
   assert.match(appSource, /label="Weak"/);

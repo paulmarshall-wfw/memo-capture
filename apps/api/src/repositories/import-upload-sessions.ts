@@ -13,6 +13,7 @@ export interface ImportUploadSessionInput {
   mimeType: string;
   byteSize: number;
   contentHash: string;
+  contributorText: string | null;
   objectKey: string | null;
   bucket: string | null;
   artifactId: string | null;
@@ -40,6 +41,7 @@ interface ImportUploadSessionRow extends Record<string, unknown> {
   mime_type: string;
   byte_size: string | number;
   content_hash: string;
+  contributor_text: string | null;
   object_key: string | null;
   bucket: string | null;
   artifact_id: string | null;
@@ -69,6 +71,7 @@ export class ImportUploadSessionRepository {
          mime_type,
          byte_size,
          content_hash,
+         contributor_text,
          object_key,
          bucket,
          artifact_id,
@@ -78,7 +81,7 @@ export class ImportUploadSessionRepository {
          created_at,
          updated_at
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, now(), now())
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, now(), now())
        returning *`,
       [
         input.id,
@@ -92,6 +95,7 @@ export class ImportUploadSessionRepository {
         input.mimeType,
         input.byteSize,
         input.contentHash,
+        input.contributorText,
         input.objectKey,
         input.bucket,
         input.artifactId,
@@ -158,6 +162,7 @@ function mapSession(row: ImportUploadSessionRow): ImportUploadSessionRecord {
     mimeType: row.mime_type,
     byteSize: typeof row.byte_size === "number" ? row.byte_size : Number.parseInt(row.byte_size, 10),
     contentHash: row.content_hash,
+    contributorText: row.contributor_text,
     objectKey: row.object_key,
     bucket: row.bucket,
     artifactId: row.artifact_id,
