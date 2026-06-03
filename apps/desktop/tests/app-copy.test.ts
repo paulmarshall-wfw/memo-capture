@@ -41,6 +41,8 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /label="Weak"/);
   assert.match(appSource, /Suggested new work item/);
   assert.match(appSource, /No pending suggested work items/);
+  assert.match(appSource, /enabled in Settings, but the API runtime is disabled/);
+  assert.match(appSource, /LLM_PROVIDER=local-dev/);
   assert.match(appSource, /AI suggestion rejected/);
   assert.doesNotMatch(appSource, />\s*Dismiss\s*</);
   assert.match(appSource, /Suppressed Tags/);

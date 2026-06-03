@@ -43,7 +43,7 @@ See `.env.example` for the current non-secret template.
 
 ## AI And Transcription
 
-- `LLM_PROVIDER`: configured LLM provider, or `disabled`.
+- `LLM_PROVIDER`: configured LLM runtime provider. Supported values are `disabled` and `local-dev`; Settings must also enable the matching provider row before AI expansion can run.
 - `LLM_MODEL`: model label recorded on AI expansion runs. Defaults to `memo-capture-local-dev-expander-v1`.
 - `TRANSCRIPTION_PROVIDER`: configured transcription provider. Supported values are `disabled`, `local-dev`, and `whisper-cpp`. Use `whisper-cpp` for local V1 transcription once the binary and model are configured.
 - `TRANSCRIPTION_MODEL`: model label recorded on transcription jobs, such as `base.en`.

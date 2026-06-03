@@ -2,6 +2,7 @@ import type { ApiConfig } from "../config.js";
 import type { Database } from "../db/types.js";
 import { createPgDatabase } from "../db/postgres.js";
 import type { Logger } from "../logger.js";
+import type { AiSuggestionRecord } from "../repositories/ai-suggestions.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { UserRepository } from "../repositories/users.js";
 import { ArtifactService } from "./artifacts.js";
@@ -40,10 +41,24 @@ export interface AppServices {
 }
 
 export interface AiOperations {
-  listSuggestions(workItemId: string): Promise<unknown>;
-  expandWorkItem(workItemId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
-  acceptSuggestion(suggestionId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
-  dismissSuggestion(suggestionId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  listSuggestions(workItemId: string): Promise<{ suggestions: AiSuggestionRecord[] }>;
+  expandWorkItem(
+    workItemId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<{
+    expandedWorkItem: { title: string; body: string; tags: string[] };
+    suggestions: AiSuggestionRecord[];
+    providerName: string;
+    modelName: string;
+    validation: Record<string, unknown>;
+  }>;
+  acceptSuggestion(
+    suggestionId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<{ suggestion: AiSuggestionRecord; workItem: WorkItemRecord }>;
+  dismissSuggestion(suggestionId: string, actor: AppUserRecord, requestId: string): Promise<{ suggestion: AiSuggestionRecord }>;
 }
 
 export interface AuditOperations {

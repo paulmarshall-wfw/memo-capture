@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildWorkItemExpansionPrompt, type WorkItemExpansionContext } from "../src/services/llm.js";
+import { buildWorkItemExpansionPrompt, createLlmProvider, type WorkItemExpansionContext } from "../src/services/llm.js";
 
 test("work item expansion prompt starts with freeform text and uses text-only context", () => {
   const context: WorkItemExpansionContext = {
@@ -41,4 +41,11 @@ test("work item expansion prompt starts with freeform text and uses text-only co
   assert.match(prompt, /Source type: watched_audio_file/);
   assert.match(prompt, /Stored transcript text only\./);
   assert.doesNotMatch(prompt, /Project context/);
+});
+
+test("disabled LLM runtime reports the Settings/runtime mismatch", () => {
+  assert.throws(
+    () => createLlmProvider({ provider: "disabled", modelName: "memo-capture-local-dev-expander-v1" }, "local-dev", ""),
+    /enabled in Settings, but this API runtime is disabled/
+  );
 });

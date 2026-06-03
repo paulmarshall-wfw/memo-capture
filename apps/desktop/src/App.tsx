@@ -1352,6 +1352,35 @@ export function App() {
     const fileTypes = settingsSummary?.fileTypes ?? [];
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
+  const llmProvider = useMemo(() => {
+    const providers = settingsSummary?.providers ?? [];
+    return (
+      providers.find((provider) => provider.providerKind === "llm" && provider.providerName === "local-dev") ??
+      providers.find((provider) => provider.providerKind === "llm") ??
+      null
+    );
+  }, [settingsSummary]);
+  const aiExpansionUnavailableReason = useMemo(() => {
+    if (settingsSummary === null) {
+      return null;
+    }
+    if (llmProvider === null) {
+      return "No LLM provider is configured.";
+    }
+    if (!llmProvider.enabled) {
+      return "Enable an LLM provider in Settings before generating.";
+    }
+    if (llmProvider.runtimeProvider === "disabled") {
+      return "The LLM provider is enabled in Settings, but the API runtime is disabled. Restart the API with LLM_PROVIDER=local-dev.";
+    }
+    if (llmProvider.runtimeProvider !== llmProvider.providerName) {
+      return `The enabled LLM provider (${llmProvider.providerName}) does not match the API runtime (${llmProvider.runtimeProvider}).`;
+    }
+    if (!llmProvider.secretConfigured) {
+      return "The LLM provider secret is not configured for this runtime.";
+    }
+    return null;
+  }, [llmProvider, settingsSummary]);
   const watchableFolders = useMemo(
     () =>
       watchedFolders.filter(
@@ -2728,6 +2757,10 @@ export function App() {
     if (accessToken === null || selectedItem === null) {
       return;
     }
+    if (aiExpansionUnavailableReason !== null) {
+      setStatusMessage(aiExpansionUnavailableReason);
+      return;
+    }
     setAiExpanding(true);
     setStatusMessage(null);
     try {
@@ -3921,7 +3954,8 @@ export function App() {
                     <button
                       className="secondary-button"
                       type="button"
-                      disabled={aiExpanding || hasDraftChanges}
+                      disabled={aiExpanding || hasDraftChanges || aiExpansionUnavailableReason !== null}
+                      title={aiExpansionUnavailableReason ?? "Generate AI expansion"}
                       onClick={() => void requestAiExpansion()}
                     >
                       {aiExpanding ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
@@ -3929,6 +3963,9 @@ export function App() {
                     </button>
                   </div>
                   {hasDraftChanges ? <span className="muted-text">Save or reset edits before generating</span> : null}
+                  {aiExpansionUnavailableReason === null ? null : (
+                    <span className="muted-text">{aiExpansionUnavailableReason}</span>
+                  )}
                   <div className="suggestion-list ai-suggestion-list" aria-label="Suggested new work items">
                     {aiSuggestions.length === 0 ? <span className="muted-text">No pending suggested work items</span> : null}
                     {aiSuggestions.map((suggestion) => (

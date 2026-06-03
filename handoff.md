@@ -4,19 +4,27 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-03T20:00:18Z
+- Created timestamp UTC: 2026-06-03T20:59:13Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: AI work item review and suggestion flow, completed-task ledger update, native app rebuild, and handoff refresh.
+- Session scope: AI provider runtime mismatch fix, launcher environment override support, completed-task ledger update, native app rebuild, and handoff refresh.
 
 ### Checkpoint Status
 
-- Git HEAD: `6767510`
+- Git HEAD: `ce538b3`
 - Working tree: dirty
 - Dirty files intentionally in scope:
+  - `apps/api/src/services/app.ts`
+  - `apps/api/src/services/llm.ts`
+  - `apps/api/tests/llm-prompt.test.ts`
+  - `apps/desktop/src/App.tsx`
+  - `apps/desktop/tests/app-copy.test.ts`
+  - `docs/env.md`
   - `docs/completed-tasks.md`
   - `handoff.md`
+  - `scripts/applauncher-dev.mjs`
+  - `scripts/applauncher-native-dev.mjs`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
@@ -26,65 +34,64 @@
 - Canonical files described:
   - `handoff.md`
   - `docs/completed-tasks.md`
-  - `apps/api/src/repositories/ai-suggestions.ts`
-  - `apps/api/src/services/ai-expansion.ts`
+  - `apps/api/src/services/llm.ts`
+  - `apps/api/src/services/app.ts`
   - `apps/desktop/src/App.tsx`
-  - `apps/desktop/src/styles.css`
-  - `apps/api/tests/ai-suggestions.test.ts`
+  - `apps/api/tests/llm-prompt.test.ts`
   - `apps/desktop/tests/app-copy.test.ts`
+  - `scripts/applauncher-dev.mjs`
+  - `scripts/applauncher-native-dev.mjs`
+  - `docs/env.md`
 - Last verification:
-  - command: `node --test --import tsx apps/api/tests/ai-suggestions.test.ts`; `npm run test -w @memo-capture/desktop`; `npm run typecheck`; `git diff --check`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
+  - command: `node --test --import tsx apps/api/tests/llm-prompt.test.ts`; `npm run test -w @memo-capture/desktop`; `npm run typecheck`; `npm run verify`; `git diff --check`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
   - result: passed
-  - timestamp UTC: 2026-06-03T20:00Z
+  - timestamp UTC: 2026-06-03T20:59Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD`, in-scope dirty documentation files, completed-task ledger entry, rebuilt native app timestamp, and focused verification are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
-- Next checkpoint action: review documentation-only dirty diff and commit only if explicitly requested.
+- Safe-to-continue basis: current `HEAD`, in-scope dirty implementation/docs/scripts files, completed-task ledger entry, rebuilt native app, and full verification are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
+- Next checkpoint action: review the dirty diff and commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-The current focus is the completed AI work item review and suggestion flow. The committed checkpoint `6767510` keeps AI expansion manual and review-gated: the current work item receives an editable AI draft that the user accepts with normal `Save` or rejects with `Reset`; related AI suggestions are visually distinct pending review rows and do not become real work items unless accepted.
+The current focus is a completed local-dev LLM provider activation fix. The committed checkpoint `ce538b3` already contains the manual, review-gated AI suggestion flow; the dirty tree now makes the provider/runtime contract clearer and prevents a doomed Generate request when Settings has an enabled LLM row but the running API still has `LLM_PROVIDER=disabled`.
 
-Accepted suggestions create real `memo` work items and disappear from the suggestion list. Rejected suggestions also disappear from the active review list, with only backend status/audit metadata retained. The native macOS `Memo Capture.app` was rebuilt after the implementation.
+Launcher scripts now preserve explicit `LLM_PROVIDER` and `LLM_MODEL` environment values instead of overwriting them with disabled defaults. To use the local dev expander, restart the app/API with `LLM_PROVIDER=local-dev` and keep the LLM provider row enabled in Settings.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: continue from the completed AI review-gated suggestion flow without reopening settled interaction decisions.
+Immediate goal: continue from the clarified local-dev LLM activation path without reopening settled AI review-gated suggestion decisions.
 
 Definition of done for this workstream:
 
-- AI-generated current-item changes stay as editable drafts until normal `Save`.
-- Reset rejects the current AI draft.
-- Pending related ideas render as visually distinct suggested work items, not real queue rows.
-- Accepting a suggestion creates a normal `memo` work item.
-- Rejecting a suggestion removes it from active review and retains only backend status/audit metadata.
+- Settings-enabled LLM provider plus disabled API runtime reports a specific actionable message.
+- Detail-panel Generate is disabled for the known-bad runtime/provider mismatch.
+- AppLauncher dev/native scripts honor explicit `LLM_PROVIDER` and `LLM_MODEL` environment values.
+- Runtime requirement is documented in `docs/env.md`.
 - Native `.app` bundle is rebuilt.
 
 ## 4. Current State
 
 ### Working
 
-- `GET /api/work-items/{workItemId}/ai-suggestions` returns only pending suggestions for the active review surface.
-- Accepting a pending suggestion creates a real `memo` work item and removes the suggestion from the visible list.
-- Rejecting a pending suggestion marks the backend status path but removes it from the active suggestion list.
-- The desktop detail panel labels suggestion rows as `Suggested new work item`, shows `Pending review`, and uses `Reject` instead of `Dismiss`.
-- AI expansion still loads the current-item draft into normal editable fields; `Save` accepts it and `Reset` rejects it.
-- Specs/design docs reflect pending-only active suggestion listing and audit-only rejected-suggestion retention.
-- Native app bundle exists at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`, timestamp `Jun 4 04:59:53 2026`.
+- `createLlmProvider` reports `LLM provider is enabled in Settings, but this API runtime is disabled. Restart the API with LLM_PROVIDER=local-dev.` for the Settings/runtime mismatch.
+- The Work queue AI expansion section finds the configured LLM provider from loaded Settings, shows the same mismatch message inline, and disables `Generate` until the runtime is compatible.
+- `scripts/applauncher-dev.mjs` and `scripts/applauncher-native-dev.mjs` default to disabled but honor explicit `LLM_PROVIDER` and `LLM_MODEL` values from the calling environment.
+- `docs/env.md` states that Settings must enable the matching provider row and the API runtime must use a supported LLM provider.
+- `AiOperations` now uses concrete AI suggestion return types instead of `Promise<unknown>`, allowing repo typecheck to cover AI accept/expand call sites.
+- Native app bundle exists at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
 
 ### Partially Working
 
-- The full API workspace test suite still needs an outside-sandbox run when local route-binding coverage matters; the sandboxed run hit `listen EPERM` on HTTP listener tests.
+- None known for the local-dev LLM provider activation path.
 
 ### Not Working Yet
 
-- No known blocker in the AI work item review and suggestion flow.
+- No known blocker in the local-dev LLM provider activation path.
 
 ### Not Yet Verified
 
 - No fresh Chrome/native smoke was run after the rebuild.
-- `npm run verify` was not rerun after the documentation-only ledger and handoff edits.
 
 ## 5. Active Constraints
 

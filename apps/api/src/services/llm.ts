@@ -55,14 +55,18 @@ export interface LlmProvider {
 
 export function createLlmProvider(config: LlmProviderConfig, providerName: string, modelName: string): LlmProvider {
   if (config.provider === "disabled") {
-    throw new HttpError(409, "llm_provider_disabled", "LLM provider is disabled.");
+    throw new HttpError(
+      409,
+      "llm_provider_disabled",
+      "LLM provider is enabled in Settings, but this API runtime is disabled. Restart the API with LLM_PROVIDER=local-dev."
+    );
   }
 
   if (providerName !== "local-dev" || config.provider !== "local-dev") {
     throw new HttpError(
       409,
       "llm_provider_unavailable",
-      "Configured LLM provider is not available in this runtime."
+      `Configured LLM provider ${providerName} is not available in this runtime. Runtime provider is ${config.provider}.`
     );
   }
 
