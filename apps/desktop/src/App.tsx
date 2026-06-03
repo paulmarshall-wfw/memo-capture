@@ -534,6 +534,8 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
   ""
 );
 const appVersion = "0.1.0";
+const localDevLlmProviderName = "local-dev";
+const localDevLlmModelName = "memo-capture-local-dev-expander-v1";
 const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const watchedFolderPollingIntervalMs = 5000;
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -1352,14 +1354,51 @@ export function App() {
     const fileTypes = settingsSummary?.fileTypes ?? [];
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
+  const llmProviders = useMemo(
+    () => (settingsSummary?.providers ?? []).filter((provider) => provider.providerKind === "llm"),
+    [settingsSummary]
+  );
+  const localDevLlmProvider = useMemo(
+    () => llmProviders.find((provider) => provider.providerName === localDevLlmProviderName) ?? null,
+    [llmProviders]
+  );
   const llmProvider = useMemo(() => {
-    const providers = settingsSummary?.providers ?? [];
-    return (
-      providers.find((provider) => provider.providerKind === "llm" && provider.providerName === "local-dev") ??
-      providers.find((provider) => provider.providerKind === "llm") ??
-      null
+    const runtimeMatched = llmProviders.find(
+      (provider) =>
+        provider.enabled &&
+        provider.runtimeProvider !== "disabled" &&
+        provider.providerName === provider.runtimeProvider
     );
-  }, [settingsSummary]);
+    if (runtimeMatched !== undefined) {
+      return runtimeMatched;
+    }
+    const enabledProvider = llmProviders.find((provider) => provider.enabled);
+    if (enabledProvider !== undefined) {
+      return enabledProvider;
+    }
+    if (localDevLlmProvider !== null) {
+      return localDevLlmProvider;
+    }
+    return llmProviders[0] ?? null;
+  }, [llmProviders, localDevLlmProvider]);
+  const localDevLlmStatus = useMemo(() => {
+    if (localDevLlmProvider === null) {
+      return "Not configured";
+    }
+    if (!localDevLlmProvider.enabled) {
+      return "Disabled";
+    }
+    if (localDevLlmProvider.runtimeProvider === "disabled") {
+      return "Settings enabled; runtime disabled";
+    }
+    if (localDevLlmProvider.runtimeProvider !== localDevLlmProvider.providerName) {
+      return "Runtime mismatch";
+    }
+    if (!localDevLlmProvider.secretConfigured) {
+      return "Secret not configured";
+    }
+    return "Ready";
+  }, [localDevLlmProvider]);
   const aiExpansionUnavailableReason = useMemo(() => {
     if (settingsSummary === null) {
       return null;
@@ -2850,6 +2889,30 @@ export function App() {
       setStatusMessage(enabled ? "Provider enabled." : "Provider disabled.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to update provider.");
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  async function configureLocalDevLlmProvider() {
+    if (accessToken === null || localDevLlmProvider === null) {
+      return;
+    }
+    setSettingsLoading(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/providers/${encodeURIComponent(localDevLlmProvider.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: true, modelName: localDevLlmModelName })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage(
+        localDevLlmProvider.runtimeProvider === "disabled"
+          ? "Development LLM provider enabled. Restart with LLM_PROVIDER=local-dev."
+          : "Development LLM provider enabled."
+      );
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to configure development LLM provider.");
     } finally {
       setSettingsLoading(false);
     }
@@ -5192,6 +5255,36 @@ export function App() {
                 </section>
               ) : activeSettingsSection === "providers" ? (
                 <section className="detail-section" aria-label="Providers">
+                  {localDevLlmProvider === null ? null : (
+                    <article className="settings-row provider-dev-panel">
+                      <div>
+                        <div className="batch-title">
+                          <strong>Development LLM</strong>
+                          <span>{localDevLlmStatus}</span>
+                        </div>
+                        <p>
+                          {localDevLlmProvider.providerName}; model{" "}
+                          {localDevLlmProvider.modelName ?? localDevLlmModelName}; runtime{" "}
+                          {localDevLlmProvider.runtimeProvider}
+                        </p>
+                        <p>
+                          Deterministic local work-item expander; external send disabled; launch value{" "}
+                          <code>LLM_PROVIDER=local-dev</code>
+                        </p>
+                      </div>
+                      <div className="provider-dev-actions">
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={settingsLoading}
+                          onClick={() => void configureLocalDevLlmProvider()}
+                        >
+                          {settingsLoading ? <RefreshCcw className="spin" size={18} /> : <CheckCircle2 size={18} />}
+                          Enable dev expander
+                        </button>
+                      </div>
+                    </article>
+                  )}
                   <div className="settings-list">
                     {settingsSummary.providers.map((provider) => (
                       <article className="settings-row" key={provider.id}>

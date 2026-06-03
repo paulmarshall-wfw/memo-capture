@@ -4,27 +4,26 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-03T20:59:13Z
+- Created timestamp UTC: 2026-06-03T21:26:58Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: AI provider runtime mismatch fix, launcher environment override support, completed-task ledger update, native app rebuild, and handoff refresh.
+- Session scope: development LLM provider setup in Settings, runtime-matched provider selection, completed-task ledger update, native app rebuild, and handoff refresh.
 
 ### Checkpoint Status
 
-- Git HEAD: `ce538b3`
+- Git HEAD: `9fc5f92`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/src/services/app.ts`
-  - `apps/api/src/services/llm.ts`
-  - `apps/api/tests/llm-prompt.test.ts`
+  - `apps/api/src/repositories/settings.ts`
+  - `apps/api/src/services/ai-expansion.ts`
   - `apps/desktop/src/App.tsx`
+  - `apps/desktop/src/styles.css`
   - `apps/desktop/tests/app-copy.test.ts`
-  - `docs/env.md`
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/settings-and-audit.md`
   - `docs/completed-tasks.md`
   - `handoff.md`
-  - `scripts/applauncher-dev.mjs`
-  - `scripts/applauncher-native-dev.mjs`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
@@ -34,60 +33,59 @@
 - Canonical files described:
   - `handoff.md`
   - `docs/completed-tasks.md`
-  - `apps/api/src/services/llm.ts`
-  - `apps/api/src/services/app.ts`
+  - `apps/api/src/repositories/settings.ts`
+  - `apps/api/src/services/ai-expansion.ts`
   - `apps/desktop/src/App.tsx`
-  - `apps/api/tests/llm-prompt.test.ts`
+  - `apps/desktop/src/styles.css`
   - `apps/desktop/tests/app-copy.test.ts`
-  - `scripts/applauncher-dev.mjs`
-  - `scripts/applauncher-native-dev.mjs`
-  - `docs/env.md`
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/settings-and-audit.md`
 - Last verification:
-  - command: `node --test --import tsx apps/api/tests/llm-prompt.test.ts`; `npm run test -w @memo-capture/desktop`; `npm run typecheck`; `npm run verify`; `git diff --check`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
+  - command: `npm run test -w @memo-capture/desktop`; `node --test --import tsx apps/api/tests/llm-prompt.test.ts`; `npm run typecheck`; `npm run verify`; `git diff --check`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
   - result: passed
-  - timestamp UTC: 2026-06-03T20:59Z
+  - timestamp UTC: 2026-06-03T21:26Z
 - Handoff freshness: fresh-to-dirty-tree
 - Safe-to-continue basis: current `HEAD`, in-scope dirty implementation/docs/scripts files, completed-task ledger entry, rebuilt native app, and full verification are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
 - Next checkpoint action: review the dirty diff and commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-The current focus is a completed local-dev LLM provider activation fix. The committed checkpoint `ce538b3` already contains the manual, review-gated AI suggestion flow; the dirty tree now makes the provider/runtime contract clearer and prevents a doomed Generate request when Settings has an enabled LLM row but the running API still has `LLM_PROVIDER=disabled`.
+The current focus is a completed development LLM provider Settings refinement. The committed checkpoint `9fc5f92` already contains the local-dev provider runtime mismatch fix; the dirty tree now adds a compact Providers section setup row for the deterministic `local-dev` work-item expander and adjusts AI expansion provider selection to prefer the enabled provider matching the active runtime.
 
-Launcher scripts now preserve explicit `LLM_PROVIDER` and `LLM_MODEL` environment values instead of overwriting them with disabled defaults. To use the local dev expander, restart the app/API with `LLM_PROVIDER=local-dev` and keep the LLM provider row enabled in Settings.
+The new Settings row can enable/reset the repo's deterministic model config (`memo-capture-local-dev-expander-v1`) for dev work. Runtime activation still comes from launching the API/app with `LLM_PROVIDER=local-dev`.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: continue from the clarified local-dev LLM activation path without reopening settled AI review-gated suggestion decisions.
+Immediate goal: continue from the Settings-based development LLM provider setup without reopening settled AI review-gated suggestion decisions.
 
 Definition of done for this workstream:
 
-- Settings-enabled LLM provider plus disabled API runtime reports a specific actionable message.
-- Detail-panel Generate is disabled for the known-bad runtime/provider mismatch.
-- AppLauncher dev/native scripts honor explicit `LLM_PROVIDER` and `LLM_MODEL` environment values.
-- Runtime requirement is documented in `docs/env.md`.
+- Providers section shows a development LLM setup row for `local-dev`.
+- The setup row enables/resets the deterministic dev expander model config.
+- AI expansion provider selection prefers an enabled provider matching the active runtime.
+- Docs record that multiple local/cloud LLM providers may coexist and routing should be explicit.
 - Native `.app` bundle is rebuilt.
 
 ## 4. Current State
 
 ### Working
 
-- `createLlmProvider` reports `LLM provider is enabled in Settings, but this API runtime is disabled. Restart the API with LLM_PROVIDER=local-dev.` for the Settings/runtime mismatch.
-- The Work queue AI expansion section finds the configured LLM provider from loaded Settings, shows the same mismatch message inline, and disables `Generate` until the runtime is compatible.
-- `scripts/applauncher-dev.mjs` and `scripts/applauncher-native-dev.mjs` default to disabled but honor explicit `LLM_PROVIDER` and `LLM_MODEL` values from the calling environment.
-- `docs/env.md` states that Settings must enable the matching provider row and the API runtime must use a supported LLM provider.
-- `AiOperations` now uses concrete AI suggestion return types instead of `Promise<unknown>`, allowing repo typecheck to cover AI accept/expand call sites.
+- Settings > Providers includes a `Development LLM` row for the seeded `local-dev` LLM provider.
+- The setup row displays readiness, current model, runtime provider, and the `LLM_PROVIDER=local-dev` launch value.
+- `Enable dev expander` patches the provider row to `enabled: true` with model `memo-capture-local-dev-expander-v1`.
+- AI expansion asks `SettingsRepository.findEnabledProvider` for the enabled provider matching `config.llm.provider` when the runtime is not disabled.
+- Provider docs now state multiple providers of the same kind may coexist and app-owned jobs should route by explicit purpose/runtime provider where available.
 - Native app bundle exists at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
 
 ### Partially Working
 
-- None known for the local-dev LLM provider activation path.
+- None known for the development LLM provider Settings path.
 
 ### Not Working Yet
 
-- No known blocker in the local-dev LLM provider activation path.
+- No known blocker in the development LLM provider Settings path.
 
 ### Not Yet Verified
 
@@ -107,12 +105,13 @@ Definition of done for this workstream:
 
 ## 6. Commands and Verification
 
-Passed for the current AI flow:
+Passed for the current development LLM provider Settings work:
 
 ```bash
-node --test --import tsx apps/api/tests/ai-suggestions.test.ts
 npm run test -w @memo-capture/desktop
+node --test --import tsx apps/api/tests/llm-prompt.test.ts
 npm run typecheck
+npm run verify
 git diff --check
 npm run tauri:build -w @memo-capture/desktop -- --bundles app
 ```

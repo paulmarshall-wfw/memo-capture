@@ -46,7 +46,7 @@ export class AiExpansionService {
     const settings = new SettingsRepository(this.db);
     const [prompt, providerConfig, workItem, sourceMemo, projects] = await Promise.all([
       settings.getActivePrompt("work_item_expansion"),
-      settings.findEnabledProvider("llm"),
+      settings.findEnabledProvider("llm", this.config.llm.provider === "disabled" ? null : this.config.llm.provider),
       new WorkItemRepository(this.db).findById(workItemId),
       this.findSourceMemoForWorkItem(workItemId),
       new ProjectRepository(this.db).list()

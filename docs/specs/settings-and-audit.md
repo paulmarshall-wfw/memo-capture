@@ -194,6 +194,7 @@ Rules:
 - Provider/model changes affect only new jobs.
 - Jobs snapshot intended provider/model at creation where predictability matters.
 - Provider failures mark the provider unhealthy and show diagnostics; they do not auto-disable providers.
+- Multiple providers of the same kind may be configured at the same time. App-owned jobs should route by explicit purpose/runtime provider where available rather than assuming only one enabled provider exists.
 
 ### prompt_definitions
 

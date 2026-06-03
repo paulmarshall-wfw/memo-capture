@@ -494,15 +494,17 @@ export class SettingsRepository {
     return result.rows;
   }
 
-  async findEnabledProvider(providerKind: string): Promise<ProviderConfigRow | null> {
+  async findEnabledProvider(providerKind: string, preferredProviderName?: string | null): Promise<ProviderConfigRow | null> {
     const result = await this.db.query<ProviderConfigRow>(
       `select id, provider_kind, provider_name, enabled, endpoint, model_name, secret_source,
               health_status, last_health_check_at, updated_at
        from provider_configs
        where provider_kind = $1 and enabled = true
-       order by updated_at desc
+       order by
+         case when $2::text is not null and provider_name = $2::text then 0 else 1 end,
+         updated_at desc
        limit 1`,
-      [providerKind]
+      [providerKind, preferredProviderName ?? null]
     );
     return result.rows[0] ?? null;
   }

@@ -237,6 +237,8 @@ Editing a prompt creates a new prompt version and does not mutate previous versi
 
 Prompt editing exposes freeform prompt text first, then explicit toggles for project synopsis, memo metadata, and memo text/transcript content. The backend composes the final model prompt in that order and does not send raw audio or video content to the LLM.
 
+The deterministic `local-dev` work-item expander is a development provider. It should be easy to enable from Settings, but runtime activation still comes from `LLM_PROVIDER=local-dev`. Provider configuration should allow local and cloud LLM providers to coexist; app-owned AI actions should select providers by explicit purpose/runtime instead of assuming a single globally enabled LLM.
+
 AI generation records should include:
 
 - prompt ID and version
