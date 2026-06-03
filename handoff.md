@@ -4,156 +4,145 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-02T23:53:21Z
+- Created timestamp UTC: 2026-06-03T20:00:18Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: isolated Docker Postgres integration test lane, completed-task ledger update, and handoff refresh.
+- Session scope: AI work item review and suggestion flow, completed-task ledger update, native app rebuild, and handoff refresh.
 
 ### Checkpoint Status
 
-- Git HEAD: `b163a47`
+- Git HEAD: `6767510`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `AGENTS.md`
-  - `apps/api/package.json`
   - `docs/completed-tasks.md`
-  - `docs/development.md`
   - `handoff.md`
-  - `package.json`
 - Dirty files intentionally out of scope:
-  - `apps/api/src/repositories/audit.ts`
-  - `apps/api/tests/backend-foundation.test.ts`
+  - None
 - Untracked files intentionally in scope:
-  - `apps/api/tests/postgres/integration.test.ts`
-  - `scripts/prepare-postgres-test-db.mjs`
+  - None
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
   - `handoff.md`
   - `docs/completed-tasks.md`
-  - `AGENTS.md`
-  - `docs/development.md`
-  - `package.json`
-  - `apps/api/package.json`
-  - `scripts/prepare-postgres-test-db.mjs`
-  - `apps/api/tests/postgres/integration.test.ts`
+  - `apps/api/src/repositories/ai-suggestions.ts`
+  - `apps/api/src/services/ai-expansion.ts`
+  - `apps/desktop/src/App.tsx`
+  - `apps/desktop/src/styles.css`
+  - `apps/api/tests/ai-suggestions.test.ts`
+  - `apps/desktop/tests/app-copy.test.ts`
 - Last verification:
-  - command: `npm run test:postgres`; `npm run typecheck`; `npm test`
-  - result: passed outside the sandbox
-  - timestamp UTC: 2026-06-02T23:51Z
+  - command: `node --test --import tsx apps/api/tests/ai-suggestions.test.ts`; `npm run test -w @memo-capture/desktop`; `npm run typecheck`; `git diff --check`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
+  - result: passed
+  - timestamp UTC: 2026-06-03T20:00Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD`, dirty/untracked file list, completed-task ledger entry, docs updates, new Postgres test-lane files, and verification results are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
-- Next checkpoint action: review dirty diff and commit only if explicitly requested.
+- Safe-to-continue basis: current `HEAD`, in-scope dirty documentation files, completed-task ledger entry, rebuilt native app timestamp, and focused verification are recorded here. This repo currently has no `scripts/handoff_status.py` or `scripts/verify_handoff_freshness.py`, so freshness was checked manually with Git facts and file state.
+- Next checkpoint action: review documentation-only dirty diff and commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-The current focus is the new isolated real-Postgres automated test lane for Memo Capture. The repo now has `npm run test:postgres`, which starts or creates the local Docker Postgres container `memo-capture-postgres-16-8`, drops and recreates only `memo_capture_test`, applies all API migrations to that isolated database, and runs Postgres-backed API integration tests from `apps/api/tests/postgres/`.
+The current focus is the completed AI work item review and suggestion flow. The committed checkpoint `6767510` keeps AI expansion manual and review-gated: the current work item receives an editable AI draft that the user accepts with normal `Save` or rejects with `Reset`; related AI suggestions are visually distinct pending review rows and do not become real work items unless accepted.
 
-The testing policy is now documented in `AGENTS.md` and `docs/development.md`: use the Docker Postgres `memo_capture` database for normal local development and manual smoke testing, keep `FakeDatabase` tests for fast service-level checks, and use `memo_capture_test` for resettable automated Postgres tests. The policy was also written to Codex memory as requested so future sessions should follow it.
+Accepted suggestions create real `memo` work items and disappear from the suggestion list. Rejected suggestions also disappear from the active review list, with only backend status/audit metadata retained. The native macOS `Memo Capture.app` was rebuilt after the implementation.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: carry forward the completed Postgres testing split and use the new real-Postgres lane for database-sensitive automated checks.
+Immediate goal: continue from the completed AI review-gated suggestion flow without reopening settled interaction decisions.
 
 Definition of done for this workstream:
 
-- `npm test` remains the default fast workspace test suite and does not pick up Postgres integration tests.
-- `npm run test:postgres` uses only `memo_capture_test` and refuses to run the integration tests against the shared `memo_capture` development database.
-- Database-sensitive behavior such as migrations, repository SQL, constraints, transactions, indexes, and worker locking has a clear verification path.
-- Future sessions can find the policy in `AGENTS.md`, `docs/development.md`, `docs/completed-tasks.md`, and Codex memory.
+- AI-generated current-item changes stay as editable drafts until normal `Save`.
+- Reset rejects the current AI draft.
+- Pending related ideas render as visually distinct suggested work items, not real queue rows.
+- Accepting a suggestion creates a normal `memo` work item.
+- Rejecting a suggestion removes it from active review and retains only backend status/audit metadata.
+- Native `.app` bundle is rebuilt.
 
 ## 4. Current State
 
 ### Working
 
-- `package.json` adds root scripts:
-  - `prepare:test:postgres`
-  - `test:postgres`
-- `apps/api/package.json` adds an API-local `test:postgres` script scoped to `tests/postgres/*.test.ts`.
-- `scripts/prepare-postgres-test-db.mjs` starts an existing `memo-capture-postgres-16-8` container or creates one from numbered image `postgres:16.8-alpine`, then resets and migrates `memo_capture_test`.
-- `apps/api/tests/postgres/integration.test.ts` verifies the migrated isolated test DB and real Postgres processing-job claim plus rollback behavior.
-- `AGENTS.md` records the test command and verification policy for future agents.
-- `docs/development.md` documents the development-vs-automated-test database split.
-- `docs/completed-tasks.md` has an append-only completed-task entry for the isolated Postgres lane.
-- Codex memory note added at `/Users/paulmarshall/.codex/memories/extensions/ad_hoc/notes/2026-06-03-memo-capture-postgres-test-policy.md`.
+- `GET /api/work-items/{workItemId}/ai-suggestions` returns only pending suggestions for the active review surface.
+- Accepting a pending suggestion creates a real `memo` work item and removes the suggestion from the visible list.
+- Rejecting a pending suggestion marks the backend status path but removes it from the active suggestion list.
+- The desktop detail panel labels suggestion rows as `Suggested new work item`, shows `Pending review`, and uses `Reject` instead of `Dismiss`.
+- AI expansion still loads the current-item draft into normal editable fields; `Save` accepts it and `Reset` rejects it.
+- Specs/design docs reflect pending-only active suggestion listing and audit-only rejected-suggestion retention.
+- Native app bundle exists at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`, timestamp `Jun 4 04:59:53 2026`.
 
 ### Partially Working
 
-- The Postgres integration lane currently has a small seed of coverage. It proves migration setup, DB isolation guard, repository claim behavior, and transaction rollback, but it is not yet broad coverage for every DB-sensitive path.
+- The full API workspace test suite still needs an outside-sandbox run when local route-binding coverage matters; the sandboxed run hit `listen EPERM` on HTTP listener tests.
 
 ### Not Working Yet
 
-- No known blocker in the new Postgres test lane.
+- No known blocker in the AI work item review and suggestion flow.
 
 ### Not Yet Verified
 
-- Full `npm run verify` was not rerun after the handoff/ledger edit. `npm test`, `npm run typecheck`, and `npm run test:postgres` passed.
-- Native app behavior was not touched or re-smoke-tested for this workstream.
+- No fresh Chrome/native smoke was run after the rebuild.
+- `npm run verify` was not rerun after the documentation-only ledger and handoff edits.
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
 - Do not commit, tag, release, publish, delete files, or install dependencies unless explicitly requested.
 - Never use `latest`; always use numbered versions.
-- Local development uses Docker Postgres `memo-capture-postgres-16-8` with the `memo_capture` database.
-- Resettable automated Postgres tests must use `memo_capture_test`, not the shared local development database.
-- Keep `FakeDatabase` tests for fast service-level behavior, but do not treat them as proof of real SQL, migrations, constraints, transactions, indexes, or Postgres locking semantics.
+- AI output consumed by code must be strict structured JSON and validated before storage.
+- AI expansion is app-owned, not a workflow transition.
+- Suggested new work items must remain visually distinct from real work items until accepted.
+- Rejected AI suggestions should not remain in the active review UI; V1 retains audit/status metadata only.
 - Browser automation should use Chrome unless explicitly told otherwise.
 - For Memo Capture user-facing/native-testable changes, rebuild the runnable `.app`; do not create a DMG unless explicitly requested.
 
 ## 6. Commands and Verification
 
-Passed in this slice:
+Passed for the current AI flow:
 
 ```bash
-npm run test:postgres
+node --test --import tsx apps/api/tests/ai-suggestions.test.ts
+npm run test -w @memo-capture/desktop
 npm run typecheck
-npm test
-```
-
-Additional check:
-
-```bash
-npm run test -w @memo-capture/api
+git diff --check
+npm run tauri:build -w @memo-capture/desktop -- --bundles app
 ```
 
 Verification notes:
 
-- `npm run test:postgres` first failed in the sandbox because Docker socket access was denied; the approved outside-sandbox rerun passed.
-- `npm run test -w @memo-capture/api` first failed in the sandbox on local route binding `listen EPERM`; the approved outside-sandbox rerun passed.
-- `npm test` passed outside the sandbox and confirmed the default test lane does not include `apps/api/tests/postgres/integration.test.ts`.
-- `npm run test:postgres` applied migrations `0001` through `0020` to `memo_capture_test` and ran 2 passing Postgres integration tests.
+- `npm run tauri:build -w @memo-capture/desktop -- --bundles app` produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+- The full sandboxed `npm run test -w @memo-capture/api` attempt ran the new AI suggestion test successfully but failed two HTTP route tests with `listen EPERM`; that is an environment limitation rather than an AI-suggestion assertion failure.
 
 Useful next commands:
 
 ```bash
 git status --short --branch
 git diff --check
-npm test
-npm run test:postgres
-npm run typecheck
+node --test --import tsx apps/api/tests/ai-suggestions.test.ts
+npm run test -w @memo-capture/desktop
+npm run verify
 ```
 
 ## 7. Files to Open First
 
-- `AGENTS.md`: repo-local testing policy and command list.
-- `docs/development.md`: detailed development database and `test:postgres` workflow.
-- `package.json`: root `prepare:test:postgres` and `test:postgres` scripts.
-- `apps/api/package.json`: API-local Postgres integration test script.
-- `scripts/prepare-postgres-test-db.mjs`: Docker Postgres test database reset/migration implementation.
-- `apps/api/tests/postgres/integration.test.ts`: real Postgres coverage and guard against using the dev DB.
-- `docs/completed-tasks.md`: append-only entry for this completed work.
+- `apps/desktop/src/App.tsx`: AI expansion, suggested-work-item review rows, accept/reject handlers.
+- `apps/desktop/src/styles.css`: distinct dashed AI suggestion row styling.
+- `apps/api/src/repositories/ai-suggestions.ts`: pending-only active suggestion list query.
+- `apps/api/src/services/ai-expansion.ts`: accept/reject service behavior and user-facing error copy.
+- `apps/api/tests/ai-suggestions.test.ts`: focused pending-only API contract test.
+- `apps/desktop/tests/app-copy.test.ts`: UI copy guard for suggested-work-item rows.
+- `docs/design/memo-capture-design-learnings.md`: product rule for rejected suggestions.
+- `docs/specs/settings-and-audit.md`: API behavior notes for active suggestion listing and rejection.
 
 ## 8. Next Actions
 
 Next:
 
-- Review the dirty diff, including the two out-of-scope dirty files, before any commit.
-- If database behavior changes, add focused coverage under `apps/api/tests/postgres/` and run `npm run test:postgres`.
-- Run `git diff --check` before committing.
+- Review the documentation-only dirty diff in `docs/completed-tasks.md` and `handoff.md`.
+- Commit only if explicitly requested.
+- If further UI changes are made, run desktop tests and rebuild the native `.app` again.
 
 Blocked:
 
@@ -161,8 +150,9 @@ Blocked:
 
 Later:
 
-- Expand Postgres integration coverage for repository SQL paths, constraints, migrations, and job-locking behavior as those areas change.
+- Run a live Chrome or native app smoke if the next task changes detail-panel behavior.
+- Run `npm run verify` outside the sandbox if a full checkpoint verification is required.
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `b163a47` with a dirty tree. The active completed work is the isolated Docker Postgres integration test lane: open `AGENTS.md`, `docs/development.md`, `package.json`, `apps/api/package.json`, `scripts/prepare-postgres-test-db.mjs`, and `apps/api/tests/postgres/integration.test.ts` first. Use `npm run test:postgres` for database-sensitive automated checks against `memo_capture_test`; do not point resettable automated tests at the shared `memo_capture` development database. Account for unrelated dirty files `apps/api/src/repositories/audit.ts` and `apps/api/tests/backend-foundation.test.ts` before committing.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `6767510` with a dirty tree containing only `docs/completed-tasks.md` and `handoff.md` in scope. The completed work is the AI work item review and suggestion flow: open `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `apps/api/src/repositories/ai-suggestions.ts`, `apps/api/src/services/ai-expansion.ts`, `apps/api/tests/ai-suggestions.test.ts`, and `apps/desktop/tests/app-copy.test.ts` first. Preserve manual review-gated AI behavior: Save/Reset for current-item drafts, Accept/Reject for suggested new work items, pending-only active suggestion lists, and audit/status-only retention for rejected suggestions. Distinguish confirmed repo state from any new recommendations.

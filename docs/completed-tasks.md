@@ -261,3 +261,10 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Added a dedicated `npm run test:postgres` lane that uses the local Docker Postgres container while resetting only `memo_capture_test`, documented the testing split, kept `FakeDatabase` tests as fast service checks, and recorded the policy for future Codex sessions.
   Verification: `npm run test:postgres`, `npm run typecheck`, and `npm test` passed outside the sandbox.
   Traceability: branch `main`, base HEAD `b163a47`; changed files include `package.json`, `apps/api/package.json`, `scripts/prepare-postgres-test-db.mjs`, `apps/api/tests/postgres/integration.test.ts`, `AGENTS.md`, `docs/development.md`, `docs/completed-tasks.md`, and the Codex memory note `2026-06-03-memo-capture-postgres-test-policy.md`.
+
+## 2026-06-03
+
+- Task: Implement AI work item review and suggestion flow
+  Outcome: Made AI-suggested work items visually distinct pending review rows, hid accepted/rejected suggestions from the active review list, kept rejected suggestions as audit/status metadata only, preserved manual Save/Reset review for current-item AI drafts, and rebuilt the native macOS app bundle.
+  Verification: `node --test --import tsx apps/api/tests/ai-suggestions.test.ts`, `npm run test -w @memo-capture/desktop`, `npm run typecheck`, `git diff --check`, and `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed; the full sandboxed API workspace test attempt hit local route binding `listen EPERM` while the focused AI suggestion test passed.
+  Traceability: branch `main`, HEAD `6767510`; changed files include `apps/api/src/repositories/ai-suggestions.ts`, `apps/api/src/services/ai-expansion.ts`, `apps/api/src/services/form-memos.ts`, `apps/api/tests/ai-suggestions.test.ts`, `apps/api/tests/backend-foundation.test.ts`, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `apps/desktop/tests/app-copy.test.ts`, `docs/design/memo-capture-design-learnings.md`, `docs/specs/mvp-implementation-plan.md`, and `docs/specs/settings-and-audit.md`.
