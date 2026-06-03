@@ -78,6 +78,13 @@ async function createFormMemoWithClient(
     tags: input.tags ?? [],
     actorUserId: actor.id
   });
+  if (workItem.projectId !== null) {
+    await workItems.markTagNominationReady({
+      workItemId: workItem.id,
+      projectId: workItem.projectId,
+      jobId: null
+    });
+  }
   const taggedWorkItem = (await workItems.findById(workItem.id)) ?? { ...workItem, tags: assignedTags };
   await new WorkflowHookScheduler(client).scheduleStateResidentHooksForWorkItem({
     workItem: taggedWorkItem,

@@ -57,7 +57,8 @@ test("form memo service creates source memo, work item, import event, and audit 
       projectId: "00000000-0000-4000-8000-000000000301",
       title: "Capture this",
       body: "Useful memo body",
-      contributorText: "Paul"
+      contributorText: "Paul",
+      tags: ["Launch Blocker", "Workflow"]
     },
     session.user,
     "request-1"
@@ -71,6 +72,77 @@ test("form memo service creates source memo, work item, import event, and audit 
   assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
   assert.equal(result.workItem.workflowState, "memo");
   assert.equal(result.workItem.title, "Capture this");
+  assert.equal(result.workItem.tagsAvailable, true);
+  assert.deepEqual(result.workItem.tags, ["Launch Blocker", "Workflow"]);
+});
+
+test("accepting an AI suggestion keeps its seeded tags visible", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  db.sourceMemos.push({
+    id: "source-parent",
+    source_type: "form",
+    original_text: "Parent body",
+    extracted_text: "Parent body",
+    content_hash: "parent-hash",
+    contributor_text: null,
+    current_transcript_text: null,
+    original_path: null,
+    archive_path: null,
+    primary_artifact_id: null,
+    original_file_modified_at: originalFileModifiedAt,
+    created_at: "2026-05-29T00:00:00.000Z",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  db.workItems.push({
+    id: "work-item-parent",
+    source_memo_id: "source-parent",
+    project_id: "00000000-0000-4000-8000-000000000301",
+    contributor_text: null,
+    contributor_id: null,
+    title: "Parent item",
+    body: "Parent body",
+    workflow_state: "memo",
+    workflow_item_version: 1,
+    accepted_snapshot_id: null,
+    accepted_unexported_changes: false,
+    original_file_modified_at: originalFileModifiedAt,
+    created_at: "2026-05-29T00:00:00.000Z",
+    updated_at: "2026-05-29T00:00:00.000Z",
+    tag_nomination_completed_at: null,
+    tag_nomination_project_id: null,
+    tag_nomination_job_id: null
+  });
+  db.aiSuggestions.push({
+    id: "ai-suggestion-1",
+    parent_work_item_id: "work-item-parent",
+    title: "Expanded item",
+    body: "Expanded body",
+    tags: ["Launch Blocker", "Workflow"],
+    rationale: "Useful follow-up",
+    status: "pending",
+    applied_work_item_id: null,
+    created_by: session.user.id,
+    prompt_version_id: null,
+    provider_name: "openai",
+    model_name: "gpt-4.1",
+    validation_result: { ok: true },
+    created_at: "2026-05-29T00:00:00.000Z",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+
+  const result = await services.ai.acceptSuggestion("ai-suggestion-1", session.user, "request-ai-accept");
+
+  assert.equal(result.workItem.projectId, "00000000-0000-4000-8000-000000000301");
+  assert.equal(result.workItem.tagsAvailable, true);
+  assert.deepEqual(result.workItem.tags, ["Launch Blocker", "Workflow"]);
 });
 
 test("catalog service deletes unused projects and blocks projects referenced by work items", async () => {
@@ -2292,11 +2364,12 @@ class FakeDatabase implements Database {
   readonly contributors: Record<string, unknown>[] = [];
   readonly importEvents: Record<string, unknown>[] = [];
   readonly processingJobs: Record<string, unknown>[] = [];
-	  readonly auditEvents: Record<string, unknown>[] = [];
-	  readonly tags: Record<string, unknown>[] = [];
-	  readonly workItemTags: Record<string, unknown>[] = [];
-	  readonly projectTags: Record<string, unknown>[] = [];
-	  readonly suppressedTags: Record<string, unknown>[] = [];
+  readonly auditEvents: Record<string, unknown>[] = [];
+  readonly tags: Record<string, unknown>[] = [];
+  readonly workItemTags: Record<string, unknown>[] = [];
+  readonly projectTags: Record<string, unknown>[] = [];
+  readonly suppressedTags: Record<string, unknown>[] = [];
+  readonly aiSuggestions: Record<string, unknown>[] = [];
   activeWorkflow: Record<string, unknown> | null = null;
   extractionSettings: Record<string, unknown> | null = {
     project_confidence_threshold: 0.65,
@@ -2348,6 +2421,24 @@ class FakeDatabase implements Database {
 
     if (text.includes("from extraction_settings")) {
       return rows(this.extractionSettings === null ? [] : [this.extractionSettings as Row]);
+    }
+
+    if (text.includes("from ai_suggestions") && text.includes("where id = $1")) {
+      return rows(
+        this.aiSuggestions.filter((row) => row.id === values[0]).map((row) => row as Row)
+      );
+    }
+
+    if (text.includes("update ai_suggestions") && text.includes("status = 'applied'")) {
+      const suggestion = this.aiSuggestions.find((row) => row.id === values[0] && row.status === "pending");
+      if (suggestion === undefined) {
+        return rows<Row>([]);
+      }
+      suggestion.status = "applied";
+      suggestion.applied_work_item_id = values[1];
+      suggestion.applied_by = values[2];
+      suggestion.applied_at = "2026-05-29T00:00:00.000Z";
+      return rows([suggestion as Row]);
     }
 
     if (text.includes("insert into contributors")) {

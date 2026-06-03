@@ -46,6 +46,7 @@ export class AiSuggestionRepository {
       `select *
        from ai_suggestions
        where parent_work_item_id = $1
+         and status = 'pending'
        order by created_at desc`,
       [parentWorkItemId]
     );

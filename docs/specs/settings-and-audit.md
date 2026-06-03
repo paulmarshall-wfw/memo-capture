@@ -491,7 +491,7 @@ Creates an AI expansion run for a work item using the active prompt and an enabl
 
 `GET /api/work-items/{workItemId}/ai-suggestions`
 
-Lists pending, applied, and dismissed AI suggestions for a work item.
+Lists pending AI suggestions for a work item. Accepted and rejected suggestions are retained only through suggestion status, linked records, diagnostics, and audit metadata, and are not returned to the active review surface.
 
 `POST /api/ai-suggestions/{suggestionId}/accept`
 
@@ -499,7 +499,7 @@ Accepts one pending suggestion by creating a `source_memo` with `source_type = a
 
 `POST /api/ai-suggestions/{suggestionId}/dismiss`
 
-Dismisses one pending suggestion without creating a work item or changing workflow state.
+Rejects one pending suggestion without creating a work item or changing workflow state. Rejected suggestions are removed from the normal review list; the durable value is the audit trail, not a user-facing history row.
 
 ## Settings UI Inventory
 

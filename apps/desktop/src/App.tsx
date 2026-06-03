@@ -919,7 +919,7 @@ function auditEventLabel(event: AuditEvent): string {
     case "ai_suggestion.applied":
       return "AI idea applied";
     case "ai_suggestion.dismissed":
-      return "AI idea dismissed";
+      return "AI idea rejected";
     case "provider_config.updated":
       return "Provider updated";
     case "prompt_version.created":
@@ -2770,9 +2770,7 @@ export function App() {
         `/api/ai-suggestions/${encodeURIComponent(suggestionId)}/accept`,
         { method: "POST", body: JSON.stringify({}) }
       );
-      setAiSuggestions((current) =>
-        current.map((suggestion) => (suggestion.id === response.suggestion.id ? response.suggestion : suggestion))
-      );
+      setAiSuggestions((current) => current.filter((suggestion) => suggestion.id !== response.suggestion.id));
       await refreshBucket();
       setSelectedItemId(response.workItem.id);
       setStatusMessage("AI suggestion accepted as a new memo.");
@@ -2783,7 +2781,7 @@ export function App() {
     }
   }
 
-  async function dismissAiSuggestion(suggestionId: string) {
+  async function rejectAiSuggestion(suggestionId: string) {
     if (accessToken === null) {
       return;
     }
@@ -2795,12 +2793,10 @@ export function App() {
         `/api/ai-suggestions/${encodeURIComponent(suggestionId)}/dismiss`,
         { method: "POST", body: JSON.stringify({}) }
       );
-      setAiSuggestions((current) =>
-        current.map((suggestion) => (suggestion.id === response.suggestion.id ? response.suggestion : suggestion))
-      );
-      setStatusMessage("AI suggestion dismissed.");
+      setAiSuggestions((current) => current.filter((suggestion) => suggestion.id !== response.suggestion.id));
+      setStatusMessage("AI suggestion rejected.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to dismiss AI suggestion.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to reject AI suggestion.");
     } finally {
       setSuggestionIdInFlight(null);
     }
@@ -3933,14 +3929,18 @@ export function App() {
                     </button>
                   </div>
                   {hasDraftChanges ? <span className="muted-text">Save or reset edits before generating</span> : null}
-                  <div className="suggestion-list">
-                    {aiSuggestions.length === 0 ? <span className="muted-text">No AI suggestions</span> : null}
+                  <div className="suggestion-list ai-suggestion-list" aria-label="Suggested new work items">
+                    {aiSuggestions.length === 0 ? <span className="muted-text">No pending suggested work items</span> : null}
                     {aiSuggestions.map((suggestion) => (
-                      <article className="suggestion-row" key={suggestion.id}>
+                      <article className="suggestion-row ai-suggestion-row" key={suggestion.id}>
                         <div>
+                          <div className="suggestion-kicker">
+                            <PackagePlus size={15} />
+                            <span>Suggested new work item</span>
+                          </div>
                           <div className="batch-title">
                             <strong>{suggestion.title}</strong>
-                            <span>{statusLabel(suggestion.status)}</span>
+                            <span>Pending review</span>
                           </div>
                           <p>{suggestion.body}</p>
                           <div className="item-meta">
@@ -3971,10 +3971,10 @@ export function App() {
                             className="secondary-button"
                             type="button"
                             disabled={suggestion.status !== "pending" || suggestionIdInFlight !== null}
-                            onClick={() => void dismissAiSuggestion(suggestion.id)}
+                            onClick={() => void rejectAiSuggestion(suggestion.id)}
                           >
                             <CircleSlash size={18} />
-                            Dismiss
+                            Reject
                           </button>
                         </div>
                       </article>

@@ -256,6 +256,13 @@ export class AiExpansionService {
         tags: suggestion.tags,
         actorUserId: actor.id
       });
+      if (workItem.projectId !== null) {
+        await new WorkItemRepository(client).markTagNominationReady({
+          workItemId: workItem.id,
+          projectId: workItem.projectId,
+          jobId: null
+        });
+      }
       const taggedWorkItem = (await new WorkItemRepository(client).findById(workItem.id)) ?? {
         ...workItem,
         tags: suggestion.tags
@@ -301,11 +308,11 @@ export class AiExpansionService {
         throw new HttpError(404, "not_found", "ai_suggestion was not found.");
       }
       if (existing.status !== "pending") {
-        throw new HttpError(409, "ai_suggestion_not_pending", "Only pending AI suggestions can be dismissed.");
+        throw new HttpError(409, "ai_suggestion_not_pending", "Only pending AI suggestions can be rejected.");
       }
       const dismissed = await suggestions.markDismissed({ suggestionId, actorUserId: actor.id });
       if (dismissed === null) {
-        throw new HttpError(409, "ai_suggestion_not_pending", "Only pending AI suggestions can be dismissed.");
+        throw new HttpError(409, "ai_suggestion_not_pending", "Only pending AI suggestions can be rejected.");
       }
       await new AuditRepository(client).record({
         eventName: "ai_suggestion.dismissed",

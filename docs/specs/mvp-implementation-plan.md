@@ -174,14 +174,14 @@ Goals:
 - Add LLM provider abstraction.
 - Add structured output validation.
 - Add `ai_suggestions`.
-- Add accept/dismiss suggestion flows.
+- Add accept/reject suggestion flows.
 
 Acceptance:
 
 - AI expansion creates validated pending suggestions.
 - Invalid output creates diagnostics and no suggestion/work-item records.
 - Accepting suggestion creates `source_memo` with `source_type = ai_generated` and work item in `memo`.
-- Dismissing suggestion does not create a work item or mutate workflow state.
+- Rejecting a suggestion does not create a work item or mutate workflow state.
 
 ## Milestone 9: Hardening And V1 Readiness
 

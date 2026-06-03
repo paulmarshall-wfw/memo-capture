@@ -1419,6 +1419,30 @@ button:disabled {
   line-height: 1.45;
 }
 
+.ai-suggestion-list {
+  padding-top: 2px;
+}
+
+.ai-suggestion-row {
+  border-style: dashed;
+  border-color: var(--metadata);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--metadata-soft) 62%, transparent), transparent 70%),
+    var(--surface-raised);
+}
+
+.suggestion-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--metadata);
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .audit-event-row {
   min-width: 0;
   padding: 8px 10px;

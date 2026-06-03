@@ -227,7 +227,7 @@ Accepting a suggestion creates:
 - a `source_memo` with `source_type = ai_generated`
 - a normal `work_item` in `memo`
 
-Dismissing a suggestion does not create a workflow item or mutate workflow state.
+Rejecting a suggestion does not create a workflow item or mutate workflow state. Rejected suggestions disappear from the normal review surface; V1 retains only backend suggestion status and audit/diagnostic metadata rather than a user-facing rejected-suggestions history.
 
 ## Prompt Versioning And AI Provenance
 
