@@ -10,7 +10,7 @@ test("desktop surface references the v1 export schema contract", () => {
 test("settings page exposes file type, provider catalog, and task-owned prompt controls", () => {
   const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
-  assert.match(appSource, /Save prompt/);
+  assert.doesNotMatch(appSource, /Save prompt/);
   assert.match(appSource, /Project synopsis/);
   assert.match(appSource, /Memo text\/transcript/);
   assert.match(appSource, /toggleFileType/);
@@ -50,13 +50,17 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /Add provider/);
   assert.match(appSource, /\/api\/settings\/providers/);
   assert.match(appSource, /Key: \{deriveTaskKeyPreview\(newAiTaskDraft\.displayName\)\}/);
-  assert.match(appSource, /firstRegisteredTaskHookKey/);
+  assert.doesNotMatch(appSource, /firstRegisteredTaskHookKey/);
   assert.match(appSource, /newAiTaskDraft\.promptDraft\.freeformText/);
   assert.match(appSource, /includeProjectSynopsis: newAiTaskDraft\.promptDraft\.includeProjectSynopsis/);
-  assert.doesNotMatch(appSource, /list="registered-task-hooks"/);
+  assert.match(appSource, /list="task-hook-options"/);
   assert.match(appSource, /Add task/);
   assert.match(appSource, /Save task/);
-  assert.match(appSource, /\/api\/settings\/prompts\/\$\{encodeURIComponent\(prompt\.id\)\}\/current/);
+  assert.match(appSource, /Delete task/);
+  assert.match(appSource, /deleteAiTaskDefinition/);
+  assert.match(appSource, /\/api\/settings\/ai-tasks\/\$\{encodeURIComponent\(task\.id\)\}/);
+  assert.doesNotMatch(appSource, /\/api\/settings\/prompts\/\$\{encodeURIComponent\(prompt\.id\)\}\/current/);
+  assert.match(appSource, /Model override/);
   assert.match(appSource, /runtime option/);
   assert.match(appSource, /task\.prompt/);
   assert.doesNotMatch(appSource, /Task kinds/);

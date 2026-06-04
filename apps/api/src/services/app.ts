@@ -103,6 +103,7 @@ export interface SettingsOperations {
   updateTaskKind(taskKindId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createAiTaskDefinition(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateAiTaskDefinition(taskDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  deleteAiTaskDefinition(taskDefinitionId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateAiTaskRoute(taskDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createMediaType(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateMediaType(mediaTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;

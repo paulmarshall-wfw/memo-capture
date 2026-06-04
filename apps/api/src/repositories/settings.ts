@@ -1024,6 +1024,16 @@ export class SettingsRepository {
     return this.findAiTaskRouteById(input.taskDefinitionId);
   }
 
+  async deleteAiTaskDefinition(taskDefinitionId: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `delete from ai_task_definitions
+       where id = $1
+       returning id`,
+      [taskDefinitionId]
+    );
+    return result.rows.length > 0;
+  }
+
   async findAiTaskRouteById(taskDefinitionId: string): Promise<AiTaskRouteRow | null> {
     const result = await this.db.query<AiTaskRouteRow>(
       `${aiTaskRouteSelectSql}

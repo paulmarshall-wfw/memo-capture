@@ -1589,6 +1589,18 @@ button:disabled {
   gap: 12px;
 }
 
+.task-card-header {
+  margin-bottom: 12px;
+}
+
+.task-card-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .detail-count {
   color: var(--text-subtle);
   font-size: 12px;

@@ -1430,7 +1430,6 @@ export function App() {
   const [aiTaskIdInFlight, setAiTaskIdInFlight] = useState<string | null>(null);
   const [newAiTaskDraft, setNewAiTaskDraft] = useState<NewAiTaskDraft>(defaultNewAiTaskDraft);
   const [aiTaskCreateInFlight, setAiTaskCreateInFlight] = useState(false);
-  const [promptIdInFlight, setPromptIdInFlight] = useState<string | null>(null);
   const [fileTypeIdInFlight, setFileTypeIdInFlight] = useState<string | null>(null);
   const [mediaTypeIdInFlight, setMediaTypeIdInFlight] = useState<string | null>(null);
   const [parserTypeIdInFlight, setParserTypeIdInFlight] = useState<string | null>(null);
@@ -1497,7 +1496,6 @@ export function App() {
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
   const registeredTaskHooks = settingsSummary?.registeredTaskHooks ?? [];
-  const firstRegisteredTaskHookKey = registeredTaskHooks[0]?.hookKey ?? "";
   const memoExpansionTask = useMemo(
     () => (settingsSummary?.aiTasks ?? []).find((task) => task.taskKey === "memo-expansion") ?? null,
     [settingsSummary]
@@ -1900,13 +1898,6 @@ export function App() {
       )
     );
   }, [settingsSummary]);
-
-  useEffect(() => {
-    if (newAiTaskDraft.hookKey !== "" || firstRegisteredTaskHookKey === "") {
-      return;
-    }
-    updateNewAiTaskDraft("hookKey", firstRegisteredTaskHookKey);
-  }, [firstRegisteredTaskHookKey, newAiTaskDraft.hookKey]);
 
   useEffect(() => {
     setProjectThresholdDraft(
@@ -3209,6 +3200,13 @@ export function App() {
     if (draft === undefined) {
       return;
     }
+    const task = settingsSummary?.aiTasks.find((candidate) => candidate.id === taskId);
+    const prompt = task?.prompt ?? null;
+    const promptDraft = prompt === null ? null : promptDrafts[prompt.id];
+    if (draft.promptsEnabled && promptDraft !== null && promptDraft !== undefined && promptDraft.freeformText.trim() === "") {
+      setStatusMessage("Prompt text is required when prompts are enabled.");
+      return;
+    }
     setAiTaskIdInFlight(taskId);
     setStatusMessage(null);
     try {
@@ -3221,6 +3219,16 @@ export function App() {
           providerConfigId: draft.providerConfigId === "" ? null : draft.providerConfigId,
           modelName: draft.modelName,
           promptsEnabled: draft.promptsEnabled,
+          ...(draft.promptsEnabled && promptDraft !== null && promptDraft !== undefined
+            ? {
+                body: promptDraft.freeformText,
+                freeformText: promptDraft.freeformText,
+                includeProjectSynopsis: promptDraft.includeProjectSynopsis,
+                includeMemoMetadata: promptDraft.includeMemoMetadata,
+                includeMemoTranscriptText: promptDraft.includeMemoTranscriptText,
+                outputSchema: prompt?.outputSchema ?? {}
+              }
+            : {}),
           enabled: draft.enabled
         })
       });
@@ -3228,6 +3236,25 @@ export function App() {
       setStatusMessage("Task saved. Relaunch from AppLauncher if runtime options changed.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to save task.");
+    } finally {
+      setAiTaskIdInFlight(null);
+    }
+  }
+
+  async function deleteAiTaskDefinition(task: SettingsSummary["aiTasks"][number]) {
+    if (accessToken === null) {
+      return;
+    }
+    setAiTaskIdInFlight(task.id);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/ai-tasks/${encodeURIComponent(task.id)}`, {
+        method: "DELETE"
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Task deleted.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to delete task.");
     } finally {
       setAiTaskIdInFlight(null);
     }
@@ -3539,39 +3566,6 @@ export function App() {
         [field]: value
       }
     }));
-  }
-
-  async function savePromptVersion(prompt: PromptSummary) {
-    if (accessToken === null) {
-      return;
-    }
-    const draft = promptDrafts[prompt.id];
-    if (draft === undefined || draft.freeformText.trim() === "") {
-      setStatusMessage("Prompt text is required.");
-      return;
-    }
-
-    setPromptIdInFlight(prompt.id);
-    setStatusMessage(null);
-    try {
-      await authedJson(accessToken, `/api/settings/prompts/${encodeURIComponent(prompt.id)}/current`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          body: draft.freeformText,
-          freeformText: draft.freeformText,
-          includeProjectSynopsis: draft.includeProjectSynopsis,
-          includeMemoMetadata: draft.includeMemoMetadata,
-          includeMemoTranscriptText: draft.includeMemoTranscriptText,
-          outputSchema: prompt.outputSchema ?? {}
-        })
-      });
-      await loadSettings(accessToken);
-      setStatusMessage("Prompt saved.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to save prompt version.");
-    } finally {
-      setPromptIdInFlight(null);
-    }
   }
 
   function addNewProjectDraft() {
@@ -5736,6 +5730,13 @@ export function App() {
                     </div>
                     <span className="detail-count">{settingsSummary.aiTasks.length} configured</span>
                   </div>
+                  <datalist id="task-hook-options">
+                    {registeredTaskHooks.map((hook) => (
+                      <option value={hook.hookKey} key={hook.hookKey}>
+                        {hook.displayName}
+                      </option>
+                    ))}
+                  </datalist>
 
                   <article className="settings-row provider-task-row">
                     <div>
@@ -5755,18 +5756,13 @@ export function App() {
                         </label>
                         <label>
                           <span>Hook Key</span>
-                          <select
+                          <input
+                            type="text"
+                            list="task-hook-options"
                             value={newAiTaskDraft.hookKey}
                             disabled={aiTaskCreateInFlight}
                             onChange={(event) => updateNewAiTaskDraft("hookKey", event.currentTarget.value)}
-                          >
-                            {registeredTaskHooks.length === 0 ? <option value="">No registered hooks</option> : null}
-                            {registeredTaskHooks.map((hook) => (
-                              <option value={hook.hookKey} key={hook.hookKey}>
-                                {hook.hookKey}
-                              </option>
-                            ))}
-                          </select>
+                          />
                         </label>
                         <label>
                           <span>Provider Key</span>
@@ -5932,20 +5928,44 @@ export function App() {
                             };
                       return (
                         <article className="settings-row provider-task-row" key={task.id}>
-                          <div>
-                            <div className="batch-title">
-                              <strong>{task.displayName}</strong>
-                              <span>{task.runtimeReady ? "Ready" : task.hookImplemented ? "Needs setup" : "Not implemented"}</span>
+                          <div className="settings-row-header task-card-header">
+                            <div>
+                              <div className="batch-title">
+                                <strong>{task.displayName}</strong>
+                                <span>{task.runtimeReady ? "Ready" : task.hookImplemented ? "Needs setup" : "Not implemented"}</span>
+                              </div>
+                              <p>
+                                Key {task.taskKey}; kind {task.taskKindDisplayName}; hook {task.hookKey}; route{" "}
+                                {task.routeEnabled ? "enabled" : "disabled"}
+                              </p>
+                              <p>
+                                Runtime {task.runtimeProvider}; selected {task.selectedProviderName ?? "none"}; model{" "}
+                                {task.selectedModelName ?? "default"}
+                              </p>
+                              {task.unavailableReason === null ? null : <p>{task.unavailableReason}</p>}
                             </div>
-                            <p>
-                              Key {task.taskKey}; kind {task.taskKindDisplayName}; hook {task.hookKey}; route{" "}
-                              {task.routeEnabled ? "enabled" : "disabled"}
-                            </p>
-                            <p>
-                              Runtime {task.runtimeProvider}; selected {task.selectedProviderName ?? "none"}; model{" "}
-                              {task.selectedModelName ?? "default"}
-                            </p>
-                            {task.unavailableReason === null ? null : <p>{task.unavailableReason}</p>}
+                            <div className="task-card-actions">
+                              <button
+                                className="row-action-button danger"
+                                type="button"
+                                disabled={aiTaskIdInFlight === task.id}
+                                onClick={() => void deleteAiTaskDefinition(task)}
+                              >
+                                <Trash2 size={18} />
+                                Delete task
+                              </button>
+                              <button
+                                className="primary-button"
+                                type="button"
+                                disabled={aiTaskIdInFlight === task.id}
+                                onClick={() => void saveAiTaskRoute(task.id)}
+                              >
+                                {aiTaskIdInFlight === task.id ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
+                                Save task
+                              </button>
+                            </div>
+                          </div>
+                          <div>
                             <div className="provider-route-controls">
                               <label>
                                 <span>Task Name</span>
@@ -5960,22 +5980,15 @@ export function App() {
                               </label>
                               <label>
                                 <span>Hook Key</span>
-                                <select
+                                <input
+                                  type="text"
+                                  list="task-hook-options"
                                   value={draft.hookKey}
                                   disabled={aiTaskIdInFlight === task.id}
                                   onChange={(event) =>
                                     updateAiTaskRouteDraft(task.id, "hookKey", event.currentTarget.value)
                                   }
-                                >
-                                  {registeredTaskHooks.map((hook) => (
-                                    <option value={hook.hookKey} key={hook.hookKey}>
-                                      {hook.hookKey}
-                                    </option>
-                                  ))}
-                                  {registeredTaskHooks.some((hook) => hook.hookKey === draft.hookKey) ? null : (
-                                    <option value={draft.hookKey}>{draft.hookKey}</option>
-                                  )}
-                                </select>
+                                />
                               </label>
                               <label>
                                 <span>Provider Key</span>
@@ -6014,7 +6027,9 @@ export function App() {
                                 />
                               </label>
                               <label>
-                                <span>Model ID/name</span>
+                                <span title="Optional per-task model override. Leave blank to use the selected provider default.">
+                                  Model override
+                                </span>
                                 <input
                                   type="text"
                                   value={draft.modelName}
@@ -6051,15 +6066,6 @@ export function App() {
                                 />
                                 Enabled
                               </label>
-                              <button
-                                className="secondary-button"
-                                type="button"
-                                disabled={aiTaskIdInFlight === task.id}
-                                onClick={() => void saveAiTaskRoute(task.id)}
-                              >
-                                {aiTaskIdInFlight === task.id ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
-                                Save task
-                              </button>
                             </div>
                             {!draft.promptsEnabled || prompt === null || promptDraft === null ? null : (
                               <div className="prompt-editor-row task-prompt-editor">
@@ -6071,15 +6077,6 @@ export function App() {
                                     </div>
                                     <p>{prompt.purpose}</p>
                                   </div>
-                                  <button
-                                    className="primary-button"
-                                    type="button"
-                                    disabled={promptIdInFlight === prompt.id}
-                                    onClick={() => void savePromptVersion(prompt)}
-                                  >
-                                    <Save size={18} />
-                                    Save prompt
-                                  </button>
                                 </div>
                                 <div className="field-group">
                                   <label htmlFor={`prompt-${prompt.id}-freeform`}>Prompt text</label>

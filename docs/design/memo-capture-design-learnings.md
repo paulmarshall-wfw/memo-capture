@@ -237,6 +237,8 @@ Task prompt edits update the task's current prompt configuration in place and do
 
 Prompt editing is attached to prompt-backed task definitions rather than a standalone global prompts page. It exposes freeform prompt text first, then explicit toggles for project synopsis, memo metadata, and memo text/transcript content. The backend composes the final model prompt in that order and does not send raw audio or video content to the LLM.
 
+Task definitions are user-managed Settings records. The app must not seed OCR, memo expansion, revision, suggestion, or tag tasks as configured tasks; users add and delete the task definitions they want. Registered hook keys can be suggested as app-owned compatibility metadata, but they must not create task rows by themselves.
+
 The deterministic `local-dev` work-item expander is a development provider. Provider configuration should allow multiple named provider instances of the same kind to coexist. App-owned AI actions should route through explicit task definitions rather than assuming one globally enabled LLM. Settings exposes one Tasks list with provider-key selection and read-only provider kind; task-kind and provider-capability metadata remain internal compatibility storage. AppLauncher runtime options provide task-specific non-secret provider/model/endpoint environment values such as `MEMO_EXPANSION_PROVIDER`; API keys remain AppLauncher secrets or process environment values and are never stored in runtime options.
 
 User-created AI tasks are allowed as future hooks. Until app code registers logic for a hook, the task must show `Not implemented`, runtime attempts must skip as a no-op, and providers must not be called.

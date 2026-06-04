@@ -255,6 +255,58 @@ test("AI task route enablement blocks unimplemented hooks and incompatible provi
   );
 });
 
+test("AI task updates save prompt fields and task definitions can be deleted", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    LLM_PROVIDER: "local-dev",
+    MEMO_EXPANSION_PROVIDER: "local-dev"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const updated = (await services.settings.updateAiTaskDefinition(
+    "task-memo-expansion",
+    {
+      displayName: "Memo expansion",
+      hookKey: "memo-expansion",
+      providerConfigId: "provider-local-dev",
+      modelName: "memo-capture-local-dev-expander-v1",
+      promptsEnabled: true,
+      freeformText: "Return strict JSON with a stronger memo body.",
+      includeProjectSynopsis: false,
+      includeMemoMetadata: true,
+      includeMemoTranscriptText: true,
+      outputSchema: {},
+      enabled: true
+    },
+    session.user,
+    "request-update-task-with-prompt"
+  )) as { aiTask: { prompt: { id: string } } };
+
+  assert.equal(updated.aiTask.prompt.id, "prompt-work-item-expansion");
+  const promptVersion = db.promptVersions.find((row) => row.prompt_definition_id === "prompt-work-item-expansion");
+  assert.equal(promptVersion?.body, "Return strict JSON with a stronger memo body.");
+  assert.deepEqual(promptVersion?.context_config, {
+    freeformText: "Return strict JSON with a stronger memo body.",
+    includeProjectSynopsis: false,
+    includeMemoMetadata: true,
+    includeMemoTranscriptText: true
+  });
+
+  const deleted = await services.settings.deleteAiTaskDefinition(
+    "task-custom",
+    session.user,
+    "request-delete-task"
+  );
+
+  assert.deepEqual(deleted, { deleted: true, taskId: "task-custom" });
+  assert.equal(db.aiTaskDefinitions.some((row) => row.id === "task-custom"), false);
+  assert.equal(db.aiTaskRoutes.some((row) => row.task_definition_id === "task-custom"), false);
+});
+
 test("form memo service creates source memo, work item, import event, and audit rows", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -3001,6 +3053,20 @@ class FakeDatabase implements Database {
 
     if (text.includes("from provider_configs")) {
       return rows([...this.providers] as Row[]);
+    }
+
+    if (text.includes("delete from ai_task_definitions")) {
+      const index = this.aiTaskDefinitions.findIndex((definition) => definition.id === values[0]);
+      if (index === -1) {
+        return rows([]);
+      }
+      const [definition] = this.aiTaskDefinitions.splice(index, 1);
+      for (let routeIndex = this.aiTaskRoutes.length - 1; routeIndex >= 0; routeIndex -= 1) {
+        if (this.aiTaskRoutes[routeIndex]?.task_definition_id === values[0]) {
+          this.aiTaskRoutes.splice(routeIndex, 1);
+        }
+      }
+      return rows([{ id: definition?.id }] as unknown as Row[]);
     }
 
     if (text.includes("from ai_task_definitions")) {

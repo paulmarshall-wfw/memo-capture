@@ -358,6 +358,7 @@ export class SettingsService {
       }
       const promptText =
         input.initialPromptText ??
+        input.promptUpdate?.body ??
         `Return strict JSON for ${input.displayName ?? current.display_name}. Do not include prose outside JSON.`;
       const promptsEnabled = input.promptsEnabled ?? current.prompt_definition_id !== null;
       const promptDefinitionId =
@@ -367,14 +368,23 @@ export class SettingsService {
                 name: promptNameForTaskKey(current.task_key),
                 purpose: `Prompt for ${input.displayName ?? current.display_name}.`,
                 body: promptText,
-                outputSchema: {},
-                contextConfig: defaultPromptContextConfig(promptText),
+                outputSchema: input.promptUpdate?.outputSchema ?? {},
+                contextConfig: input.promptUpdate?.contextConfig ?? defaultPromptContextConfig(promptText),
                 actorUserId: actor.id
               })
             ).id
           : promptsEnabled
             ? current.prompt_definition_id
             : null;
+      if (promptsEnabled && promptDefinitionId !== null && input.promptUpdate !== undefined) {
+        await settings.updateCurrentPrompt({
+          promptDefinitionId,
+          body: input.promptUpdate.body,
+          outputSchema: input.promptUpdate.outputSchema,
+          contextConfig: input.promptUpdate.contextConfig,
+          actorUserId: actor.id
+        });
+      }
       await settings.updateAiTaskDefinition({
         taskDefinitionId,
         displayName: input.displayName,
@@ -411,6 +421,39 @@ export class SettingsService {
         redactionApplied: true
       });
       return { aiTask: serializeAiTaskRoute(task, this.config) };
+    });
+  }
+
+  async deleteAiTaskDefinition(
+    taskDefinitionId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const current = await settings.findAiTaskRouteById(taskDefinitionId);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "ai_task_definition was not found.");
+      }
+      const deleted = await settings.deleteAiTaskDefinition(taskDefinitionId);
+      if (!deleted) {
+        throw new HttpError(404, "not_found", "ai_task_definition was not found.");
+      }
+      await audit.record({
+        eventName: "ai_task_definition.deleted",
+        actor,
+        subjectType: "ai_task_definition",
+        subjectId: current.id,
+        requestId,
+        metadata: {
+          taskKey: current.task_key,
+          hookKey: current.hook_key,
+          promptsEnabled: current.prompt_definition_id !== null
+        },
+        redactionApplied: true
+      });
+      return { deleted: true, taskId: taskDefinitionId };
     });
   }
 
@@ -1358,6 +1401,13 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
 function parseUpdateAiTaskBody(body: unknown) {
   const record = parseObject(body);
   const route = parseAiTaskRouteBody(record);
+  const promptFieldsPresent =
+    record.freeformText !== undefined ||
+    record.body !== undefined ||
+    record.outputSchema !== undefined ||
+    record.includeProjectSynopsis !== undefined ||
+    record.includeMemoMetadata !== undefined ||
+    record.includeMemoTranscriptText !== undefined;
   return {
     displayName:
       record.displayName === undefined ? undefined : assertNonEmptyString(record.displayName, "displayName"),
@@ -1366,6 +1416,7 @@ function parseUpdateAiTaskBody(body: unknown) {
     promptsEnabled: parseOptionalBoolean(record.promptsEnabled ?? record.promptFieldsEnabled, "promptsEnabled"),
     initialPromptText:
       record.initialPromptText === undefined ? undefined : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
+    promptUpdate: promptFieldsPresent ? parsePromptVersionBody(record) : undefined,
     ...route
   };
 }

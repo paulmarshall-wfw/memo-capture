@@ -345,6 +345,14 @@ function matchProtectedRoute(
         context.requestId
       );
   }
+  if (method === "DELETE" && aiTaskPatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.deleteAiTaskDefinition(
+        decodeURIComponent(aiTaskPatchMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
 
   const aiTaskRoutePatchMatch = /^\/api\/settings\/ai-tasks\/([^/]+)\/route$/.exec(pathname);
   if (method === "PATCH" && aiTaskRoutePatchMatch !== null) {
