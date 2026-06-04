@@ -45,12 +45,51 @@ export interface ProviderConfigRow extends Record<string, unknown> {
   id: string;
   provider_kind: string;
   provider_name: string;
+  display_name: string | null;
+  adapter_key: string | null;
   enabled: boolean;
   endpoint: string | null;
   model_name: string | null;
   secret_source: string;
+  required_secret_env: string | null;
+  external_send_enabled: boolean;
+  runtime_provider_env: string | null;
+  runtime_model_env: string | null;
+  runtime_endpoint_env: string | null;
   health_status: string;
   last_health_check_at: Date | string | null;
+  updated_at: Date | string;
+}
+
+export interface AiTaskRouteRow extends Record<string, unknown> {
+  id: string;
+  task_key: string;
+  display_name: string;
+  description: string | null;
+  hook_key: string;
+  task_kind: string;
+  implemented: boolean;
+  default_provider_name: string | null;
+  default_model_name: string | null;
+  runtime_option_id: string;
+  runtime_option_purpose: string;
+  runtime_provider_env: string;
+  runtime_model_env: string;
+  runtime_endpoint_env: string | null;
+  route_enabled: boolean;
+  route_model_name: string | null;
+  provider_config_id: string | null;
+  provider_kind: string | null;
+  provider_name: string | null;
+  provider_display_name: string | null;
+  adapter_key: string | null;
+  provider_enabled: boolean | null;
+  provider_model_name: string | null;
+  endpoint: string | null;
+  secret_source: string | null;
+  required_secret_env: string | null;
+  external_send_enabled: boolean | null;
+  health_status: string | null;
   updated_at: Date | string;
 }
 
@@ -66,6 +105,41 @@ export interface PromptDefinitionRow extends Record<string, unknown> {
   active_context_config: Record<string, unknown> | null;
   updated_at: Date | string;
 }
+
+const aiTaskRouteSelectSql = `
+  select
+    ai_task_definitions.id,
+    ai_task_definitions.task_key,
+    ai_task_definitions.display_name,
+    ai_task_definitions.description,
+    ai_task_definitions.hook_key,
+    ai_task_definitions.task_kind,
+    ai_task_definitions.implemented,
+    ai_task_definitions.default_provider_name,
+    ai_task_definitions.default_model_name,
+    ai_task_definitions.runtime_option_id,
+    ai_task_definitions.runtime_option_purpose,
+    ai_task_definitions.runtime_provider_env,
+    ai_task_definitions.runtime_model_env,
+    ai_task_definitions.runtime_endpoint_env,
+    coalesce(ai_task_routes.enabled, false) as route_enabled,
+    ai_task_routes.model_name as route_model_name,
+    provider_configs.id as provider_config_id,
+    provider_configs.provider_kind,
+    provider_configs.provider_name,
+    provider_configs.display_name as provider_display_name,
+    provider_configs.adapter_key,
+    provider_configs.enabled as provider_enabled,
+    provider_configs.model_name as provider_model_name,
+    provider_configs.endpoint,
+    provider_configs.secret_source,
+    provider_configs.required_secret_env,
+    provider_configs.external_send_enabled,
+    provider_configs.health_status,
+    coalesce(ai_task_routes.updated_at, ai_task_definitions.updated_at) as updated_at
+  from ai_task_definitions
+  left join ai_task_routes on ai_task_routes.task_definition_id = ai_task_definitions.id
+  left join provider_configs on provider_configs.id = ai_task_routes.provider_config_id`;
 
 export class SettingsRepository {
   constructor(private readonly db: Queryable) {}
@@ -486,8 +560,9 @@ export class SettingsRepository {
 
   async listProviders(): Promise<ProviderConfigRow[]> {
     const result = await this.db.query<ProviderConfigRow>(
-      `select id, provider_kind, provider_name, enabled, endpoint, model_name, secret_source,
-              health_status, last_health_check_at, updated_at
+      `select id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
+              secret_source, required_secret_env, external_send_enabled, runtime_provider_env, runtime_model_env,
+              runtime_endpoint_env, health_status, last_health_check_at, updated_at
        from provider_configs
        order by provider_kind asc, provider_name asc`
     );
@@ -496,8 +571,9 @@ export class SettingsRepository {
 
   async findEnabledProvider(providerKind: string, preferredProviderName?: string | null): Promise<ProviderConfigRow | null> {
     const result = await this.db.query<ProviderConfigRow>(
-      `select id, provider_kind, provider_name, enabled, endpoint, model_name, secret_source,
-              health_status, last_health_check_at, updated_at
+      `select id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
+              secret_source, required_secret_env, external_send_enabled, runtime_provider_env, runtime_model_env,
+              runtime_endpoint_env, health_status, last_health_check_at, updated_at
        from provider_configs
        where provider_kind = $1 and enabled = true
        order by
@@ -505,6 +581,112 @@ export class SettingsRepository {
          updated_at desc
        limit 1`,
       [providerKind, preferredProviderName ?? null]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findAiTaskRoute(taskKey: string): Promise<AiTaskRouteRow | null> {
+    const result = await this.db.query<AiTaskRouteRow>(
+      `${aiTaskRouteSelectSql}
+       where ai_task_definitions.task_key = $1
+       limit 1`,
+      [taskKey]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listAiTaskRoutes(): Promise<AiTaskRouteRow[]> {
+    const result = await this.db.query<AiTaskRouteRow>(
+      `${aiTaskRouteSelectSql}
+       order by ai_task_definitions.display_name asc, ai_task_definitions.task_key asc`
+    );
+    return result.rows;
+  }
+
+  async createAiTaskDefinition(input: {
+    taskKey: string;
+    displayName: string;
+    description: string | null;
+    hookKey: string;
+    taskKind: string;
+    runtimeOptionId: string;
+    runtimeOptionPurpose: string;
+    runtimeProviderEnv: string;
+    runtimeModelEnv: string;
+    runtimeEndpointEnv: string;
+    actorUserId: string;
+  }): Promise<AiTaskRouteRow> {
+    const taskId = randomUUID();
+    await this.db.query(
+      `insert into ai_task_definitions (
+         id, task_key, display_name, description, hook_key, task_kind, implemented,
+         runtime_option_id, runtime_option_purpose, runtime_provider_env, runtime_model_env,
+         runtime_endpoint_env, created_by, updated_by, created_at, updated_at
+       )
+       values ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $12, now(), now())`,
+      [
+        taskId,
+        input.taskKey,
+        input.displayName,
+        input.description,
+        input.hookKey,
+        input.taskKind,
+        input.runtimeOptionId,
+        input.runtimeOptionPurpose,
+        input.runtimeProviderEnv,
+        input.runtimeModelEnv,
+        input.runtimeEndpointEnv,
+        input.actorUserId
+      ]
+    );
+    await this.db.query(
+      `insert into ai_task_routes (task_definition_id, provider_config_id, model_name, enabled, updated_by, updated_at)
+       values ($1, null, null, false, $2, now())`,
+      [taskId, input.actorUserId]
+    );
+    const createdTask = await this.findAiTaskRouteById(taskId);
+    if (createdTask === null) {
+      throw new Error("AI task creation failed");
+    }
+    return createdTask;
+  }
+
+  async updateAiTaskRoute(input: {
+    taskDefinitionId: string;
+    providerConfigId?: string | null | undefined;
+    modelName?: string | null | undefined;
+    enabled?: boolean | undefined;
+    actorUserId: string;
+  }): Promise<AiTaskRouteRow | null> {
+    await this.db.query(
+      `insert into ai_task_routes (task_definition_id, provider_config_id, model_name, enabled, updated_by, updated_at)
+       values ($1, $2::uuid, $3::text, coalesce($4::boolean, true), $5, now())
+       on conflict (task_definition_id) do update
+       set
+         provider_config_id = case when $6::boolean then $2::uuid else ai_task_routes.provider_config_id end,
+         model_name = case when $7::boolean then nullif($3::text, '') else ai_task_routes.model_name end,
+         enabled = coalesce($4::boolean, ai_task_routes.enabled),
+         updated_by = $5,
+         updated_at = now()`,
+      [
+        input.taskDefinitionId,
+        input.providerConfigId ?? null,
+        input.modelName ?? null,
+        input.enabled ?? null,
+        input.actorUserId,
+        input.providerConfigId !== undefined,
+        input.modelName !== undefined
+      ]
+    );
+    return this.findAiTaskRouteById(input.taskDefinitionId);
+  }
+
+  async findAiTaskRouteById(taskDefinitionId: string): Promise<AiTaskRouteRow | null> {
+    const result = await this.db.query<AiTaskRouteRow>(
+      `${aiTaskRouteSelectSql}
+       where ai_task_definitions.id = $1
+       limit 1`,
+      [taskDefinitionId]
     );
     return result.rows[0] ?? null;
   }
@@ -526,7 +708,9 @@ export class SettingsRepository {
          updated_at = now()
        where id = $1
        returning id, provider_kind, provider_name, enabled, endpoint, model_name,
-                 secret_source, health_status, last_health_check_at, updated_at`,
+                 display_name, adapter_key, secret_source, required_secret_env, external_send_enabled,
+                 runtime_provider_env, runtime_model_env, runtime_endpoint_env,
+                 health_status, last_health_check_at, updated_at`,
       [
         input.providerId,
         input.enabled ?? null,

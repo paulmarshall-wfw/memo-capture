@@ -170,10 +170,17 @@ Required columns:
 - `id uuid primary key`
 - `provider_kind text not null`
 - `provider_name text not null`
+- `display_name text`
+- `adapter_key text`
 - `enabled boolean not null default false`
 - `endpoint text`
 - `model_name text`
 - `secret_source text not null`
+- `required_secret_env text`
+- `external_send_enabled boolean not null default false`
+- `runtime_provider_env text`
+- `runtime_model_env text`
+- `runtime_endpoint_env text`
 - `health_status text not null default 'unknown'`
 - `last_health_check_at timestamptz`
 - `created_by uuid references app_users(id)`
@@ -195,6 +202,57 @@ Rules:
 - Jobs snapshot intended provider/model at creation where predictability matters.
 - Provider failures mark the provider unhealthy and show diagnostics; they do not auto-disable providers.
 - Multiple providers of the same kind may be configured at the same time. App-owned jobs should route by explicit purpose/runtime provider where available rather than assuming only one enabled provider exists.
+
+### ai_task_definitions
+
+Required columns:
+
+- `id uuid primary key`
+- `task_key text not null unique`
+- `display_name text not null`
+- `description text`
+- `hook_key text not null`
+- `task_kind text not null default 'llm'`
+- `implemented boolean not null default false`
+- `default_provider_name text`
+- `default_model_name text`
+- `runtime_option_id text not null`
+- `runtime_option_purpose text not null`
+- `runtime_provider_env text not null`
+- `runtime_model_env text not null`
+- `runtime_endpoint_env text`
+- timestamps and actor columns
+
+Seeded tasks:
+
+- `memo-expansion`
+- `suggest-new-memos`
+- `suggest-selected-tags`
+- `ocr`
+
+Rules:
+
+- `implemented = true` only when app code has a registered handler for the hook.
+- User-created tasks are allowed, but start as `implemented = false`.
+- Unknown hooks must display `Not implemented`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
+- OCR is modeled as a task in V1, but remains no-op until OCR handler logic is implemented.
+
+### ai_task_routes
+
+Required columns:
+
+- `task_definition_id uuid primary key references ai_task_definitions(id)`
+- `provider_config_id uuid references provider_configs(id)`
+- `model_name text`
+- `enabled boolean not null default true`
+- `updated_by uuid references app_users(id)`
+- `updated_at timestamptz not null`
+
+Rules:
+
+- Global task routes are the V1 routing model.
+- A task runs only when the route is enabled, the hook is implemented, the selected provider is enabled, and AppLauncher/runtime env selects that same provider.
+- Model overrides are per route and affect only new processing attempts.
 
 ### prompt_definitions
 
@@ -379,9 +437,9 @@ Use structured redaction:
 
 `GET /api/settings`
 
-Response includes backend settings, prompt metadata, file type settings, redacted provider/auth status, and runtime provider availability. It never returns provider secrets.
+Response includes backend settings, prompt metadata, file type settings, redacted provider/auth status, AI task routes, AppLauncher runtime-option status, and runtime provider availability. It never returns provider secrets.
 
-Response includes `mediaTypes`, `parserTypes`, and `fileTypes`.
+Response includes `mediaTypes`, `parserTypes`, `fileTypes`, `providers`, `aiTasks`, and `appLauncher`.
 
 ### Create media type setting
 
@@ -469,6 +527,40 @@ Request:
 }
 ```
 
+### Create AI task definition
+
+`POST /api/settings/ai-tasks`
+
+Request:
+
+```json
+{
+  "taskKey": "custom-summary",
+  "displayName": "Custom summary",
+  "description": "Summarize a memo for a downstream workflow.",
+  "hookKey": "custom-summary",
+  "taskKind": "llm"
+}
+```
+
+Creates a user-extensible task hook with a disabled route and `implemented = false`. The task is visible in Settings as `Not implemented`; processing attempts must no-op until app logic exists.
+
+### Update AI task route
+
+`PATCH /api/settings/ai-tasks/{taskDefinitionId}/route`
+
+Request:
+
+```json
+{
+  "providerConfigId": "00000000-0000-4000-8000-000000000302",
+  "modelName": "gpt-4.1-mini",
+  "enabled": true
+}
+```
+
+Updates the global route for one AI task. The route is ready only when the selected provider is enabled, the AppLauncher runtime option selects the same provider, required secrets are configured, and the hook is implemented.
+
 ### List audit events
 
 `GET /api/audit-events`
@@ -526,6 +618,13 @@ Settings sections:
 
 Settings must not expose a manual per-file import queue. Watched folders own standalone file ingestion. Saved enabled watched folders are actively polled by the native desktop app while it is open, and the Check now action is allowed only when it runs the same automatic processing path for eligible enabled file types.
 
+Providers section:
+
+- AppLauncher status shows manifest/runtime option readiness, required secret env names, and relaunch guidance after runtime changes.
+- Provider catalog shows enabled state, adapter, endpoint/model metadata, external-send posture, redacted secret status, and health.
+- Task routing shows task name, hook key, implementation status, provider selection, optional model override, and readiness reason.
+- User-created task hooks can be added from Settings, but they show `Not implemented` until app logic exists and must not process work.
+
 Operations section:
 
 - Active workflow status from `GET /api/workflow/status`, including workflow ID, workflow version, state-machine version, content hash, activation time, and supported hook handlers.
@@ -539,6 +638,8 @@ Operations section:
 - Updating backend settings writes audit events.
 - Provider config response redacts secret presence and never returns secret values.
 - Disabled providers never receive new jobs.
+- AppLauncher runtime options contain only non-secret provider/model/endpoint selectors; API keys use AppLauncher secrets or process environment.
+- User-created AI task hooks display `Not implemented` and no-op until app logic exists.
 - AI expansion with invalid structured JSON creates a failed diagnostics job and no suggestion records.
 - Accepting an AI suggestion creates a normal memo work item without changing the parent lifecycle state.
 - File type marked `not_supported_yet` is ignored by watched-folder ingestion.

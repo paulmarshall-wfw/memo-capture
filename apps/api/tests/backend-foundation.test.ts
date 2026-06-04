@@ -1299,6 +1299,19 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(providerPatch.response.status, 200);
     assert.equal(providerPatch.body.provider.enabled, true);
 
+    const aiTaskCreate = await authedJson(baseUrl, "/api/settings/ai-tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        taskKey: "custom-summary",
+        displayName: "Custom summary",
+        hookKey: "custom-summary",
+        taskKind: "llm"
+      })
+    });
+    assert.equal(aiTaskCreate.response.status, 200);
+    assert.equal(aiTaskCreate.body.aiTask.taskKey, "custom-summary");
+    assert.equal(aiTaskCreate.body.aiTask.hookImplemented, false);
+
     const fileTypePatch = await authedJson(baseUrl, "/api/settings/file-types/file-type-md", {
       method: "PATCH",
       body: JSON.stringify({ active: false })
@@ -1558,7 +1571,7 @@ function stubServices(): AppServices {
       }
     } as unknown as AppServices["jobs"],
     settings: {
-      getSummary: async () => ({ providers: [] }),
+      getSummary: async () => ({ providers: [], aiTasks: [], appLauncher: null }),
       updateExtraction: async () => {
         throw new Error("not used");
       },
@@ -1572,6 +1585,12 @@ function stubServices(): AppServices {
         throw new Error("not used");
       },
       updateProvider: async () => {
+        throw new Error("not used");
+      },
+      createAiTaskDefinition: async () => {
+        throw new Error("not used");
+      },
+      updateAiTaskRoute: async () => {
         throw new Error("not used");
       },
       createPromptVersion: async () => {
@@ -1993,10 +2012,14 @@ function captureRouteServices(): AppServices {
             id: "provider-1",
             providerKind: "llm",
             providerName: "local-dev",
+            displayName: "Local development",
+            adapterKey: "local-dev",
             enabled: false,
             endpointConfigured: false,
             modelName: "memo-capture-local-dev-expander-v1",
             secretSource: "environment",
+            requiredSecretEnv: null,
+            externalSendEnabled: false,
             secretConfigured: true,
             healthStatus: "unknown",
             runtimeProvider: "local-dev",
@@ -2005,6 +2028,44 @@ function captureRouteServices(): AppServices {
             updatedAt: "2026-05-29T00:00:00.000Z"
           }
         ],
+        aiTasks: [
+          {
+            id: "task-1",
+            taskKey: "memo-expansion",
+            displayName: "Memo expansion",
+            description: "Expand one memo.",
+            hookKey: "memo-expansion",
+            taskKind: "llm",
+            hookImplemented: true,
+            routeEnabled: true,
+            runtimeOptionId: "memo-expansion-provider",
+            runtimeOptionPurpose: "memo-expansion",
+            runtimeProviderEnv: "MEMO_EXPANSION_PROVIDER",
+            runtimeModelEnv: "MEMO_EXPANSION_MODEL",
+            runtimeEndpointEnv: "MEMO_EXPANSION_ENDPOINT",
+            selectedProviderId: "provider-1",
+            selectedProviderName: "local-dev",
+            selectedProviderDisplayName: "Local development",
+            selectedModelName: "memo-capture-local-dev-expander-v1",
+            providerAdapterKey: "local-dev",
+            providerExternalSendEnabled: false,
+            providerSecretEnv: null,
+            runtimeProvider: "local-dev",
+            runtimeModelName: "memo-capture-local-dev-expander-v1",
+            runtimeEndpointConfigured: false,
+            runtimeReady: true,
+            unavailableReason: null,
+            updatedAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
+        appLauncher: {
+          manifestVersion: "1.2.0",
+          minLauncherVersion: "1.2.0",
+          runtimeOptionsPresent: true,
+          nativeLaunchTarget: "executablePath",
+          secretEnvironmentNames: [],
+          restartRequiredAfterChange: true
+        },
         prompts: [
           {
             id: "prompt-1",
@@ -2076,6 +2137,26 @@ function captureRouteServices(): AppServices {
           runtimeModelName: "memo-capture-local-dev-expander-v1",
           lastHealthCheckAt: null,
           updatedAt: "2026-05-29T00:06:00.000Z"
+        }
+      }),
+      updateAiTaskRoute: async () => ({
+        aiTask: {
+          id: "task-1",
+          taskKey: "memo-expansion",
+          displayName: "Memo expansion",
+          runtimeReady: true
+        }
+      }),
+      createAiTaskDefinition: async () => ({
+        aiTask: {
+          id: "task-custom-summary",
+          taskKey: "custom-summary",
+          displayName: "Custom summary",
+          hookKey: "custom-summary",
+          hookImplemented: false,
+          routeEnabled: false,
+          runtimeReady: false,
+          unavailableReason: "No app logic is registered for this hook."
         }
       }),
       createPromptVersion: async (_promptDefinitionId: string, body: unknown) => {

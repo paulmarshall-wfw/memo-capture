@@ -237,7 +237,9 @@ Editing a prompt creates a new prompt version and does not mutate previous versi
 
 Prompt editing exposes freeform prompt text first, then explicit toggles for project synopsis, memo metadata, and memo text/transcript content. The backend composes the final model prompt in that order and does not send raw audio or video content to the LLM.
 
-The deterministic `local-dev` work-item expander is a development provider. It should be easy to enable from Settings, but runtime activation still comes from `LLM_PROVIDER=local-dev`. Provider configuration should allow local and cloud LLM providers to coexist; app-owned AI actions should select providers by explicit purpose/runtime instead of assuming a single globally enabled LLM.
+The deterministic `local-dev` work-item expander is a development provider. Provider configuration should allow local and cloud LLM providers to coexist, and app-owned AI actions should route through explicit task definitions rather than assuming one globally enabled LLM. AppLauncher runtime options provide task-specific non-secret provider/model/endpoint environment values such as `MEMO_EXPANSION_PROVIDER`; API keys remain AppLauncher secrets or process environment values and are never stored in runtime options.
+
+User-created AI tasks are allowed as future hooks. Until app code registers logic for a hook, the task must show `Not implemented`, runtime attempts must skip as a no-op, and providers must not be called.
 
 AI generation records should include:
 

@@ -309,6 +309,22 @@ function matchProtectedRoute(
       );
   }
 
+  if (method === "POST" && pathname === "/api/settings/ai-tasks") {
+    return async (context, session) =>
+      services.settings.createAiTaskDefinition(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const aiTaskRoutePatchMatch = /^\/api\/settings\/ai-tasks\/([^/]+)\/route$/.exec(pathname);
+  if (method === "PATCH" && aiTaskRoutePatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateAiTaskRoute(
+        decodeURIComponent(aiTaskRoutePatchMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
   const fileTypePatchMatch = /^\/api\/settings\/file-types\/([^/]+)$/.exec(pathname);
   if (method === "PATCH" && fileTypePatchMatch !== null) {
     return async (context, session) =>

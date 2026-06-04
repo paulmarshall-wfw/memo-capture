@@ -18,6 +18,8 @@ import {
   type WorkItemExpansionContext
 } from "./llm.js";
 
+const MEMO_EXPANSION_TASK_KEY = "memo-expansion";
+
 export class AiExpansionService {
   constructor(
     private readonly db: Database,
@@ -44,9 +46,9 @@ export class AiExpansionService {
     validation: Record<string, unknown>;
   }> {
     const settings = new SettingsRepository(this.db);
-    const [prompt, providerConfig, workItem, sourceMemo, projects] = await Promise.all([
+    const [prompt, taskRoute, workItem, sourceMemo, projects] = await Promise.all([
       settings.getActivePrompt("work_item_expansion"),
-      settings.findEnabledProvider("llm", this.config.llm.provider === "disabled" ? null : this.config.llm.provider),
+      settings.findAiTaskRoute(MEMO_EXPANSION_TASK_KEY),
       new WorkItemRepository(this.db).findById(workItemId),
       this.findSourceMemoForWorkItem(workItemId),
       new ProjectRepository(this.db).list()
@@ -59,8 +61,17 @@ export class AiExpansionService {
     }
     const promptVersionId = prompt.active_prompt_version_id;
     const promptBody = prompt.active_body;
-    if (providerConfig === null) {
-      throw new HttpError(409, "llm_provider_not_enabled", "No LLM provider is enabled.");
+    if (taskRoute === null) {
+      throw new HttpError(409, "ai_task_missing", "Memo expansion task route is not configured.");
+    }
+    if (!taskRoute.implemented) {
+      throw new HttpError(409, "ai_task_not_implemented", "Memo expansion task hook is not implemented.");
+    }
+    if (!taskRoute.route_enabled) {
+      throw new HttpError(409, "ai_task_route_disabled", "Memo expansion task route is disabled.");
+    }
+    if (taskRoute.provider_name === null || taskRoute.provider_enabled !== true) {
+      throw new HttpError(409, "llm_provider_not_enabled", "No enabled LLM provider is selected for memo expansion.");
     }
 
     const project = projects.find((candidate) => candidate.id === workItem.projectId) ?? null;
@@ -85,8 +96,30 @@ export class AiExpansionService {
       },
       sourceMemo
     };
-    const modelName = providerConfig.model_name ?? this.config.llm.modelName;
-    const provider = createLlmProvider(this.config.llm, providerConfig.provider_name, modelName);
+    const taskRuntime = this.config.llmTasks[MEMO_EXPANSION_TASK_KEY] ?? {
+      provider: this.config.llm.provider,
+      modelName: this.config.llm.modelName,
+      endpoint: this.config.llm.endpoint
+    };
+    const providerName = taskRoute.provider_name;
+    if (taskRuntime.provider === "disabled") {
+      throw new HttpError(
+        409,
+        "llm_provider_disabled",
+        "Memo expansion is enabled in Settings, but the AppLauncher AI runtime option is disabled."
+      );
+    }
+    if (taskRuntime.provider !== providerName) {
+      throw new HttpError(
+        409,
+        "llm_provider_unavailable",
+        `Memo expansion uses ${providerName}, but the AppLauncher runtime selected ${taskRuntime.provider}.`
+      );
+    }
+    const modelName =
+      taskRuntime.modelName || taskRoute.route_model_name || taskRoute.provider_model_name || this.config.llm.modelName;
+    const endpoint = taskRuntime.endpoint || (taskRoute.endpoint ?? "") || this.config.llm.endpoint;
+    const provider = createLlmProvider(this.config.llm, providerName, modelName, taskRuntime.provider, endpoint);
     const job = await new ProcessingJobRepository(this.db).create({
       jobKind: "expand_work_item",
       status: "running",
@@ -108,7 +141,7 @@ export class AiExpansionService {
       metadata: {
         promptName: prompt.name,
         promptVersion: prompt.active_version,
-        providerName: providerConfig.provider_name,
+        providerName,
         modelName
       }
     });
@@ -124,7 +157,7 @@ export class AiExpansionService {
         userSafeErrorMessage: "AI expansion failed before returning valid output.",
         internalErrorDetail: message,
         retryable: false,
-        providerName: providerConfig.provider_name,
+        providerName,
         modelName,
         latencyMs: null
       });

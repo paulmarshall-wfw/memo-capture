@@ -45,7 +45,17 @@ test("work item expansion prompt starts with freeform text and uses text-only co
 
 test("disabled LLM runtime reports the Settings/runtime mismatch", () => {
   assert.throws(
-    () => createLlmProvider({ provider: "disabled", modelName: "memo-capture-local-dev-expander-v1" }, "local-dev", ""),
+    () =>
+      createLlmProvider(
+        {
+          provider: "disabled",
+          modelName: "memo-capture-local-dev-expander-v1",
+          endpoint: "",
+          openAiCompatibleApiKey: ""
+        },
+        "local-dev",
+        ""
+      ),
     /enabled in Settings, but this API runtime is disabled/
   );
 });

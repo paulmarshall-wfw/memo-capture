@@ -28,6 +28,7 @@ export interface ApiConfig {
   migrationsDirectory: string | null;
   objectStorage: ObjectStorageConfig;
   llm: LlmProviderConfig;
+  llmTasks: Record<string, LlmTaskRuntimeConfig>;
   transcription: TranscriptionProviderConfig;
   whisperCpp: WhisperCppConfig;
   authMode: AuthMode;
@@ -43,11 +44,19 @@ export interface ObjectStorageConfig {
 export type TranscriptionProviderMode = "disabled" | "local-dev" | "whisper-cpp";
 export type WhisperCppMode = "cli" | "server";
 
-export type LlmProviderMode = "disabled" | "local-dev";
+export type LlmProviderMode = "disabled" | "local-dev" | "openai-compatible";
 
 export interface LlmProviderConfig {
   provider: LlmProviderMode;
   modelName: string;
+  endpoint: string;
+  openAiCompatibleApiKey: string;
+}
+
+export interface LlmTaskRuntimeConfig {
+  provider: LlmProviderMode;
+  modelName: string;
+  endpoint: string;
 }
 
 export interface TranscriptionProviderConfig {
@@ -88,8 +97,11 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     },
     llm: {
       provider: readLlmProvider(env),
-      modelName: readStringEnv(env, "LLM_MODEL", "memo-capture-local-dev-expander-v1")
+      modelName: readStringEnv(env, "LLM_MODEL", "memo-capture-local-dev-expander-v1"),
+      endpoint: readStringEnv(env, "LLM_ENDPOINT", ""),
+      openAiCompatibleApiKey: readStringEnv(env, "OPENAI_COMPATIBLE_API_KEY", "")
     },
+    llmTasks: readLlmTaskRuntimeConfig(env),
     transcription: {
       provider: readTranscriptionProvider(env),
       modelName: readStringEnv(env, "TRANSCRIPTION_MODEL", "memo-capture-local-dev-transcriber-v1")
@@ -125,11 +137,44 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
 
 function readLlmProvider(env: NodeJS.ProcessEnv): LlmProviderMode {
   const value = readStringEnv(env, "LLM_PROVIDER", "disabled");
-  if (value === "disabled" || value === "local-dev") {
+  if (value === "disabled" || value === "local-dev" || value === "openai-compatible") {
     return value;
   }
 
-  throw new Error("LLM_PROVIDER must be disabled or local-dev.");
+  throw new Error("LLM_PROVIDER must be disabled, local-dev, or openai-compatible.");
+}
+
+function readLlmProviderValue(value: string, field: string): LlmProviderMode {
+  if (value === "disabled" || value === "local-dev" || value === "openai-compatible") {
+    return value;
+  }
+  throw new Error(`${field} must be disabled, local-dev, or openai-compatible.`);
+}
+
+function readLlmTaskRuntimeConfig(env: NodeJS.ProcessEnv): Record<string, LlmTaskRuntimeConfig> {
+  const fallbackProvider = readLlmProvider(env);
+  const fallbackModel = readStringEnv(env, "LLM_MODEL", "memo-capture-local-dev-expander-v1");
+  const fallbackEndpoint = readStringEnv(env, "LLM_ENDPOINT", "");
+  const tasks = [
+    ["memo-expansion", "MEMO_EXPANSION"],
+    ["suggest-new-memos", "SUGGEST_NEW_MEMOS"],
+    ["suggest-selected-tags", "SUGGEST_SELECTED_TAGS"],
+    ["ocr", "OCR"]
+  ] as const;
+
+  return Object.fromEntries(
+    tasks.map(([taskKey, envPrefix]) => {
+      const providerValue = readStringEnv(env, `${envPrefix}_PROVIDER`, taskKey === "memo-expansion" ? fallbackProvider : "disabled");
+      return [
+        taskKey,
+        {
+          provider: readLlmProviderValue(providerValue, `${envPrefix}_PROVIDER`),
+          modelName: readStringEnv(env, `${envPrefix}_MODEL`, fallbackModel),
+          endpoint: readStringEnv(env, `${envPrefix}_ENDPOINT`, fallbackEndpoint)
+        }
+      ];
+    })
+  );
 }
 
 function readTranscriptionProvider(env: NodeJS.ProcessEnv): TranscriptionProviderMode {

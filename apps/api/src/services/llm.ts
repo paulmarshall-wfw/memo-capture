@@ -1,4 +1,4 @@
-import type { LlmProviderConfig } from "../config.js";
+import type { LlmProviderConfig, LlmProviderMode } from "../config.js";
 import { HttpError } from "./errors.js";
 
 export interface WorkItemExpansionContext {
@@ -53,24 +53,42 @@ export interface LlmProvider {
   generateWorkItemExpansion(context: WorkItemExpansionContext): Promise<LlmStructuredOutput>;
 }
 
-export function createLlmProvider(config: LlmProviderConfig, providerName: string, modelName: string): LlmProvider {
-  if (config.provider === "disabled") {
+export function createLlmProvider(
+  config: LlmProviderConfig,
+  providerName: string,
+  modelName: string,
+  runtimeProvider: LlmProviderMode = config.provider,
+  endpoint = config.endpoint
+): LlmProvider {
+  if (runtimeProvider === "disabled") {
     throw new HttpError(
       409,
       "llm_provider_disabled",
-      "LLM provider is enabled in Settings, but this API runtime is disabled. Restart the API with LLM_PROVIDER=local-dev."
+      "LLM provider is enabled in Settings, but this API runtime is disabled. Select an AppLauncher AI runtime option and relaunch."
     );
   }
 
-  if (providerName !== "local-dev" || config.provider !== "local-dev") {
+  if (providerName !== runtimeProvider) {
     throw new HttpError(
       409,
       "llm_provider_unavailable",
-      `Configured LLM provider ${providerName} is not available in this runtime. Runtime provider is ${config.provider}.`
+      `Configured LLM provider ${providerName} is not available in this runtime. Runtime provider is ${runtimeProvider}.`
     );
   }
 
-  return new LocalDevLlmProvider(modelName || config.modelName);
+  if (providerName === "local-dev") {
+    return new LocalDevLlmProvider(modelName || config.modelName);
+  }
+
+  if (providerName === "openai-compatible") {
+    return new OpenAiCompatibleLlmProvider({
+      modelName: modelName || config.modelName,
+      endpoint: endpoint || config.endpoint,
+      apiKey: config.openAiCompatibleApiKey
+    });
+  }
+
+  throw new HttpError(409, "llm_provider_unavailable", `Configured LLM provider ${providerName} is not supported.`);
 }
 
 export function normalizePromptContextConfig(value: unknown, fallbackFreeformText = ""): PromptContextConfig {
@@ -168,6 +186,78 @@ class LocalDevLlmProvider implements LlmProvider {
       parsed: expanded,
       providerName: "local-dev",
       modelName: this.modelName,
+      latencyMs: Date.now() - startedAt
+    };
+  }
+}
+
+class OpenAiCompatibleLlmProvider implements LlmProvider {
+  constructor(
+    private readonly options: {
+      modelName: string;
+      endpoint: string;
+      apiKey: string;
+    }
+  ) {}
+
+  async generateWorkItemExpansion(context: WorkItemExpansionContext): Promise<LlmStructuredOutput> {
+    const endpoint = this.options.endpoint.trim();
+    if (endpoint === "") {
+      throw new HttpError(409, "llm_endpoint_missing", "OpenAI-compatible LLM endpoint is not configured.");
+    }
+    if (this.options.apiKey.trim() === "") {
+      throw new HttpError(409, "llm_secret_missing", "OpenAI-compatible LLM API key is not configured.");
+    }
+
+    const startedAt = Date.now();
+    const prompt = buildWorkItemExpansionPrompt(context);
+    const url = endpoint.endsWith("/chat/completions") ? endpoint : `${endpoint.replace(/\/+$/, "")}/chat/completions`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.options.apiKey}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model: this.options.modelName,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      throw new HttpError(502, "llm_provider_failed", `OpenAI-compatible provider returned HTTP ${response.status}.`);
+    }
+
+    const body = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const rawText = body.choices?.[0]?.message?.content ?? "";
+    if (rawText.trim() === "") {
+      throw new HttpError(502, "llm_provider_empty_output", "OpenAI-compatible provider returned empty output.");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      throw new HttpError(502, "llm_provider_invalid_json", "OpenAI-compatible provider returned non-JSON output.");
+    }
+
+    return {
+      rawText,
+      parsed,
+      providerName: "openai-compatible",
+      modelName: this.options.modelName,
       latencyMs: Date.now() - startedAt
     };
   }

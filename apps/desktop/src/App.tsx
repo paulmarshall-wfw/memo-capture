@@ -379,6 +379,20 @@ interface FileTypeDraft {
   capabilityState: FileTypeCapabilityState;
 }
 
+interface AiTaskRouteDraft {
+  providerConfigId: string;
+  modelName: string;
+  enabled: boolean;
+}
+
+interface NewAiTaskDraft {
+  taskKey: string;
+  displayName: string;
+  description: string;
+  hookKey: string;
+  taskKind: "llm" | "ocr";
+}
+
 interface NewFileTypeDraft {
   extension: string;
   mediaKind: string;
@@ -406,14 +420,21 @@ interface SettingsSummary {
     id: string;
     providerKind: string;
     providerName: string;
+    displayName?: string;
+    adapterKey?: string;
     enabled: boolean;
     endpointConfigured: boolean;
     modelName: string | null;
     secretSource: string;
+    requiredSecretEnv?: string | null;
+    externalSendEnabled?: boolean;
     secretConfigured: boolean;
     healthStatus: string;
     runtimeProvider: string;
     runtimeModelName: string;
+    runtimeProviderEnv?: string | null;
+    runtimeModelEnv?: string | null;
+    runtimeEndpointEnv?: string | null;
     runtimeConfiguration: {
       mode: string;
       binaryPath: string;
@@ -425,6 +446,42 @@ interface SettingsSummary {
     } | null;
     updatedAt: string;
   }[];
+  aiTasks: {
+    id: string;
+    taskKey: string;
+    displayName: string;
+    description: string | null;
+    hookKey: string;
+    taskKind: string;
+    hookImplemented: boolean;
+    routeEnabled: boolean;
+    runtimeOptionId: string;
+    runtimeOptionPurpose: string;
+    runtimeProviderEnv: string;
+    runtimeModelEnv: string;
+    runtimeEndpointEnv: string | null;
+    selectedProviderId: string | null;
+    selectedProviderName: string | null;
+    selectedProviderDisplayName: string | null;
+    selectedModelName: string | null;
+    providerAdapterKey: string | null;
+    providerExternalSendEnabled: boolean;
+    providerSecretEnv: string | null;
+    runtimeProvider: string;
+    runtimeModelName: string;
+    runtimeEndpointConfigured: boolean;
+    runtimeReady: boolean;
+    unavailableReason: string | null;
+    updatedAt: string;
+  }[];
+  appLauncher: {
+    manifestVersion: string;
+    minLauncherVersion: string;
+    runtimeOptionsPresent: boolean;
+    nativeLaunchTarget: string;
+    secretEnvironmentNames: string[];
+    restartRequiredAfterChange: boolean;
+  } | null;
   prompts: {
     id: string;
     name: string;
@@ -534,8 +591,6 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
   ""
 );
 const appVersion = "0.1.0";
-const localDevLlmProviderName = "local-dev";
-const localDevLlmModelName = "memo-capture-local-dev-expander-v1";
 const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const watchedFolderPollingIntervalMs = 5000;
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -544,6 +599,13 @@ const defaultNewFileTypeDraft: NewFileTypeDraft = {
   mediaKind: "text",
   parserKey: "",
   capabilityState: "inactive"
+};
+const defaultNewAiTaskDraft: NewAiTaskDraft = {
+  taskKey: "",
+  displayName: "",
+  description: "",
+  hookKey: "",
+  taskKind: "llm"
 };
 const defaultNewMediaTypeDraft: MediaTypeDraft = {
   mediaKey: "",
@@ -1288,6 +1350,10 @@ export function App() {
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
   const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
+  const [aiTaskRouteDrafts, setAiTaskRouteDrafts] = useState<Record<string, AiTaskRouteDraft>>({});
+  const [aiTaskIdInFlight, setAiTaskIdInFlight] = useState<string | null>(null);
+  const [newAiTaskDraft, setNewAiTaskDraft] = useState<NewAiTaskDraft>(defaultNewAiTaskDraft);
+  const [aiTaskCreateInFlight, setAiTaskCreateInFlight] = useState(false);
   const [promptIdInFlight, setPromptIdInFlight] = useState<string | null>(null);
   const [fileTypeIdInFlight, setFileTypeIdInFlight] = useState<string | null>(null);
   const [mediaTypeIdInFlight, setMediaTypeIdInFlight] = useState<string | null>(null);
@@ -1358,68 +1424,22 @@ export function App() {
     () => (settingsSummary?.providers ?? []).filter((provider) => provider.providerKind === "llm"),
     [settingsSummary]
   );
-  const localDevLlmProvider = useMemo(
-    () => llmProviders.find((provider) => provider.providerName === localDevLlmProviderName) ?? null,
-    [llmProviders]
+  const memoExpansionTask = useMemo(
+    () => (settingsSummary?.aiTasks ?? []).find((task) => task.taskKey === "memo-expansion") ?? null,
+    [settingsSummary]
   );
-  const llmProvider = useMemo(() => {
-    const runtimeMatched = llmProviders.find(
-      (provider) =>
-        provider.enabled &&
-        provider.runtimeProvider !== "disabled" &&
-        provider.providerName === provider.runtimeProvider
-    );
-    if (runtimeMatched !== undefined) {
-      return runtimeMatched;
-    }
-    const enabledProvider = llmProviders.find((provider) => provider.enabled);
-    if (enabledProvider !== undefined) {
-      return enabledProvider;
-    }
-    if (localDevLlmProvider !== null) {
-      return localDevLlmProvider;
-    }
-    return llmProviders[0] ?? null;
-  }, [llmProviders, localDevLlmProvider]);
-  const localDevLlmStatus = useMemo(() => {
-    if (localDevLlmProvider === null) {
-      return "Not configured";
-    }
-    if (!localDevLlmProvider.enabled) {
-      return "Disabled";
-    }
-    if (localDevLlmProvider.runtimeProvider === "disabled") {
-      return "Settings enabled; runtime disabled";
-    }
-    if (localDevLlmProvider.runtimeProvider !== localDevLlmProvider.providerName) {
-      return "Runtime mismatch";
-    }
-    if (!localDevLlmProvider.secretConfigured) {
-      return "Secret not configured";
-    }
-    return "Ready";
-  }, [localDevLlmProvider]);
   const aiExpansionUnavailableReason = useMemo(() => {
     if (settingsSummary === null) {
       return null;
     }
-    if (llmProvider === null) {
-      return "No LLM provider is configured.";
+    if (memoExpansionTask === null) {
+      return "Memo expansion task routing is not configured.";
     }
-    if (!llmProvider.enabled) {
-      return "Enable an LLM provider in Settings before generating.";
-    }
-    if (llmProvider.runtimeProvider === "disabled") {
-      return "The LLM provider is enabled in Settings, but the API runtime is disabled. Restart the API with LLM_PROVIDER=local-dev.";
-    }
-    if (llmProvider.runtimeProvider !== llmProvider.providerName) {
-      return `The enabled LLM provider (${llmProvider.providerName}) does not match the API runtime (${llmProvider.runtimeProvider}).`;
-    }
-    if (!llmProvider.secretConfigured) {
-      return "The LLM provider secret is not configured for this runtime.";
+    if (!memoExpansionTask.runtimeReady) {
+      return memoExpansionTask.unavailableReason ?? "Memo expansion is not ready.";
     }
     return null;
-  }, [llmProvider, settingsSummary]);
+  }, [memoExpansionTask, settingsSummary]);
   const watchableFolders = useMemo(
     () =>
       watchedFolders.filter(
@@ -2009,6 +2029,18 @@ export function App() {
               mediaKind: fileType.mediaKind,
               parserKey: fileType.parserKey ?? "",
               capabilityState: fileType.capabilityState
+            }
+          ])
+        )
+      );
+      setAiTaskRouteDrafts(
+        Object.fromEntries(
+          normalized.aiTasks.map((task) => [
+            task.id,
+            {
+              providerConfigId: task.selectedProviderId ?? "",
+              modelName: task.selectedModelName ?? "",
+              enabled: task.routeEnabled
             }
           ])
         )
@@ -2894,27 +2926,80 @@ export function App() {
     }
   }
 
-  async function configureLocalDevLlmProvider() {
-    if (accessToken === null || localDevLlmProvider === null) {
+  function updateAiTaskRouteDraft<Field extends keyof AiTaskRouteDraft>(
+    taskId: string,
+    field: Field,
+    value: AiTaskRouteDraft[Field]
+  ) {
+    setAiTaskRouteDrafts((current) => ({
+      ...current,
+      [taskId]: {
+        ...(current[taskId] ?? { providerConfigId: "", modelName: "", enabled: true }),
+        [field]: value
+      }
+    }));
+  }
+
+  function updateNewAiTaskDraft<Field extends keyof NewAiTaskDraft>(field: Field, value: NewAiTaskDraft[Field]) {
+    setNewAiTaskDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function createAiTaskDefinition() {
+    if (accessToken === null) {
       return;
     }
-    setSettingsLoading(true);
+    if (newAiTaskDraft.taskKey.trim() === "" || newAiTaskDraft.displayName.trim() === "" || newAiTaskDraft.hookKey.trim() === "") {
+      setStatusMessage("Task key, display name, and hook key are required.");
+      return;
+    }
+    setAiTaskCreateInFlight(true);
     setStatusMessage(null);
     try {
-      await authedJson(accessToken, `/api/settings/providers/${encodeURIComponent(localDevLlmProvider.id)}`, {
+      await authedJson(accessToken, "/api/settings/ai-tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          taskKey: newAiTaskDraft.taskKey,
+          displayName: newAiTaskDraft.displayName,
+          description: newAiTaskDraft.description,
+          hookKey: newAiTaskDraft.hookKey,
+          taskKind: newAiTaskDraft.taskKind
+        })
+      });
+      setNewAiTaskDraft(defaultNewAiTaskDraft);
+      await loadSettings(accessToken);
+      setStatusMessage("AI task added as not implemented until app logic is registered.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to add AI task.");
+    } finally {
+      setAiTaskCreateInFlight(false);
+    }
+  }
+
+  async function saveAiTaskRoute(taskId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    const draft = aiTaskRouteDrafts[taskId];
+    if (draft === undefined) {
+      return;
+    }
+    setAiTaskIdInFlight(taskId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/ai-tasks/${encodeURIComponent(taskId)}/route`, {
         method: "PATCH",
-        body: JSON.stringify({ enabled: true, modelName: localDevLlmModelName })
+        body: JSON.stringify({
+          providerConfigId: draft.providerConfigId === "" ? null : draft.providerConfigId,
+          modelName: draft.modelName,
+          enabled: draft.enabled
+        })
       });
       await loadSettings(accessToken);
-      setStatusMessage(
-        localDevLlmProvider.runtimeProvider === "disabled"
-          ? "Development LLM provider enabled. Restart with LLM_PROVIDER=local-dev."
-          : "Development LLM provider enabled."
-      );
+      setStatusMessage("AI task route saved. Relaunch from AppLauncher if runtime options changed.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to configure development LLM provider.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save AI task route.");
     } finally {
-      setSettingsLoading(false);
+      setAiTaskIdInFlight(null);
     }
   }
 
@@ -5255,47 +5340,194 @@ export function App() {
                 </section>
               ) : activeSettingsSection === "providers" ? (
                 <section className="detail-section" aria-label="Providers">
-                  {localDevLlmProvider === null ? null : (
-                    <article className="settings-row provider-dev-panel">
-                      <div>
-                        <div className="batch-title">
-                          <strong>Development LLM</strong>
-                          <span>{localDevLlmStatus}</span>
-                        </div>
-                        <p>
-                          {localDevLlmProvider.providerName}; model{" "}
-                          {localDevLlmProvider.modelName ?? localDevLlmModelName}; runtime{" "}
-                          {localDevLlmProvider.runtimeProvider}
-                        </p>
-                        <p>
-                          Deterministic local work-item expander; external send disabled; launch value{" "}
-                          <code>LLM_PROVIDER=local-dev</code>
-                        </p>
+                  <article className="settings-row provider-dev-panel">
+                    <div>
+                      <div className="batch-title">
+                        <strong>AppLauncher runtime options</strong>
+                        <span>{settingsSummary.appLauncher?.runtimeOptionsPresent ? "Configured" : "Missing"}</span>
                       </div>
-                      <div className="provider-dev-actions">
+                      <p>
+                        Manifest {settingsSummary.appLauncher?.manifestVersion ?? "not configured"}; minimum launcher{" "}
+                        {settingsSummary.appLauncher?.minLauncherVersion ?? "not configured"}; native launch target{" "}
+                        {settingsSummary.appLauncher?.nativeLaunchTarget ?? "unknown"}
+                      </p>
+                      <p>
+                        Provider/model/endpoint choices come from non-secret runtime options. Secrets use AppLauncher
+                        secret storage:{" "}
+                        {(settingsSummary.appLauncher?.secretEnvironmentNames ?? []).length === 0
+                          ? "none"
+                          : settingsSummary.appLauncher?.secretEnvironmentNames.join(", ")}
+                      </p>
+                    </div>
+                  </article>
+                  <div className="section-subhead">
+                    <h3>Task routing</h3>
+                  </div>
+                  <article className="settings-row provider-task-row">
+                    <div>
+                      <div className="batch-title">
+                        <strong>Add task hook</strong>
+                        <span>Not implemented by default</span>
+                      </div>
+                      <p>New task hooks are visible for routing, but processing stays disabled until app logic exists.</p>
+                      <div className="provider-route-controls">
+                        <label>
+                          <span>Task key</span>
+                          <input
+                            type="text"
+                            value={newAiTaskDraft.taskKey}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) => updateNewAiTaskDraft("taskKey", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Display name</span>
+                          <input
+                            type="text"
+                            value={newAiTaskDraft.displayName}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) => updateNewAiTaskDraft("displayName", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Hook key</span>
+                          <input
+                            type="text"
+                            value={newAiTaskDraft.hookKey}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) => updateNewAiTaskDraft("hookKey", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Task kind</span>
+                          <select
+                            value={newAiTaskDraft.taskKind}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) => updateNewAiTaskDraft("taskKind", event.currentTarget.value as "llm" | "ocr")}
+                          >
+                            <option value="llm">LLM</option>
+                            <option value="ocr">OCR</option>
+                          </select>
+                        </label>
+                        <label>
+                          <span>Description</span>
+                          <input
+                            type="text"
+                            value={newAiTaskDraft.description}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) => updateNewAiTaskDraft("description", event.currentTarget.value)}
+                          />
+                        </label>
                         <button
                           className="secondary-button"
                           type="button"
-                          disabled={settingsLoading}
-                          onClick={() => void configureLocalDevLlmProvider()}
+                          disabled={aiTaskCreateInFlight}
+                          onClick={() => void createAiTaskDefinition()}
                         >
-                          {settingsLoading ? <RefreshCcw className="spin" size={18} /> : <CheckCircle2 size={18} />}
-                          Enable dev expander
+                          {aiTaskCreateInFlight ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
+                          Add task
                         </button>
                       </div>
-                    </article>
-                  )}
+                    </div>
+                  </article>
+                  <div className="settings-list">
+                    {settingsSummary.aiTasks.map((task) => {
+                      const draft = aiTaskRouteDrafts[task.id] ?? {
+                        providerConfigId: task.selectedProviderId ?? "",
+                        modelName: task.selectedModelName ?? "",
+                        enabled: task.routeEnabled
+                      };
+                      return (
+                        <article className="settings-row provider-task-row" key={task.id}>
+                          <div>
+                            <div className="batch-title">
+                              <strong>{task.displayName}</strong>
+                              <span>{task.runtimeReady ? "Ready" : task.hookImplemented ? "Needs setup" : "Not implemented"}</span>
+                            </div>
+                            <p>
+                              Hook {task.hookKey}; runtime option {task.runtimeOptionId}; env {task.runtimeProviderEnv}
+                              /{task.runtimeModelEnv}
+                            </p>
+                            <p>
+                              Runtime {task.runtimeProvider}; selected {task.selectedProviderName ?? "none"}; model{" "}
+                              {task.selectedModelName ?? "default"}
+                            </p>
+                            {task.unavailableReason === null ? null : <p>{task.unavailableReason}</p>}
+                            <div className="provider-route-controls">
+                              <label>
+                                <span>Provider</span>
+                                <select
+                                  value={draft.providerConfigId}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(task.id, "providerConfigId", event.currentTarget.value)
+                                  }
+                                >
+                                  <option value="">No provider</option>
+                                  {llmProviders.map((provider) => (
+                                    <option key={provider.id} value={provider.id}>
+                                      {provider.displayName ?? provider.providerName}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                <span>Model</span>
+                                <input
+                                  type="text"
+                                  value={draft.modelName}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(task.id, "modelName", event.currentTarget.value)
+                                  }
+                                />
+                              </label>
+                              <label className="toggle-row">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.enabled}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(task.id, "enabled", event.currentTarget.checked)
+                                  }
+                                />
+                                Enabled
+                              </label>
+                              <button
+                                className="secondary-button"
+                                type="button"
+                                disabled={aiTaskIdInFlight === task.id}
+                                onClick={() => void saveAiTaskRoute(task.id)}
+                              >
+                                {aiTaskIdInFlight === task.id ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
+                                Save route
+                              </button>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  <div className="section-subhead">
+                    <h3>Provider catalog</h3>
+                  </div>
                   <div className="settings-list">
                     {settingsSummary.providers.map((provider) => (
                       <article className="settings-row" key={provider.id}>
                         <div>
                           <div className="batch-title">
-                            <strong>{provider.providerKind}: {provider.providerName}</strong>
+                            <strong>{provider.providerKind}: {provider.displayName ?? provider.providerName}</strong>
                             <span>{provider.enabled ? "Enabled" : "Disabled"}</span>
                           </div>
                           <p>
-                            Runtime {provider.runtimeProvider}; model {provider.modelName ?? provider.runtimeModelName};
-                            secret {provider.secretConfigured ? "configured" : "not configured"}
+                            Adapter {provider.adapterKey ?? provider.providerName}; model{" "}
+                            {provider.modelName ?? provider.runtimeModelName}; endpoint{" "}
+                            {provider.endpointConfigured ? "configured" : "not configured"}; external send{" "}
+                            {provider.externalSendEnabled ? "allowed" : "disabled"}
+                          </p>
+                          <p>
+                            Secret {provider.requiredSecretEnv ?? "not required"}{" "}
+                            {provider.secretConfigured ? "configured" : "not configured"}; health {provider.healthStatus}
                           </p>
                           {provider.runtimeConfiguration === null ? null : (
                             <p>
@@ -5748,6 +5980,8 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
     fileTypes: Array.isArray(summary.fileTypes) ? summary.fileTypes : [],
     extraction: summary.extraction ?? defaultExtractionSettings,
     providers: Array.isArray(summary.providers) ? summary.providers : [],
+    aiTasks: Array.isArray(summary.aiTasks) ? summary.aiTasks : [],
+    appLauncher: summary.appLauncher ?? null,
     prompts: Array.isArray(summary.prompts)
       ? summary.prompts.map((prompt) => {
           const contextConfig = prompt.contextConfig ?? {
