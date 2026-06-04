@@ -5747,14 +5747,6 @@ export function App() {
                     </div>
                     <span className="detail-count">{settingsSummary.aiTasks.length} configured</span>
                   </div>
-                  <datalist id="task-hook-options">
-                    {registeredTaskHooks.map((hook) => (
-                      <option value={hook.hookKey} key={hook.hookKey}>
-                        {hook.displayName}
-                      </option>
-                    ))}
-                  </datalist>
-
                   <article className="settings-row provider-task-row">
                     <div>
                       <div className="batch-title">
@@ -5773,13 +5765,18 @@ export function App() {
                         </label>
                         <label>
                           <span>Hook Key</span>
-                          <input
-                            type="text"
-                            list="task-hook-options"
+                          <select
                             value={newAiTaskDraft.hookKey}
                             disabled={aiTaskCreateInFlight}
                             onChange={(event) => updateNewAiTaskDraft("hookKey", event.currentTarget.value)}
-                          />
+                          >
+                            <option value="">Select hook</option>
+                            {registeredTaskHooks.map((hook) => (
+                              <option value={hook.hookKey} key={hook.hookKey}>
+                                {hook.displayName}
+                              </option>
+                            ))}
+                          </select>
                         </label>
                         <label>
                           <span>Provider Key</span>
@@ -5996,15 +5993,23 @@ export function App() {
                               </label>
                               <label>
                                 <span>Hook Key</span>
-                                <input
-                                  type="text"
-                                  list="task-hook-options"
+                                <select
                                   value={draft.hookKey}
                                   disabled={aiTaskIdInFlight === task.id}
                                   onChange={(event) =>
                                     updateAiTaskRouteDraft(task.id, "hookKey", event.currentTarget.value)
                                   }
-                                />
+                                >
+                                  {!registeredTaskHooks.some((hook) => hook.hookKey === draft.hookKey) &&
+                                  draft.hookKey.trim() !== "" ? (
+                                    <option value={draft.hookKey}>{draft.hookKey}</option>
+                                  ) : null}
+                                  {registeredTaskHooks.map((hook) => (
+                                    <option value={hook.hookKey} key={hook.hookKey}>
+                                      {hook.displayName}
+                                    </option>
+                                  ))}
+                                </select>
                               </label>
                               <label>
                                 <span>Provider Key</span>
