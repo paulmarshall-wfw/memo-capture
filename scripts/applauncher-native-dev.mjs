@@ -16,7 +16,6 @@ const appBundle =
   path.join(root, "apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app");
 const workflowBundlePath = path.join(root, "docs/design/memo-capture-0.2.2-workflow-definition-bundled.json");
 const logPath = path.join(root, ".memo-capture/native-launch.log");
-const requiredTaskHooks = ["memo-expansion", "revise-memo", "suggest-new-memos", "suggest-tags"];
 const children = new Set();
 let shuttingDown = false;
 
@@ -150,10 +149,12 @@ async function apiSettingsContractOk() {
       return false;
     }
     const settings = await settingsResponse.json();
-    const hookKeys = Array.isArray(settings.registeredTaskHooks)
-      ? settings.registeredTaskHooks.map((hook) => hook?.hookKey)
-      : [];
-    return Array.isArray(settings.aiTasks) && requiredTaskHooks.every((hookKey) => hookKeys.includes(hookKey));
+    const hookRegistryCurrent =
+      Array.isArray(settings.registeredTaskHooks) &&
+      settings.registeredTaskHooks.every(
+        (hook) => typeof hook?.hookKey === "string" && typeof hook?.status === "string"
+      );
+    return Array.isArray(settings.aiTasks) && hookRegistryCurrent;
   } catch {
     return false;
   }

@@ -86,6 +86,90 @@ test("processing job repository uses real Postgres claim and rollback behavior",
   }
 });
 
+test("processing hook registry is migrated, seeded, and counts task usage in real Postgres", async () => {
+  const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
+
+  try {
+    const seeded = await db.query<{ hook_key: string }>(
+      `select hook_key
+       from processing_hooks
+       where hook_key in ('memo-expansion', 'revise-memo', 'suggest-new-memos', 'suggest-tags')
+       order by hook_key`
+    );
+    assert.deepEqual(
+      seeded.rows.map((row) => row.hook_key),
+      ["memo-expansion", "revise-memo", "suggest-new-memos", "suggest-tags"]
+    );
+
+    await db.query(
+      `insert into ai_task_definitions (
+         id,
+         task_key,
+         display_name,
+         description,
+         hook_key,
+         task_kind,
+         task_kind_id,
+         prompt_definition_id,
+         implemented,
+         default_provider_name,
+         default_model_name,
+         runtime_option_id,
+         runtime_option_purpose,
+         runtime_provider_env,
+         runtime_model_env,
+         runtime_endpoint_env
+       )
+       values (
+         '10000000-0000-4000-8000-000000000301',
+         'postgres-hook-usage',
+         'Postgres hook usage',
+         'Verifies hook usage counts.',
+         'memo-expansion',
+         'llm',
+         (select id from task_kinds where kind_key = 'llm' limit 1),
+         null,
+         true,
+         'local-dev',
+         'memo-capture-local-dev-expander-v1',
+         'llm-runtime',
+         'llm-runtime',
+         'LLM_PROVIDER',
+         'LLM_MODEL',
+         'LLM_ENDPOINT'
+       )
+       on conflict (task_key) do update
+       set hook_key = excluded.hook_key`
+    );
+
+    const usage = await db.query<{ hook_key: string; task_usage_count: number }>(
+      `select
+         processing_hooks.hook_key,
+         count(ai_task_definitions.id)::int as task_usage_count
+       from processing_hooks
+       left join ai_task_definitions on ai_task_definitions.hook_key = processing_hooks.hook_key
+       where processing_hooks.hook_key = 'memo-expansion'
+       group by processing_hooks.hook_key`
+    );
+    assert.equal(usage.rows[0]?.hook_key, "memo-expansion");
+    assert.ok(Number(usage.rows[0]?.task_usage_count ?? 0) >= 1);
+
+    await db.query(
+      `insert into processing_hooks (hook_key)
+       values ('postgres-unused-hook')
+       on conflict (hook_key) do nothing`
+    );
+    const deleted = await db.query<{ hook_key: string }>(
+      `delete from processing_hooks
+       where hook_key = 'postgres-unused-hook'
+       returning hook_key`
+    );
+    assert.equal(deleted.rows[0]?.hook_key, "postgres-unused-hook");
+  } finally {
+    await db.close();
+  }
+});
+
 test("audit repository lists events with display context in real Postgres", async () => {
   const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
   const audit = new AuditRepository(db);

@@ -7,6 +7,7 @@ import {
   type AiTaskRouteRow,
   type MediaTypeSettingRow,
   type ParserTypeSettingRow,
+  type ProcessingHookRow,
   type PromptDefinitionRow,
   type ProviderCapabilityRow,
   type ProviderConfigRow
@@ -14,15 +15,7 @@ import {
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
 import { normalizePromptContextConfig } from "./llm.js";
 
-const REGISTERED_AI_TASK_HOOKS = [
-  { hookKey: "memo-expansion", implemented: true },
-  { hookKey: "revise-memo", implemented: false },
-  { hookKey: "suggest-new-memos", implemented: false },
-  { hookKey: "suggest-tags", implemented: false }
-] as const;
-const IMPLEMENTED_AI_TASK_HOOKS: Set<string> = new Set(
-  REGISTERED_AI_TASK_HOOKS.filter((hook) => hook.implemented).map((hook) => hook.hookKey)
-);
+const IMPLEMENTED_AI_TASK_HOOKS: ReadonlySet<string> = new Set(["memo-expansion"]);
 const PROVIDER_KIND_OPTIONS = new Set(["llm", "transcription", "stt", "tts", "ocr", "script"]);
 
 export class SettingsService {
@@ -43,6 +36,7 @@ export class SettingsService {
       providerCapabilities,
       taskKinds,
       aiTasks,
+      processingHooks,
       prompts
     ] = await Promise.all([
       settings.listMediaTypes(),
@@ -54,6 +48,7 @@ export class SettingsService {
       settings.listProviderCapabilities(),
       settings.listTaskKinds(),
       settings.listAiTaskRoutes(),
+      settings.listProcessingHooks(),
       settings.listPrompts()
     ]);
 
@@ -85,7 +80,7 @@ export class SettingsService {
       taskKinds: taskKinds.map(serializeTaskKind),
       aiTasks: aiTasks.map((task) => serializeAiTaskRoute(task, this.config)),
       appLauncher: serializeAppLauncherRuntimeOptions(providers, this.config),
-      registeredTaskHooks: serializeRegisteredTaskHooks(),
+      registeredTaskHooks: serializeRegisteredTaskHooks(processingHooks),
       prompts: prompts.map(serializePrompt),
       auth: {
         mode: this.config.authMode,
@@ -349,6 +344,9 @@ export class SettingsService {
         throw new HttpError(400, "invalid_request", "providerConfigId must reference a configured provider.");
       }
       const hookKey = input.hookKey ?? current.hook_key;
+      if (input.hookKey !== undefined && input.hookKey !== current.hook_key) {
+        await ensureProcessingHookExists(settings, input.hookKey);
+      }
       const taskKindRow =
         provider === null
           ? await settings.findTaskKindByKey(current.task_kind)
@@ -392,7 +390,7 @@ export class SettingsService {
         hookKey: input.hookKey,
         taskKind: taskKindRow.kind_key,
         taskKindId: taskKindRow.id,
-        implemented: IMPLEMENTED_AI_TASK_HOOKS.has(hookKey),
+        implemented: isHookImplemented(hookKey),
         promptDefinitionId,
         actorUserId: actor.id
       });
@@ -505,13 +503,78 @@ export class SettingsService {
           hookKey: task.hook_key,
           taskKind: task.task_kind,
           providerName: task.provider_name,
-          implemented: task.implemented,
+          implemented: isHookImplemented(task.hook_key),
           promptsEnabled: task.prompt_definition_id !== null,
           enabled: task.route_enabled
         },
         redactionApplied: true
       });
       return { aiTask: serializeAiTaskRoute(task, this.config) };
+    });
+  }
+
+  async createProcessingHook(
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseProcessingHookBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const created = await settings.createProcessingHook({ hookKey: input.hookKey, actorUserId: actor.id });
+      if (created === null) {
+        throw new HttpError(409, "processing_hook_exists", "A processing hook already exists for this hook key.", {
+          hookKey: input.hookKey
+        });
+      }
+      await audit.record({
+        eventName: "processing_hook.created",
+        actor,
+        subjectType: "processing_hook",
+        subjectId: created.hook_key,
+        requestId,
+        metadata: { hookKey: created.hook_key },
+        redactionApplied: true
+      });
+      return { processingHook: serializeRegisteredTaskHook(created) };
+    });
+  }
+
+  async deleteProcessingHook(
+    hookKeyValue: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const hookKey = parseConfigKey(hookKeyValue, "hookKey");
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const current = await settings.findProcessingHook(hookKey);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "processing_hook was not found.");
+      }
+      const taskUsageCount = toInteger(current.task_usage_count);
+      if (taskUsageCount > 0) {
+        throw new HttpError(409, "processing_hook_in_use", "Processing hook cannot be deleted while configured tasks use it.", {
+          hookKey,
+          taskUsageCount
+        });
+      }
+      const deleted = await settings.deleteProcessingHook(hookKey);
+      if (!deleted) {
+        throw new HttpError(404, "not_found", "processing_hook was not found.");
+      }
+      await audit.record({
+        eventName: "processing_hook.deleted",
+        actor,
+        subjectType: "processing_hook",
+        subjectId: hookKey,
+        requestId,
+        metadata: { hookKey },
+        redactionApplied: true
+      });
+      return { deleted: true, hookKey };
     });
   }
 
@@ -985,12 +1048,28 @@ function serializeProviderCapability(row: ProviderCapabilityRow): Record<string,
   };
 }
 
-function serializeRegisteredTaskHooks(): Array<Record<string, unknown>> {
-  return REGISTERED_AI_TASK_HOOKS.map((hook) => ({
-    hookKey: hook.hookKey,
-    displayName: humanizeKey(hook.hookKey),
-    implemented: hook.implemented
-  }));
+function serializeRegisteredTaskHooks(hooks: ProcessingHookRow[]): Array<Record<string, unknown>> {
+  return hooks.map(serializeRegisteredTaskHook);
+}
+
+function serializeRegisteredTaskHook(hook: ProcessingHookRow): Record<string, unknown> {
+  const implemented = isHookImplemented(hook.hook_key);
+  const taskUsageCount = toInteger(hook.task_usage_count);
+  return {
+    hookKey: hook.hook_key,
+    displayName: humanizeKey(hook.hook_key),
+    implemented,
+    status: implemented ? "custom_function_implemented" : "default_noop",
+    statusLabel: implemented ? "Custom function implemented" : "Default no-op",
+    taskUsageCount,
+    deletable: taskUsageCount === 0,
+    deleteBlockedReason:
+      taskUsageCount === 0
+        ? null
+        : `Hook is used by ${taskUsageCount} configured task${taskUsageCount === 1 ? "" : "s"}.`,
+    createdAt: toIso(hook.created_at),
+    updatedAt: toIso(hook.updated_at)
+  };
 }
 
 function serializeProvider(
@@ -1051,7 +1130,7 @@ function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<s
   const providerName = task.provider_name ?? task.default_provider_name;
   const selectedModelName = task.route_model_name ?? task.provider_model_name ?? task.default_model_name;
   const providerEnabled = task.provider_enabled === true;
-  const hookImplemented = task.implemented;
+  const hookImplemented = isHookImplemented(task.hook_key);
   const routeEnabled = task.route_enabled;
   const requiredSecretEnv = task.required_secret_env;
   const secretReady = secretConfigured(requiredSecretEnv, config);
@@ -1292,7 +1371,7 @@ async function validateTaskKindEnablement(
   if (enabled !== true) {
     return;
   }
-  if (await settings.taskKindHasImplementedRoute(kindKey)) {
+  if (await settings.taskKindHasImplementedRoute(kindKey, [...IMPLEMENTED_AI_TASK_HOOKS])) {
     return;
   }
   throw new HttpError(
@@ -1317,7 +1396,7 @@ async function validateAiTaskRouteUpdate(
   if (!nextEnabled) {
     return;
   }
-  if (!current.implemented) {
+  if (!isHookImplemented(current.hook_key)) {
     throw new HttpError(409, "ai_task_hook_not_implemented", "Task route cannot be enabled until app hook logic exists.");
   }
   const providerConfigId =
@@ -1369,6 +1448,7 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
   const displayName = assertNonEmptyString(record.displayName, "displayName");
   const taskKey = deriveTaskKey(displayName);
   const hookKey = parseConfigKey(record.hookKey ?? taskKey, "hookKey");
+  await ensureProcessingHookExists(settings, hookKey);
   const providerConfigId =
     record.providerConfigId === undefined ? null : optionalString(record.providerConfigId, "providerConfigId");
   const provider =
@@ -1397,7 +1477,7 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     hookKey,
     taskKind,
     taskKindId: taskKindRow.id,
-    implemented: IMPLEMENTED_AI_TASK_HOOKS.has(hookKey),
+    implemented: isHookImplemented(hookKey),
     promptDefinitionId: null,
     providerConfigId,
     routeModelName: record.modelName === undefined ? provider?.model_name ?? null : optionalString(record.modelName, "modelName"),
@@ -1424,6 +1504,22 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     runtimeProviderEnv: "LLM_PROVIDER",
     runtimeModelEnv: "LLM_MODEL",
     runtimeEndpointEnv: "LLM_ENDPOINT"
+  };
+}
+
+async function ensureProcessingHookExists(settings: SettingsRepository, hookKey: string): Promise<void> {
+  if ((await settings.findProcessingHook(hookKey)) !== null) {
+    return;
+  }
+  throw new HttpError(400, "processing_hook_not_registered", "hookKey must reference a configured processing hook.", {
+    hookKey
+  });
+}
+
+function parseProcessingHookBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    hookKey: parseConfigKey(record.hookKey, "hookKey")
   };
 }
 
@@ -1501,6 +1597,10 @@ function humanizeKey(value: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function isHookImplemented(hookKey: string): boolean {
+  return IMPLEMENTED_AI_TASK_HOOKS.has(hookKey);
 }
 
 function parseTranscriptionBody(body: unknown) {
@@ -1745,6 +1845,10 @@ function parseObject(body: unknown): Record<string, unknown> {
 
 function toNumber(value: string | number): number {
   return typeof value === "number" ? value : Number.parseFloat(value);
+}
+
+function toInteger(value: string | number): number {
+  return Math.trunc(toNumber(value));
 }
 
 function toIso(value: Date | string): string {

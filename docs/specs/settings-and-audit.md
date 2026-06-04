@@ -269,19 +269,35 @@ Required columns:
 - `runtime_endpoint_env text`
 - timestamps and actor columns
 
-Task definitions are user-managed Settings records. Registered hooks are app-owned compatibility metadata, but they do not seed task rows by themselves.
+Task definitions are user-managed Settings records. Registered hooks are persisted Settings records, but they do not seed task rows by themselves.
 
 Rules:
 
-- `implemented = true` only when app code has a registered handler for the hook.
-- User-created tasks are allowed, but start as `implemented = false`.
+- Hook implementation status is derived from backend app code, not trusted from task rows.
+- User-created tasks are allowed, but their selected `hook_key` must exist in the processing hook registry.
 - `task_key` values are generated once from `display_name` at creation time; callers do not provide manual task keys and renaming a task never recalculates identity.
-- App-owned hook registry entries are displayed in the Settings Hook Key dropdown. `memo-expansion` is implemented. `revise-memo`, `suggest-new-memos`, and `suggest-tags` are no-op configuration entries and must not call providers.
-- Unknown or unimplemented hooks must display `Not implemented`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
+- Processing hook registry entries are displayed in the Settings Hook Key dropdown. `memo-expansion` is implemented. `revise-memo`, `suggest-new-memos`, and `suggest-tags` are seeded no-op registry entries until backend code implements them.
+- Unknown legacy task hooks may be displayed as compatibility fallback on existing rows, but new task creation and changed hook selections must reference the registry.
+- Unimplemented hooks must display `Default no-op`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
 - Tasks can be created while their hook is unimplemented, but cannot be enabled until that hook has real app logic.
 - Task Settings fields are task name, provider key, read-only provider kind, task description, hook key, prompts checkbox, enabled checkbox, model override, prompt editor, and readiness/error messages. Normal Settings UI must not foreground `task_key`.
 - Multiple enabled tasks may share the same `hook_key`; the hook dispatches to app-owned implementation logic while the task owns prompt/provider/model settings.
 - OCR is modeled as a task in V1, but remains no-op until OCR handler logic is implemented.
+
+### processing_hooks
+
+Required columns:
+
+- `hook_key text primary key`
+- timestamps and actor columns
+
+Rules:
+
+- The registry is seeded with `memo-expansion`, `revise-memo`, `suggest-new-memos`, and `suggest-tags`.
+- Existing task hook references are backfilled into the registry during migration for compatibility.
+- Hook records are immutable after creation; Settings exposes create and delete only.
+- Deleting a hook is blocked while any `ai_task_definitions` row references its `hook_key`, regardless of route enabled state.
+- Hook status is display/runtime metadata derived from backend code: `Custom function implemented` when app code registers a handler, otherwise `Default no-op`.
 
 ### ai_task_routes
 
@@ -484,9 +500,9 @@ Use structured redaction:
 
 `GET /api/settings`
 
-Response includes backend settings, prompt metadata, file type settings, redacted provider/auth status, AI task routes, AppLauncher runtime-option status, and runtime provider availability. It never returns provider secrets.
+Response includes backend settings, prompt metadata, file type settings, processing hook registry metadata, redacted provider/auth status, AI task routes, AppLauncher runtime-option status, and runtime provider availability. It never returns provider secrets.
 
-Response includes `mediaTypes`, `parserTypes`, `fileTypes`, `providers`, `aiTasks`, and `appLauncher`.
+Response includes `mediaTypes`, `parserTypes`, `fileTypes`, `providers`, `registeredTaskHooks`, `aiTasks`, and `appLauncher`. `registeredTaskHooks` includes `hookKey`, `displayName`, `implemented`, `status`, `statusLabel`, `taskUsageCount`, `deletable`, and `deleteBlockedReason`.
 
 ### Create media type setting
 
@@ -634,6 +650,26 @@ Request:
 
 Updates internal task-kind routing metadata, prompt-field support, and availability. Task-kind keys stay stable after creation. Setting `enabled` to `true` fails until protected app logic exists for at least one task route of that kind.
 
+### Create processing hook
+
+`POST /api/settings/processing-hooks`
+
+Request:
+
+```json
+{
+  "hookKey": "custom-summary"
+}
+```
+
+Creates an immutable processing hook registry entry. New hooks report `Default no-op` until backend code registers implementation logic for the hook key.
+
+### Delete processing hook
+
+`DELETE /api/settings/processing-hooks/{hookKey}`
+
+Deletes an unused processing hook. Deletion fails when any configured task definition references the hook key.
+
 ### Create AI task definition
 
 `POST /api/settings/ai-tasks`
@@ -651,7 +687,7 @@ Request:
 }
 ```
 
-Creates a user-extensible task hook with a server-derived `taskKey` of `custom-summary`, a disabled route, and `implemented = false` unless `hookKey` matches registered app logic. The task is visible in Settings as `Not implemented`; processing attempts must no-op until app logic exists.
+Creates a user-managed task definition with a server-derived `taskKey` of `custom-summary` and a disabled route. `hookKey` must reference the processing hook registry. The task is visible in Settings as `Default no-op` until backend implementation logic exists for the selected hook; processing attempts must no-op until app logic exists.
 
 ### Update AI task
 
@@ -741,6 +777,7 @@ Settings sections:
 - Watched folders and desktop-local paths
 - File types
 - Providers
+- Processing Hooks
 - Tasks
 - Export contract
 - Operations
@@ -753,12 +790,19 @@ Providers section:
 - AppLauncher status shows generic LLM runtime readiness, required secret env names, and relaunch guidance after runtime changes.
 - Provider catalog shows enabled state, adapter, endpoint/model metadata, external-send posture, redacted secret status, and health.
 
+Processing Hooks section:
+
+- Hook creation accepts a hook key and creates an immutable registry record.
+- Hook rows show hook key, display name, implementation status, configured task usage count, and delete availability.
+- Hook deletion is allowed only when no configured tasks reference the hook.
+- The page does not expose edit controls for existing hooks.
+
 Tasks section:
 
 - Task creation accepts task name, hook key, provider key, description, prompt enablement, and enabled state; the task key is derived server-side and hidden from normal Settings UI.
 - Task rows show task name, hook key, implementation status, provider key selection, read-only provider kind, optional model override, task enablement, and readiness reason.
 - Prompt editing is attached to prompt-backed task rows and updates the current prompt configuration in place.
-- User-created task hooks can be added from Settings, but they show `Not implemented` until app logic exists and must not process work.
+- Hook dropdowns read from the processing hook registry. Hooks show `Default no-op` until app logic exists and must not process work.
 
 Operations section:
 
@@ -774,7 +818,7 @@ Operations section:
 - Provider config response redacts secret presence and never returns secret values.
 - Disabled providers never receive new jobs.
 - AppLauncher runtime options contain only generic non-secret LLM provider/model/endpoint selectors; API keys use AppLauncher secrets or process environment.
-- User-created AI task hooks display `Not implemented` and no-op until app logic exists.
+- Processing hooks without backend handlers display `Default no-op` and no-op until app logic exists.
 - AI expansion with invalid structured JSON creates a failed diagnostics job and no suggestion records.
 - Accepting an AI suggestion creates a normal memo work item without changing the parent lifecycle state.
 - File type marked `not_supported_yet` is ignored by watched-folder ingestion.

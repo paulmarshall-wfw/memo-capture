@@ -45,6 +45,12 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /Provider Name/);
   assert.match(appSource, /Provider Kind/);
   assert.match(appSource, /Provider Key/);
+  assert.match(appSource, /Processing Hooks/);
+  assert.match(appSource, /Create Hook/);
+  assert.match(appSource, /Default no-op/);
+  assert.match(appSource, /Custom function implemented/);
+  assert.match(appSource, /\/api\/settings\/processing-hooks/);
+  assert.doesNotMatch(appSource, /source: hook/);
   assert.match(appSource, /Task Name/);
   assert.match(appSource, /Task Description/);
   assert.match(appSource, /Add provider/);

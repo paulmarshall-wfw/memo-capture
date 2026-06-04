@@ -56,7 +56,7 @@ test("settings summary separates provider catalog from task-owned prompts and ca
     providers: Array<{ providerName: string; capabilities: Array<{ capabilityKey: string }> }>;
     taskKinds: Array<{ kindKey: string; capabilityKey: string; promptFieldsEnabled: boolean }>;
     aiTasks: Array<{ taskKey: string; prompt: { name: string } | null; runtimeReady: boolean }>;
-    registeredTaskHooks: Array<{ hookKey: string }>;
+    registeredTaskHooks: Array<{ hookKey: string; implemented: boolean; status: string; taskUsageCount: number }>;
   };
 
   assert.equal(summary.providers[0]?.providerName, "local-dev");
@@ -67,11 +67,18 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.prompt?.name, "work_item_expansion");
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.runtimeReady, true);
   assert.deepEqual(summary.registeredTaskHooks.map((hook) => hook.hookKey), [
+    "custom-summary",
     "memo-expansion",
     "revise-memo",
     "suggest-new-memos",
     "suggest-tags"
   ]);
+  assert.equal(summary.registeredTaskHooks.find((hook) => hook.hookKey === "memo-expansion")?.implemented, true);
+  assert.equal(
+    summary.registeredTaskHooks.find((hook) => hook.hookKey === "custom-summary")?.status,
+    "default_noop"
+  );
+  assert.equal(summary.registeredTaskHooks.find((hook) => hook.hookKey === "custom-summary")?.taskUsageCount, 1);
 });
 
 test("AI task creation derives task key and reports duplicate derived key conflicts", async () => {
@@ -83,6 +90,12 @@ test("AI task creation derives task key and reports duplicate derived key confli
   seedTaskSettings(db);
   const services = createAppServicesFromDatabase(config, db);
   const session = await services.auth.createLocalDevSession();
+  await services.settings.createProcessingHook({ hookKey: "custom-digest" }, session.user, "request-create-hook");
+  await services.settings.createProcessingHook(
+    { hookKey: "custom-digest-again" },
+    session.user,
+    "request-create-duplicate-hook"
+  );
 
   const created = (await services.settings.createAiTaskDefinition(
     {
@@ -132,6 +145,61 @@ test("AI task creation derives task key and reports duplicate derived key confli
   );
 });
 
+test("processing hooks can be created and deleted only when unused", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const created = (await services.settings.createProcessingHook(
+    { hookKey: "daily-digest" },
+    session.user,
+    "request-create-processing-hook"
+  )) as { processingHook: { hookKey: string; implemented: boolean; status: string; taskUsageCount: number } };
+
+  assert.equal(created.processingHook.hookKey, "daily-digest");
+  assert.equal(created.processingHook.implemented, false);
+  assert.equal(created.processingHook.status, "default_noop");
+  assert.equal(created.processingHook.taskUsageCount, 0);
+
+  await assert.rejects(
+    () => services.settings.createProcessingHook({ hookKey: "daily-digest" }, session.user, "request-duplicate-hook"),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "processing_hook_exists"
+  );
+
+  await assert.rejects(
+    () => services.settings.deleteProcessingHook("memo-expansion", session.user, "request-delete-used-hook"),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "processing_hook_in_use"
+  );
+
+  const deleted = (await services.settings.deleteProcessingHook(
+    "daily-digest",
+    session.user,
+    "request-delete-processing-hook"
+  )) as { deleted: boolean; hookKey: string };
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.hookKey, "daily-digest");
+  assert.equal(db.processingHooks.some((hook) => hook.hook_key === "daily-digest"), false);
+
+  const unusedSeeded = (await services.settings.deleteProcessingHook(
+    "revise-memo",
+    session.user,
+    "request-delete-unused-seeded-hook"
+  )) as { deleted: boolean; hookKey: string };
+  assert.equal(unusedSeeded.deleted, true);
+  assert.equal(unusedSeeded.hookKey, "revise-memo");
+});
+
 test("settings allow additional task kinds and task definitions can use them", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -141,6 +209,7 @@ test("settings allow additional task kinds and task definitions can use them", a
   seedTaskSettings(db);
   const services = createAppServicesFromDatabase(config, db);
   const session = await services.auth.createLocalDevSession();
+  await services.settings.createProcessingHook({ hookKey: "image-digest" }, session.user, "request-create-image-hook");
 
   const created = (await services.settings.createTaskKind(
     {
@@ -1685,6 +1754,19 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(providerPatch.response.status, 200);
     assert.equal(providerPatch.body.provider.enabled, true);
 
+    const processingHookCreate = await authedJson(baseUrl, "/api/settings/processing-hooks", {
+      method: "POST",
+      body: JSON.stringify({ hookKey: "temp-summary" })
+    });
+    assert.equal(processingHookCreate.response.status, 200);
+    assert.equal(processingHookCreate.body.processingHook.hookKey, "temp-summary");
+
+    const processingHookDelete = await authedJson(baseUrl, "/api/settings/processing-hooks/temp-summary", {
+      method: "DELETE"
+    });
+    assert.equal(processingHookDelete.response.status, 200);
+    assert.equal(processingHookDelete.body.deleted, true);
+
     const aiTaskCreate = await authedJson(baseUrl, "/api/settings/ai-tasks", {
       method: "POST",
       body: JSON.stringify({
@@ -2604,6 +2686,22 @@ function captureRouteServices(): AppServices {
           enabled: false
         }
       }),
+      createProcessingHook: async (body: unknown) => ({
+        processingHook: {
+          hookKey: (body as { hookKey: string }).hookKey,
+          displayName: "Custom summary",
+          implemented: false,
+          status: "default_noop",
+          statusLabel: "Default no-op",
+          taskUsageCount: 0,
+          deletable: true,
+          deleteBlockedReason: null
+        }
+      }),
+      deleteProcessingHook: async (hookKey: string) => ({
+        deleted: true,
+        hookKey
+      }),
       updateAiTaskDefinition: async () => ({
         aiTask: {
           id: "task-1",
@@ -2931,6 +3029,7 @@ class FakeDatabase implements Database {
   readonly providers: Record<string, unknown>[] = [];
   readonly providerCapabilities: Record<string, unknown>[] = [];
   readonly taskKinds: Record<string, unknown>[] = [];
+  readonly processingHooks: Record<string, unknown>[] = [];
   readonly aiTaskDefinitions: Record<string, unknown>[] = [];
   readonly aiTaskRoutes: Record<string, unknown>[] = [];
   readonly promptDefinitions: Record<string, unknown>[] = [];
@@ -3014,6 +3113,47 @@ class FakeDatabase implements Database {
       return rows([...this.providerCapabilities] as Row[]);
     }
 
+    if (text.includes("insert into processing_hooks")) {
+      const existing = this.processingHooks.find((hook) => hook.hook_key === values[0]);
+      if (existing !== undefined) {
+        return rows([]);
+      }
+      const hook = {
+        hook_key: values[0],
+        task_usage_count: 0,
+        created_by: values[1],
+        updated_by: values[1],
+        created_at: "2026-05-29T00:00:00.000Z",
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.processingHooks.push(hook);
+      return rows([hook] as unknown as Row[]);
+    }
+
+    if (text.includes("delete from processing_hooks")) {
+      const index = this.processingHooks.findIndex((hook) => hook.hook_key === values[0]);
+      if (index === -1) {
+        return rows([]);
+      }
+      const [hook] = this.processingHooks.splice(index, 1);
+      return rows([{ hook_key: hook?.hook_key }] as unknown as Row[]);
+    }
+
+    if (text.includes("from processing_hooks")) {
+      const hookRows: Record<string, unknown>[] = this.processingHooks.map((hook) => ({
+        ...hook,
+        task_usage_count: this.aiTaskDefinitions.filter(
+          (definition) => definition.hook_key === hook.hook_key
+        ).length
+      }));
+      if (text.includes("where processing_hooks.hook_key =")) {
+        return rows(hookRows.filter((hook) => hook.hook_key === values[0]) as unknown as Row[]);
+      }
+      return rows(
+        hookRows.sort((left, right) => String(left.hook_key).localeCompare(String(right.hook_key))) as unknown as Row[]
+      );
+    }
+
     if (text.includes("from task_kinds") && text.includes("where lower(kind_key)")) {
       const kindKey = String(values[0]).toLowerCase();
       const taskKind = this.taskKinds.find((row) => String(row.kind_key).toLowerCase() === kindKey);
@@ -3081,8 +3221,11 @@ class FakeDatabase implements Database {
 
     if (text.includes("select exists") && text.includes("from ai_task_definitions")) {
       const kindKey = String(values[0]).toLowerCase();
+      const implementedHookKeys = Array.isArray(values[1]) ? new Set(values[1].map(String)) : new Set<string>();
       const exists = this.aiTaskDefinitions.some(
-        (definition) => String(definition.task_kind).toLowerCase() === kindKey && definition.implemented === true
+        (definition) =>
+          String(definition.task_kind).toLowerCase() === kindKey &&
+          implementedHookKeys.has(String(definition.hook_key))
       );
       return rows([{ exists }] as unknown as Row[]);
     }
@@ -4327,6 +4470,43 @@ function seedTaskSettings(db: FakeDatabase): void {
     },
     created_at: "2026-05-29T00:00:00.000Z"
   });
+  db.processingHooks.push(
+    {
+      hook_key: "memo-expansion",
+      created_by: null,
+      updated_by: null,
+      created_at: "2026-05-29T00:00:00.000Z",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      hook_key: "revise-memo",
+      created_by: null,
+      updated_by: null,
+      created_at: "2026-05-29T00:00:00.000Z",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      hook_key: "suggest-new-memos",
+      created_by: null,
+      updated_by: null,
+      created_at: "2026-05-29T00:00:00.000Z",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      hook_key: "suggest-tags",
+      created_by: null,
+      updated_by: null,
+      created_at: "2026-05-29T00:00:00.000Z",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      hook_key: "custom-summary",
+      created_by: null,
+      updated_by: null,
+      created_at: "2026-05-29T00:00:00.000Z",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
   db.aiTaskDefinitions.push(
     {
       id: "task-memo-expansion",

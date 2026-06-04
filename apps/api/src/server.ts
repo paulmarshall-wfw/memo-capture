@@ -319,6 +319,21 @@ function matchProtectedRoute(
       services.settings.createTaskKind(await readJsonBody(context.request), session.user, context.requestId);
   }
 
+  if (method === "POST" && pathname === "/api/settings/processing-hooks") {
+    return async (context, session) =>
+      services.settings.createProcessingHook(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const processingHookDeleteMatch = /^\/api\/settings\/processing-hooks\/([^/]+)$/.exec(pathname);
+  if (method === "DELETE" && processingHookDeleteMatch !== null) {
+    return async (context, session) =>
+      services.settings.deleteProcessingHook(
+        decodeURIComponent(processingHookDeleteMatch[1] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
+
   const taskKindPatchMatch = /^\/api\/settings\/task-kinds\/([^/]+)$/.exec(pathname);
   if (method === "PATCH" && taskKindPatchMatch !== null) {
     return async (context, session) =>

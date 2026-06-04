@@ -82,6 +82,15 @@ export interface ProviderCapabilityRow extends Record<string, unknown> {
   updated_at: Date | string;
 }
 
+export interface ProcessingHookRow extends Record<string, unknown> {
+  hook_key: string;
+  task_usage_count: string | number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
 export interface AiTaskRouteRow extends Record<string, unknown> {
   id: string;
   task_key: string;
@@ -727,17 +736,93 @@ export class SettingsRepository {
     return result.rows[0] ?? null;
   }
 
-  async taskKindHasImplementedRoute(kindKey: string): Promise<boolean> {
+  async taskKindHasImplementedRoute(kindKey: string, implementedHookKeys: string[]): Promise<boolean> {
     const result = await this.db.query<{ exists: boolean }>(
       `select exists (
          select 1
          from ai_task_definitions
          where lower(task_kind) = lower($1)
-           and implemented = true
+           and hook_key = any($2::text[])
        ) as exists`,
-      [kindKey]
+      [kindKey, implementedHookKeys]
     );
     return result.rows[0]?.exists === true;
+  }
+
+  async listProcessingHooks(): Promise<ProcessingHookRow[]> {
+    const result = await this.db.query<ProcessingHookRow>(
+      `select
+         processing_hooks.hook_key,
+         count(ai_task_definitions.id)::int as task_usage_count,
+         processing_hooks.created_by,
+         processing_hooks.updated_by,
+         processing_hooks.created_at,
+         processing_hooks.updated_at
+       from processing_hooks
+       left join ai_task_definitions on ai_task_definitions.hook_key = processing_hooks.hook_key
+       group by
+         processing_hooks.hook_key,
+         processing_hooks.created_by,
+         processing_hooks.updated_by,
+         processing_hooks.created_at,
+         processing_hooks.updated_at
+       order by processing_hooks.hook_key asc`
+    );
+    return result.rows;
+  }
+
+  async findProcessingHook(hookKey: string): Promise<ProcessingHookRow | null> {
+    const result = await this.db.query<ProcessingHookRow>(
+      `select
+         processing_hooks.hook_key,
+         count(ai_task_definitions.id)::int as task_usage_count,
+         processing_hooks.created_by,
+         processing_hooks.updated_by,
+         processing_hooks.created_at,
+         processing_hooks.updated_at
+       from processing_hooks
+       left join ai_task_definitions on ai_task_definitions.hook_key = processing_hooks.hook_key
+       where processing_hooks.hook_key = $1
+       group by
+         processing_hooks.hook_key,
+         processing_hooks.created_by,
+         processing_hooks.updated_by,
+         processing_hooks.created_at,
+         processing_hooks.updated_at
+       limit 1`,
+      [hookKey]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async createProcessingHook(input: {
+    hookKey: string;
+    actorUserId: string;
+  }): Promise<ProcessingHookRow | null> {
+    const result = await this.db.query<ProcessingHookRow>(
+      `insert into processing_hooks (hook_key, created_by, updated_by, created_at, updated_at)
+       values ($1, $2, $2, now(), now())
+       on conflict (hook_key) do nothing
+       returning
+         hook_key,
+         0::int as task_usage_count,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at`,
+      [input.hookKey, input.actorUserId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async deleteProcessingHook(hookKey: string): Promise<boolean> {
+    const result = await this.db.query<{ hook_key: string }>(
+      `delete from processing_hooks
+       where hook_key = $1
+       returning hook_key`,
+      [hookKey]
+    );
+    return result.rows.length > 0;
   }
 
   async createTaskKind(input: {

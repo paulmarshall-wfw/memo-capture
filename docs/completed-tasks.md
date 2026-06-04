@@ -320,3 +320,8 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Replaced the Tasks Settings Hook Key datalist controls with editable select menus for both new and existing tasks, showing each registered hook once by display label while preserving existing custom hook values.
   Verification: `node --test apps/desktop/tests/app-copy.test.ts`, `npm run typecheck`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed.
   Traceability: branch `main`, base HEAD `9dac386`; changed files include `apps/desktop/src/App.tsx`, `apps/desktop/tests/app-copy.test.ts`, and `docs/completed-tasks.md`.
+
+- Task: Add configurable Processing Hooks registry
+  Outcome: Added a persisted Processing Hooks registry seeded from existing hook keys, create/delete Settings APIs, derived hook implementation status, a new Settings page for hook status and deletion, Tasks dropdowns backed by the registry, launcher contract checks, and matching docs.
+  Verification: `npm run typecheck`, focused API and desktop tests, `npm test` outside the sandbox after route-test `listen EPERM`, `npm run test:postgres` outside the sandbox after Docker socket denial, `npm run build`, `npm run verify`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed.
+  Traceability: branch `main`, base HEAD `035bc3f`; changed files include `apps/api/db/migrations/0027_processing_hooks_registry.sql`, API settings repository/service/routes/tests, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `apps/desktop/tests/app-copy.test.ts`, launcher scripts, `docs/design/memo-capture-design-learnings.md`, `docs/specs/settings-and-audit.md`, and `docs/completed-tasks.md`.

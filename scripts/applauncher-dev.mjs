@@ -14,7 +14,6 @@ const desktopPort = process.env.MEMO_CAPTURE_DESKTOP_PORT ?? process.env.PORT ??
 const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
 const desktopUrl = `http://127.0.0.1:${desktopPort}/`;
 const workflowBundlePath = path.join(root, "docs/design/memo-capture-0.2.2-workflow-definition-bundled.json");
-const requiredTaskHooks = ["memo-expansion", "revise-memo", "suggest-new-memos", "suggest-tags"];
 const children = new Set();
 let shuttingDown = false;
 
@@ -140,10 +139,12 @@ async function apiSettingsContractOk() {
       return false;
     }
     const settings = await settingsResponse.json();
-    const hookKeys = Array.isArray(settings.registeredTaskHooks)
-      ? settings.registeredTaskHooks.map((hook) => hook?.hookKey)
-      : [];
-    return Array.isArray(settings.aiTasks) && requiredTaskHooks.every((hookKey) => hookKeys.includes(hookKey));
+    const hookRegistryCurrent =
+      Array.isArray(settings.registeredTaskHooks) &&
+      settings.registeredTaskHooks.every(
+        (hook) => typeof hook?.hookKey === "string" && typeof hook?.status === "string"
+      );
+    return Array.isArray(settings.aiTasks) && hookRegistryCurrent;
   } catch {
     return false;
   }

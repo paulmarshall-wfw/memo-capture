@@ -101,6 +101,8 @@ export interface SettingsOperations {
   updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createTaskKind(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTaskKind(taskKindId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  createProcessingHook(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  deleteProcessingHook(hookKey: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createAiTaskDefinition(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateAiTaskDefinition(taskDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   deleteAiTaskDefinition(taskDefinitionId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;

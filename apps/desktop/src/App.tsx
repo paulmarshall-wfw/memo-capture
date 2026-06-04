@@ -57,6 +57,7 @@ type SettingsSectionId =
   | "file-types"
   | "suppressed-tags"
   | "providers"
+  | "processing-hooks"
   | "tasks"
   | "export"
   | "operations"
@@ -552,6 +553,13 @@ interface SettingsSummary {
     hookKey: string;
     displayName: string;
     implemented: boolean;
+    status: string;
+    statusLabel: string;
+    taskUsageCount: number;
+    deletable: boolean;
+    deleteBlockedReason: string | null;
+    createdAt: string;
+    updatedAt: string;
   }[];
   prompts: PromptSummary[];
   auth: {
@@ -631,6 +639,7 @@ const settingsSections: readonly { id: SettingsSectionId; label: string }[] = [
   { id: "file-types", label: "File types" },
   { id: "suppressed-tags", label: "Suppressed Tags" },
   { id: "providers", label: "Providers" },
+  { id: "processing-hooks", label: "Processing Hooks" },
   { id: "tasks", label: "Tasks" },
   { id: "export", label: "Export contract" },
   { id: "operations", label: "Operations" },
@@ -1436,6 +1445,9 @@ export function App() {
   const [aiTaskIdInFlight, setAiTaskIdInFlight] = useState<string | null>(null);
   const [newAiTaskDraft, setNewAiTaskDraft] = useState<NewAiTaskDraft>(defaultNewAiTaskDraft);
   const [aiTaskCreateInFlight, setAiTaskCreateInFlight] = useState(false);
+  const [newProcessingHookKey, setNewProcessingHookKey] = useState("");
+  const [processingHookCreateInFlight, setProcessingHookCreateInFlight] = useState(false);
+  const [processingHookKeyInFlight, setProcessingHookKeyInFlight] = useState<string | null>(null);
   const [fileTypeIdInFlight, setFileTypeIdInFlight] = useState<string | null>(null);
   const [mediaTypeIdInFlight, setMediaTypeIdInFlight] = useState<string | null>(null);
   const [parserTypeIdInFlight, setParserTypeIdInFlight] = useState<string | null>(null);
@@ -3162,6 +3174,50 @@ export function App() {
         [field]: value
       }
     }));
+  }
+
+  async function createProcessingHook() {
+    if (accessToken === null) {
+      return;
+    }
+    if (newProcessingHookKey.trim() === "") {
+      setStatusMessage("Hook key is required.");
+      return;
+    }
+    setProcessingHookCreateInFlight(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/processing-hooks", {
+        method: "POST",
+        body: JSON.stringify({ hookKey: newProcessingHookKey })
+      });
+      setNewProcessingHookKey("");
+      await loadSettings(accessToken);
+      setStatusMessage("Processing hook created.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to create processing hook.");
+    } finally {
+      setProcessingHookCreateInFlight(false);
+    }
+  }
+
+  async function deleteProcessingHook(hook: SettingsSummary["registeredTaskHooks"][number]) {
+    if (accessToken === null) {
+      return;
+    }
+    setProcessingHookKeyInFlight(hook.hookKey);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/processing-hooks/${encodeURIComponent(hook.hookKey)}`, {
+        method: "DELETE"
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Processing hook deleted.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to delete processing hook.");
+    } finally {
+      setProcessingHookKeyInFlight(null);
+    }
   }
 
   async function createAiTaskDefinition() {
@@ -5738,6 +5794,97 @@ export function App() {
                     );})}
                   </div>
                 </section>
+              ) : activeSettingsSection === "processing-hooks" ? (
+                <section className="detail-section" aria-label="Processing Hooks">
+                  <div className="settings-row-header">
+                    <div className="section-title">
+                      <Settings size={18} />
+                      <h3>Processing Hooks</h3>
+                    </div>
+                    <span className="detail-count">{registeredTaskHooks.length} registered</span>
+                  </div>
+                  <article className="settings-row provider-task-row">
+                    <div>
+                      <div className="batch-title">
+                        <strong>Create hook</strong>
+                        <span>Default no-op</span>
+                      </div>
+                      <div className="provider-route-controls processing-hook-create-row">
+                        <label>
+                          <span>Hook Key</span>
+                          <input
+                            type="text"
+                            value={newProcessingHookKey}
+                            disabled={processingHookCreateInFlight}
+                            onChange={(event) => setNewProcessingHookKey(event.currentTarget.value)}
+                          />
+                        </label>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={processingHookCreateInFlight}
+                          onClick={() => void createProcessingHook()}
+                        >
+                          {processingHookCreateInFlight ? (
+                            <RefreshCcw className="spin" size={18} />
+                          ) : (
+                            <Plus size={18} />
+                          )}
+                          Create Hook
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                  {registeredTaskHooks.length === 0 ? (
+                    <div className="empty-detail">
+                      <Settings size={22} />
+                      <span>No processing hooks registered</span>
+                    </div>
+                  ) : (
+                    <div className="processing-hooks-table" role="table" aria-label="Processing Hooks">
+                      <div className="processing-hooks-row processing-hooks-header" role="row">
+                        <div role="columnheader">Hook key</div>
+                        <div role="columnheader">Display name</div>
+                        <div role="columnheader">Status</div>
+                        <div role="columnheader">Tasks</div>
+                        <div role="columnheader">Actions</div>
+                      </div>
+                      {registeredTaskHooks.map((hook) => (
+                        <div className="processing-hooks-row" role="row" key={hook.hookKey}>
+                          <div role="cell">
+                            <code>{hook.hookKey}</code>
+                          </div>
+                          <div role="cell">{hook.displayName}</div>
+                          <div role="cell">
+                            <span className={hook.implemented ? "status-pill ready" : "status-pill muted"}>
+                              {hook.statusLabel}
+                            </span>
+                          </div>
+                          <div role="cell">{hook.taskUsageCount}</div>
+                          <div className="settings-table-actions" role="cell">
+                            <button
+                              className="row-action-button danger"
+                              type="button"
+                              disabled={
+                                processingHookKeyInFlight === hook.hookKey ||
+                                !hook.deletable
+                              }
+                              title={hook.deleteBlockedReason ?? `Delete ${hook.displayName}`}
+                              onClick={() => void deleteProcessingHook(hook)}
+                            >
+                              {processingHookKeyInFlight === hook.hookKey ? (
+                                <RefreshCcw className="spin" size={18} />
+                              ) : (
+                                <Trash2 size={18} />
+                              )}
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
               ) : activeSettingsSection === "tasks" ? (
                 <section className="detail-section" aria-label="Tasks">
                   <div className="settings-row-header">
@@ -5930,6 +6077,7 @@ export function App() {
                       const selectedProvider = settingsSummary.providers.find(
                         (provider) => provider.id === draft.providerConfigId
                       );
+                      const selectedHook = registeredTaskHooks.find((hook) => hook.hookKey === task.hookKey);
                       const prompt = task.prompt;
                       const promptDraft =
                         prompt === null
@@ -5946,7 +6094,13 @@ export function App() {
                             <div>
                               <div className="batch-title">
                                 <strong>{task.displayName}</strong>
-                                <span>{task.runtimeReady ? "Ready" : task.hookImplemented ? "Needs setup" : "Not implemented"}</span>
+                                <span>
+                                  {task.runtimeReady
+                                    ? "Ready"
+                                    : task.hookImplemented
+                                      ? "Needs setup"
+                                      : selectedHook?.statusLabel ?? "Default no-op"}
+                                </span>
                               </div>
                               <p>
                                 {task.taskKindDisplayName}; hook {task.hookKey}; route {task.routeEnabled ? "enabled" : "disabled"}
@@ -6598,7 +6752,20 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
               typeof hook.displayName === "string" && hook.displayName.trim() !== ""
                 ? hook.displayName
                 : hook.hookKey,
-            implemented: hook.implemented === true
+            implemented: hook.implemented === true,
+            status: typeof hook.status === "string" ? hook.status : hook.implemented === true ? "custom_function_implemented" : "default_noop",
+            statusLabel:
+              typeof hook.statusLabel === "string" && hook.statusLabel.trim() !== ""
+                ? hook.statusLabel
+                : hook.implemented === true
+                  ? "Custom function implemented"
+                  : "Default no-op",
+            taskUsageCount: typeof hook.taskUsageCount === "number" ? hook.taskUsageCount : 0,
+            deletable: hook.deletable === true,
+            deleteBlockedReason:
+              typeof hook.deleteBlockedReason === "string" ? hook.deleteBlockedReason : null,
+            createdAt: typeof hook.createdAt === "string" ? hook.createdAt : "",
+            updatedAt: typeof hook.updatedAt === "string" ? hook.updatedAt : ""
           }))
       : [],
     prompts: Array.isArray(summary.prompts)

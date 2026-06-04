@@ -392,9 +392,6 @@ function validateMemoExpansionTaskRoute(task: AiTaskRouteRow, config: ApiConfig)
   if (task.hook_key !== MEMO_EXPANSION_HOOK_KEY) {
     throw new HttpError(409, "ai_task_hook_mismatch", "Configured task does not dispatch to memo expansion.");
   }
-  if (!task.implemented) {
-    throw new HttpError(409, "ai_task_not_implemented", "Memo expansion task hook is not implemented.");
-  }
   if (!task.route_enabled) {
     throw new HttpError(409, "ai_task_route_disabled", "Memo expansion task route is disabled.");
   }

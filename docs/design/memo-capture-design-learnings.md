@@ -237,11 +237,11 @@ Task prompt edits update the task's current prompt configuration in place and do
 
 Prompt editing is attached to prompt-backed task definitions rather than a standalone global prompts page. It exposes freeform prompt text first, then explicit toggles for project synopsis, memo metadata, and memo text/transcript content. The backend composes the final model prompt in that order and does not send raw audio or video content to the LLM.
 
-Task definitions are user-managed Settings records. The app must not seed OCR, memo expansion, revision, suggestion, or tag tasks as configured tasks; users add and delete the task definitions they want. Registered hook keys can be suggested as app-owned compatibility metadata, but they must not create task rows by themselves.
+Task definitions are user-managed Settings records. The app must not seed OCR, memo expansion, revision, suggestion, or tag tasks as configured tasks; users add and delete the task definitions they want. Processing hook keys are persisted in a Settings-managed registry and do not create task rows by themselves.
 
 The deterministic `local-dev` work-item expander is a development provider. Provider configuration should allow multiple named provider instances of the same kind to coexist. App-owned AI actions route through explicit task definitions and dispatch by app-owned `hookKey`, so multiple configured tasks can share the same implementation hook with different prompts or model overrides. Settings exposes one Tasks list with provider-key selection, read-only provider kind, hook selection, prompt controls, and readiness messaging; task keys are generated once from display names and are not foregrounded in normal Settings UI. AppLauncher runtime options provide only generic non-secret LLM runtime values (`LLM_PROVIDER`, `LLM_MODEL`, and `LLM_ENDPOINT`); API keys remain AppLauncher secrets or process environment values and are never stored in runtime options.
 
-User-created AI tasks are allowed as future hooks. Until app code registers logic for a hook, the task must show `Not implemented`, runtime attempts must skip as a no-op, and providers must not be called.
+Settings has a Processing Hooks page for creating hook keys, reviewing hook status, and deleting unused hooks. A hook shows `Custom function implemented` only when backend app code has a handler for that hook key; otherwise it shows `Default no-op`. Hook records are immutable after creation. Deleting any hook is blocked while any configured task references it, enabled or disabled. Until app code registers logic for a hook, runtime attempts must skip as a no-op and providers must not be called.
 
 AI generation records should include:
 
