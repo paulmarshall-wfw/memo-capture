@@ -48,7 +48,7 @@ See `.env.example` for the current non-secret template.
 - `LLM_ENDPOINT`: compatibility fallback endpoint for OpenAI-compatible providers.
 - `MEMO_EXPANSION_PROVIDER`, `MEMO_EXPANSION_MODEL`, `MEMO_EXPANSION_ENDPOINT`: AppLauncher runtime option outputs for memo expansion.
 - `SUGGEST_NEW_MEMOS_PROVIDER`, `SUGGEST_NEW_MEMOS_MODEL`, `SUGGEST_NEW_MEMOS_ENDPOINT`: AppLauncher runtime option outputs for suggested new memo generation.
-- `SUGGEST_SELECTED_TAGS_PROVIDER`, `SUGGEST_SELECTED_TAGS_MODEL`, `SUGGEST_SELECTED_TAGS_ENDPOINT`: AppLauncher runtime option outputs for selected-tag suggestion.
+- `SUGGEST_TAGS_PROVIDER`, `SUGGEST_TAGS_MODEL`, `SUGGEST_TAGS_ENDPOINT`: AppLauncher runtime option outputs for tag suggestion.
 - `OCR_PROVIDER`, `OCR_MODEL`, `OCR_ENDPOINT`: AppLauncher runtime option outputs for OCR. OCR remains no-op until an OCR handler is implemented.
 - `OPENAI_COMPATIBLE_API_KEY`: AppLauncher secret/env value for the OpenAI-compatible adapter. Do not put API keys in manifest `runtimeOptions`.
 - `TRANSCRIPTION_PROVIDER`: configured transcription provider. Supported values are `disabled`, `local-dev`, and `whisper-cpp`. Use `whisper-cpp` for local V1 transcription once the binary and model are configured.

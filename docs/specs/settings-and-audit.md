@@ -187,24 +187,27 @@ Required columns:
 - `updated_by uuid references app_users(id)`
 - timestamps
 
-Provider kinds:
+Provider kinds shown in Settings:
 
 - `llm`
-- `transcription`
+- `stt`
 - `ocr`
 - `tts`
+- `script`
 
 Rules:
 
 - Transcription providers and LLM providers are configured independently.
 - OCR and TTS provider kinds are represented for task routing but remain disabled until their app routes exist.
+- The backend stores speech-to-text providers as `transcription` for compatibility with existing runtime code; the Settings UI labels that kind as `stt`.
 - Disabled providers never receive jobs.
 - Provider secrets come from environment/config in MVP.
-- UI displays redacted provider status and non-secret settings.
+- UI displays redacted provider status and editable non-secret settings: provider name, derived provider key, provider kind, external-send flag, endpoint/base URL, model ID/name, and required secret environment variable name.
 - Provider/model changes affect only new jobs.
 - Jobs snapshot intended provider/model at creation where predictability matters.
 - Provider failures mark the provider unhealthy and show diagnostics; they do not auto-disable providers.
 - Multiple providers of the same kind may be configured at the same time. App-owned jobs should route by explicit purpose/runtime provider where available rather than assuming only one enabled provider exists.
+- LLM provider rows are treated as OpenAI-compatible runtime configuration unless they are the built-in deterministic local-dev provider.
 
 ### task_kinds
 
@@ -223,9 +226,10 @@ Required columns:
 
 Rules:
 
-- Task kinds define routing compatibility and whether prompt fields apply.
+- Task kinds define internal routing compatibility and legacy prompt defaults.
 - V1 seeds `llm`, `ocr`, `stt`, and `tts`; active kinds are selectable for task-definition drafting.
 - Task kinds can be created before protected app logic exists, but cannot be enabled until at least one task route for that kind is implemented.
+- Task kinds and capability keys are not user-facing Settings controls in the simplified V1 UI.
 
 ### provider_capabilities
 
@@ -239,8 +243,9 @@ Required columns:
 
 Rules:
 
-- Provider capabilities let task routes filter compatible provider instances.
+- Provider capabilities are retained as compatibility metadata for existing rows and tests.
 - A provider kind match is required but not sufficient when the task kind declares a capability key.
+- Capability keys are not user-facing Settings controls in the simplified V1 UI.
 
 ### ai_task_definitions
 
@@ -267,8 +272,9 @@ Required columns:
 Seeded tasks:
 
 - `memo-expansion`
+- `revise-memo`
 - `suggest-new-memos`
-- `suggest-selected-tags`
+- `suggest-tags`
 - `ocr`
 
 Rules:
@@ -276,7 +282,10 @@ Rules:
 - `implemented = true` only when app code has a registered handler for the hook.
 - User-created tasks are allowed, but start as `implemented = false`.
 - User-created `task_key` values are derived from `display_name`; callers do not provide manual task keys.
-- Unknown hooks must display `Not implemented`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
+- App-owned hook registry entries are displayed in the Settings Hook Key dropdown. `memo-expansion` is implemented. `revise-memo`, `suggest-new-memos`, and `suggest-tags` are no-op configuration entries and must not call providers.
+- Unknown or unimplemented hooks must display `Not implemented`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
+- Tasks can be created while their hook is unimplemented, but cannot be enabled until that hook has real app logic.
+- Task Settings fields are task name, derived read-only task key, provider key, read-only provider kind, task description, hook key, prompts checkbox, and enabled checkbox.
 - OCR is modeled as a task in V1, but remains no-op until OCR handler logic is implemented.
 
 ### ai_task_routes
@@ -323,9 +332,9 @@ Required columns:
 
 Rules:
 
-- Editing a prompt creates a new version.
-- Previous prompt versions are not mutated.
-- Prompt bodies are not retained forever.
+- Task prompt edits update the task's current prompt configuration in place.
+- Saving task prompt edits does not create a new prompt version.
+- Historical prompt versioning remains available as storage compatibility, but the simplified Settings UI uses current-prompt mutation for task-owned prompt controls.
 - AI run provenance must retain enough prompt/version reference or snapshot metadata to explain historical runs after old prompt bodies expire.
 
 ### export_templates
@@ -550,6 +559,26 @@ Updates extension mapping media type, parser type, and capability state.
 
 Deletes an extension mapping.
 
+### Create provider config
+
+`POST /api/settings/providers`
+
+Request:
+
+```json
+{
+  "displayName": "OpenAI-compatible",
+  "providerKind": "llm",
+  "enabled": false,
+  "externalSendEnabled": true,
+  "endpoint": "https://provider.example",
+  "modelName": "gpt-4.1-mini",
+  "requiredSecretEnv": "OPENAI_COMPATIBLE_API_KEY"
+}
+```
+
+Creates a provider with a server-derived stable `providerName` key. Secrets are referenced by environment variable name and are not stored in the database.
+
 ### List provider configs
 
 `GET /api/settings/providers`
@@ -564,13 +593,16 @@ Request:
 
 ```json
 {
+  "displayName": "OpenAI-compatible",
   "enabled": true,
+  "externalSendEnabled": true,
   "endpoint": "https://provider.example",
-  "modelName": "model-1"
+  "modelName": "model-1",
+  "requiredSecretEnv": "OPENAI_COMPATIBLE_API_KEY"
 }
 ```
 
-### Create or update task kinds
+### Legacy internal task-kind APIs
 
 `POST /api/settings/task-kinds`
 
@@ -587,7 +619,7 @@ Request:
 }
 ```
 
-Creates a task kind with a server-derived `kindKey` of `image-enrichment`. Task kinds define provider routing compatibility and whether task definitions of that kind get prompt fields.
+Creates a task kind with a server-derived `kindKey` of `image-enrichment`. Task kinds define internal provider routing compatibility and legacy prompt defaults. The simplified Settings UI does not expose this API.
 
 `PATCH /api/settings/task-kinds/{taskKindId}`
 
@@ -605,7 +637,7 @@ Request:
 }
 ```
 
-Updates task-kind routing metadata, prompt-field support, and availability. Task-kind keys stay stable after creation. Setting `enabled` to `true` fails until protected app logic exists for at least one task route of that kind.
+Updates internal task-kind routing metadata, prompt-field support, and availability. Task-kind keys stay stable after creation. Setting `enabled` to `true` fails until protected app logic exists for at least one task route of that kind.
 
 ### Create AI task definition
 
@@ -618,27 +650,51 @@ Request:
   "displayName": "Custom summary",
   "description": "Summarize a memo for a downstream workflow.",
   "hookKey": "custom-summary",
-  "taskKind": "llm"
+  "providerConfigId": "00000000-0000-4000-8000-000000000302",
+  "promptsEnabled": true,
+  "enabled": false
 }
 ```
 
 Creates a user-extensible task hook with a server-derived `taskKey` of `custom-summary`, a disabled route, and `implemented = false` unless `hookKey` matches registered app logic. The task is visible in Settings as `Not implemented`; processing attempts must no-op until app logic exists.
 
-### Update AI task route
+### Update AI task
 
-`PATCH /api/settings/ai-tasks/{taskDefinitionId}/route`
+`PATCH /api/settings/ai-tasks/{taskDefinitionId}`
 
 Request:
 
 ```json
 {
+  "displayName": "Custom summary",
+  "description": "Summarize a memo for a downstream workflow.",
+  "hookKey": "custom-summary",
   "providerConfigId": "00000000-0000-4000-8000-000000000302",
   "modelName": "gpt-4.1-mini",
+  "promptsEnabled": true,
   "enabled": true
 }
 ```
 
-Updates the global route for one AI task. The route can be enabled only when the selected provider is compatible with the task kind/capability, the selected provider is enabled, the AppLauncher runtime option selects the same provider, required secrets are configured, and the hook is implemented.
+Updates task display fields, hook selection, prompt attachment, and the global route for one AI task. The task can be enabled only when the selected hook is implemented with real app logic, the selected provider is compatible, the selected provider is enabled, the AppLauncher runtime option selects the same provider, and required secrets are configured.
+
+### Update current task prompt
+
+`PATCH /api/settings/prompts/{promptDefinitionId}/current`
+
+Request:
+
+```json
+{
+  "freeformText": "Return strict JSON.",
+  "includeProjectSynopsis": true,
+  "includeMemoMetadata": true,
+  "includeMemoTranscriptText": true,
+  "outputSchema": {}
+}
+```
+
+Updates the active prompt row in place for task-owned prompt settings. This endpoint does not create a new prompt version.
 
 ### List audit events
 
@@ -704,10 +760,9 @@ Providers section:
 
 Tasks section:
 
-- Task kinds can be added and edited with controlled provider kind and capability options, prompt-field support, and enabled/active status.
-- Task creation accepts display name, hook key, task kind, and description; the task key is derived and previewed read-only.
-- Task routing shows task name, hook key, implementation status, compatible provider selection, optional model override, route enablement, and readiness reason.
-- Prompt editing is attached to prompt-backed task rows, preserving versioning and context toggles.
+- Task creation accepts task name, hook key, provider key, description, prompt enablement, and enabled state; the task key is derived and previewed read-only.
+- Task rows show task name, task key, hook key, implementation status, provider key selection, read-only provider kind, optional model override, task enablement, and readiness reason.
+- Prompt editing is attached to prompt-backed task rows and updates the current prompt configuration in place.
 - User-created task hooks can be added from Settings, but they show `Not implemented` until app logic exists and must not process work.
 
 Operations section:

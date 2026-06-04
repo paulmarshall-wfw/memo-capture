@@ -309,6 +309,11 @@ function matchProtectedRoute(
       );
   }
 
+  if (method === "POST" && pathname === "/api/settings/providers") {
+    return async (context, session) =>
+      services.settings.createProvider(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
   if (method === "POST" && pathname === "/api/settings/task-kinds") {
     return async (context, session) =>
       services.settings.createTaskKind(await readJsonBody(context.request), session.user, context.requestId);
@@ -328,6 +333,17 @@ function matchProtectedRoute(
   if (method === "POST" && pathname === "/api/settings/ai-tasks") {
     return async (context, session) =>
       services.settings.createAiTaskDefinition(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const aiTaskPatchMatch = /^\/api\/settings\/ai-tasks\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && aiTaskPatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateAiTaskDefinition(
+        decodeURIComponent(aiTaskPatchMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
   }
 
   const aiTaskRoutePatchMatch = /^\/api\/settings\/ai-tasks\/([^/]+)\/route$/.exec(pathname);
@@ -403,6 +419,17 @@ function matchProtectedRoute(
     return async (context, session) =>
       services.settings.createPromptVersion(
         decodeURIComponent(promptVersionMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
+  const promptCurrentMatch = /^\/api\/settings\/prompts\/([^/]+)\/current$/.exec(pathname);
+  if (method === "PATCH" && promptCurrentMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateCurrentPrompt(
+        decodeURIComponent(promptCurrentMatch[1] ?? ""),
         await readJsonBody(context.request),
         session.user,
         context.requestId

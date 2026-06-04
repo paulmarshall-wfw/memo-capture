@@ -10,7 +10,7 @@ test("desktop surface references the v1 export schema contract", () => {
 test("settings page exposes file type, provider catalog, and task-owned prompt controls", () => {
   const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
-  assert.match(appSource, /Save version/);
+  assert.match(appSource, /Save prompt/);
   assert.match(appSource, /Project synopsis/);
   assert.match(appSource, /Memo text\/transcript/);
   assert.match(appSource, /toggleFileType/);
@@ -42,18 +42,27 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /Suggested new work item/);
   assert.match(appSource, /No pending suggested work items/);
   assert.match(appSource, /AppLauncher runtime options/);
-  assert.match(appSource, /Task kinds/);
-  assert.match(appSource, /Add task kind/);
-  assert.match(appSource, /Add kind/);
-  assert.match(appSource, /\/api\/settings\/task-kinds/);
-  assert.match(appSource, /taskKindDrafts/);
+  assert.match(appSource, /Provider Name/);
+  assert.match(appSource, /Provider Kind/);
+  assert.match(appSource, /Provider Key/);
+  assert.match(appSource, /Task Name/);
+  assert.match(appSource, /Task Description/);
+  assert.match(appSource, /Add provider/);
+  assert.match(appSource, /\/api\/settings\/providers/);
   assert.match(appSource, /Key: \{deriveTaskKeyPreview\(newAiTaskDraft\.displayName\)\}/);
   assert.match(appSource, /registered-task-hooks/);
   assert.match(appSource, /Add task/);
-  assert.match(appSource, /Capabilities/);
-  assert.match(appSource, /Save route/);
+  assert.match(appSource, /Save task/);
+  assert.match(appSource, /\/api\/settings\/prompts\/\$\{encodeURIComponent\(prompt\.id\)\}\/current/);
   assert.match(appSource, /runtime option/);
   assert.match(appSource, /task\.prompt/);
+  assert.doesNotMatch(appSource, /Task kinds/);
+  assert.doesNotMatch(appSource, /Add task kind/);
+  assert.doesNotMatch(appSource, /Add kind/);
+  assert.doesNotMatch(appSource, />\s*Capabilities\s*</);
+  assert.doesNotMatch(appSource, />\s*Capability\s*</);
+  assert.doesNotMatch(appSource, />\s*Capability key\s*</);
+  assert.doesNotMatch(appSource, /Save route/);
   assert.doesNotMatch(appSource, /label: "AI prompts"/);
   assert.doesNotMatch(appSource, /newAiTaskDraft\.taskKey/);
   assert.doesNotMatch(appSource, /LLM_PROVIDER=local-dev/);

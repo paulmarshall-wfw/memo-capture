@@ -380,35 +380,36 @@ interface FileTypeDraft {
 }
 
 interface AiTaskRouteDraft {
+  displayName: string;
+  description: string;
+  hookKey: string;
   providerConfigId: string;
   modelName: string;
+  promptsEnabled: boolean;
   enabled: boolean;
 }
 
-interface TaskKindDraft {
+interface ProviderDraft {
   displayName: string;
-  description: string;
-  providerKind: string;
-  capabilityKey: string;
-  promptFieldsEnabled: boolean;
+  endpoint: string;
+  modelName: string;
+  requiredSecretEnv: string;
+  externalSendEnabled: boolean;
   enabled: boolean;
-  active: boolean;
 }
 
-interface NewTaskKindDraft {
-  displayName: string;
-  description: string;
+interface NewProviderDraft extends ProviderDraft {
   providerKind: string;
-  capabilityKey: string;
-  promptFieldsEnabled: boolean;
-  enabled: boolean;
 }
 
 interface NewAiTaskDraft {
   displayName: string;
   description: string;
   hookKey: string;
-  taskKind: string;
+  providerConfigId: string;
+  modelName: string;
+  promptsEnabled: boolean;
+  enabled: boolean;
 }
 
 interface PromptSummary {
@@ -454,6 +455,7 @@ interface SettingsSummary {
     displayName?: string;
     adapterKey?: string;
     enabled: boolean;
+    endpoint?: string | null;
     endpointConfigured: boolean;
     modelName: string | null;
     secretSource: string;
@@ -627,6 +629,7 @@ const settingsSections: readonly { id: SettingsSectionId; label: string }[] = [
   { id: "operations", label: "Operations" },
   { id: "diagnostics", label: "Diagnostics" }
 ];
+const providerKindSelectOptions = ["llm", "stt", "tts", "ocr", "script"] as const;
 
 class ApiError extends Error {
   constructor(
@@ -655,14 +658,18 @@ const defaultNewAiTaskDraft: NewAiTaskDraft = {
   displayName: "",
   description: "",
   hookKey: "",
-  taskKind: "llm"
+  providerConfigId: "",
+  modelName: "",
+  promptsEnabled: false,
+  enabled: false
 };
-const defaultNewTaskKindDraft: NewTaskKindDraft = {
-  displayName: "",
-  description: "",
+const defaultNewProviderDraft: NewProviderDraft = {
   providerKind: "llm",
-  capabilityKey: "structured-generation",
-  promptFieldsEnabled: true,
+  displayName: "",
+  endpoint: "",
+  modelName: "",
+  requiredSecretEnv: "",
+  externalSendEnabled: false,
   enabled: false
 };
 const defaultNewMediaTypeDraft: MediaTypeDraft = {
@@ -1408,11 +1415,11 @@ export function App() {
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
   const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
-  const [taskKindDrafts, setTaskKindDrafts] = useState<Record<string, TaskKindDraft>>({});
+  const [providerDrafts, setProviderDrafts] = useState<Record<string, ProviderDraft>>({});
+  const [newProviderDraft, setNewProviderDraft] = useState<NewProviderDraft>(defaultNewProviderDraft);
+  const [providerIdInFlight, setProviderIdInFlight] = useState<string | null>(null);
+  const [providerCreateInFlight, setProviderCreateInFlight] = useState(false);
   const [aiTaskRouteDrafts, setAiTaskRouteDrafts] = useState<Record<string, AiTaskRouteDraft>>({});
-  const [taskKindIdInFlight, setTaskKindIdInFlight] = useState<string | null>(null);
-  const [newTaskKindDraft, setNewTaskKindDraft] = useState<NewTaskKindDraft>(defaultNewTaskKindDraft);
-  const [taskKindCreateInFlight, setTaskKindCreateInFlight] = useState(false);
   const [aiTaskIdInFlight, setAiTaskIdInFlight] = useState<string | null>(null);
   const [newAiTaskDraft, setNewAiTaskDraft] = useState<NewAiTaskDraft>(defaultNewAiTaskDraft);
   const [aiTaskCreateInFlight, setAiTaskCreateInFlight] = useState(false);
@@ -1482,52 +1489,7 @@ export function App() {
     const fileTypes = settingsSummary?.fileTypes ?? [];
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
-  const activeTaskKinds = useMemo(
-    () => (settingsSummary?.taskKinds ?? []).filter((taskKind) => taskKind.active),
-    [settingsSummary]
-  );
   const registeredTaskHooks = settingsSummary?.registeredTaskHooks ?? [];
-  const providerKindOptions = useMemo(() => {
-    const values = new Set<string>();
-    for (const provider of settingsSummary?.providers ?? []) {
-      values.add(provider.providerKind);
-    }
-    for (const taskKind of settingsSummary?.taskKinds ?? []) {
-      values.add(taskKind.providerKind);
-    }
-    return Array.from(values).sort();
-  }, [settingsSummary]);
-  const capabilityOptionsByProviderKind = useMemo(() => {
-    const options = new Map<string, Set<string>>();
-    const addOption = (providerKind: string, capabilityKey: string) => {
-      const capabilitySet = options.get(providerKind) ?? new Set<string>();
-      capabilitySet.add(capabilityKey);
-      options.set(providerKind, capabilitySet);
-    };
-    for (const provider of settingsSummary?.providers ?? []) {
-      for (const capability of provider.capabilities ?? []) {
-        addOption(provider.providerKind, capability.capabilityKey);
-      }
-    }
-    for (const taskKind of settingsSummary?.taskKinds ?? []) {
-      addOption(taskKind.providerKind, taskKind.capabilityKey);
-    }
-    return new Map(
-      Array.from(options.entries()).map(([providerKind, capabilities]) => [
-        providerKind,
-        Array.from(capabilities).sort()
-      ])
-    );
-  }, [settingsSummary]);
-  const implementedTaskKindKeys = useMemo(
-    () =>
-      new Set(
-        (settingsSummary?.aiTasks ?? [])
-          .filter((task) => task.hookImplemented)
-          .map((task) => task.taskKind)
-      ),
-    [settingsSummary]
-  );
   const memoExpansionTask = useMemo(
     () => (settingsSummary?.aiTasks ?? []).find((task) => task.taskKey === "memo-expansion") ?? null,
     [settingsSummary]
@@ -2140,18 +2102,17 @@ export function App() {
           ])
         )
       );
-      setTaskKindDrafts(
+      setProviderDrafts(
         Object.fromEntries(
-          normalized.taskKinds.map((taskKind) => [
-            taskKind.id,
+          normalized.providers.map((provider) => [
+            provider.id,
             {
-              displayName: taskKind.displayName,
-              description: taskKind.description ?? "",
-              providerKind: taskKind.providerKind,
-              capabilityKey: taskKind.capabilityKey,
-              promptFieldsEnabled: taskKind.promptFieldsEnabled,
-              enabled: taskKind.enabled,
-              active: taskKind.active
+              displayName: provider.displayName ?? provider.providerName,
+              endpoint: provider.endpoint ?? "",
+              modelName: provider.modelName ?? "",
+              requiredSecretEnv: provider.requiredSecretEnv ?? "",
+              externalSendEnabled: provider.externalSendEnabled === true,
+              enabled: provider.enabled
             }
           ])
         )
@@ -2161,8 +2122,12 @@ export function App() {
           normalized.aiTasks.map((task) => [
             task.id,
             {
+              displayName: task.displayName,
+              description: task.description ?? "",
+              hookKey: task.hookKey,
               providerConfigId: task.selectedProviderId ?? "",
               modelName: task.selectedModelName ?? "",
+              promptsEnabled: task.prompt !== null,
               enabled: task.routeEnabled
             }
           ])
@@ -3049,6 +3014,99 @@ export function App() {
     }
   }
 
+  function updateProviderDraft<Field extends keyof ProviderDraft>(
+    providerId: string,
+    field: Field,
+    value: ProviderDraft[Field]
+  ) {
+    setProviderDrafts((current) => ({
+      ...current,
+      [providerId]: {
+        ...(current[providerId] ?? {
+          displayName: "",
+          endpoint: "",
+          modelName: "",
+          requiredSecretEnv: "",
+          externalSendEnabled: false,
+          enabled: false
+        }),
+        [field]: value
+      }
+    }));
+  }
+
+  function updateNewProviderDraft<Field extends keyof NewProviderDraft>(
+    field: Field,
+    value: NewProviderDraft[Field]
+  ) {
+    setNewProviderDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function createProvider() {
+    if (accessToken === null) {
+      return;
+    }
+    if (newProviderDraft.displayName.trim() === "" || newProviderDraft.providerKind.trim() === "") {
+      setStatusMessage("Provider name and kind are required.");
+      return;
+    }
+    setProviderCreateInFlight(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/providers", {
+        method: "POST",
+        body: JSON.stringify({
+          providerKind: newProviderDraft.providerKind,
+          displayName: newProviderDraft.displayName,
+          endpoint: newProviderDraft.endpoint,
+          modelName: newProviderDraft.modelName,
+          requiredSecretEnv: newProviderDraft.requiredSecretEnv,
+          externalSendEnabled: newProviderDraft.externalSendEnabled,
+          enabled: newProviderDraft.enabled
+        })
+      });
+      setNewProviderDraft(defaultNewProviderDraft);
+      await loadSettings(accessToken);
+      setStatusMessage("Provider added.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to add provider.");
+    } finally {
+      setProviderCreateInFlight(false);
+    }
+  }
+
+  async function saveProvider(providerId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    const draft = providerDrafts[providerId];
+    if (draft === undefined || draft.displayName.trim() === "") {
+      setStatusMessage("Provider name is required.");
+      return;
+    }
+    setProviderIdInFlight(providerId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/providers/${encodeURIComponent(providerId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          displayName: draft.displayName,
+          endpoint: draft.endpoint,
+          modelName: draft.modelName,
+          requiredSecretEnv: draft.requiredSecretEnv,
+          externalSendEnabled: draft.externalSendEnabled,
+          enabled: draft.enabled
+        })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Provider saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save provider.");
+    } finally {
+      setProviderIdInFlight(null);
+    }
+  }
+
   function updateAiTaskRouteDraft<Field extends keyof AiTaskRouteDraft>(
     taskId: string,
     field: Field,
@@ -3057,155 +3115,22 @@ export function App() {
     setAiTaskRouteDrafts((current) => ({
       ...current,
       [taskId]: {
-        ...(current[taskId] ?? { providerConfigId: "", modelName: "", enabled: true }),
-        [field]: value
-      }
-    }));
-  }
-
-  function updateTaskKindDraft<Field extends keyof TaskKindDraft>(
-    taskKindId: string,
-    field: Field,
-    value: TaskKindDraft[Field]
-  ) {
-    setTaskKindDrafts((current) => ({
-      ...current,
-      [taskKindId]: {
-        ...(current[taskKindId] ?? {
+        ...(current[taskId] ?? {
           displayName: "",
           description: "",
-          providerKind: "llm",
-          capabilityKey: "structured-generation",
-          promptFieldsEnabled: false,
-          enabled: true,
-          active: true
+          hookKey: "",
+          providerConfigId: "",
+          modelName: "",
+          promptsEnabled: false,
+          enabled: false
         }),
         [field]: value
       }
     }));
   }
 
-  function updateNewTaskKindDraft<Field extends keyof NewTaskKindDraft>(
-    field: Field,
-    value: NewTaskKindDraft[Field]
-  ) {
-    setNewTaskKindDraft((current) => ({ ...current, [field]: value }));
-  }
-
-  function taskKindCanBeEnabled(kindKey: string): boolean {
-    return implementedTaskKindKeys.has(kindKey);
-  }
-
-  function updateNewTaskKindProviderKind(providerKind: string) {
-    const capabilities = capabilityOptionsByProviderKind.get(providerKind) ?? [];
-    setNewTaskKindDraft((current) => ({
-      ...current,
-      providerKind,
-      capabilityKey: capabilities.includes(current.capabilityKey) ? current.capabilityKey : (capabilities[0] ?? "")
-    }));
-  }
-
-  function updateTaskKindProviderKind(taskKindId: string, providerKind: string) {
-    const capabilities = capabilityOptionsByProviderKind.get(providerKind) ?? [];
-    setTaskKindDrafts((current) => {
-      const existing = current[taskKindId] ?? {
-        displayName: "",
-        description: "",
-        providerKind: "llm",
-        capabilityKey: "structured-generation",
-        promptFieldsEnabled: false,
-        enabled: false,
-        active: true
-      };
-      return {
-        ...current,
-        [taskKindId]: {
-          ...existing,
-          providerKind,
-          capabilityKey: capabilities.includes(existing.capabilityKey)
-            ? existing.capabilityKey
-            : (capabilities[0] ?? "")
-        }
-      };
-    });
-  }
-
   function updateNewAiTaskDraft<Field extends keyof NewAiTaskDraft>(field: Field, value: NewAiTaskDraft[Field]) {
     setNewAiTaskDraft((current) => ({ ...current, [field]: value }));
-  }
-
-  async function createTaskKind() {
-    if (accessToken === null) {
-      return;
-    }
-    if (
-      newTaskKindDraft.displayName.trim() === "" ||
-      newTaskKindDraft.providerKind.trim() === "" ||
-      newTaskKindDraft.capabilityKey.trim() === ""
-    ) {
-      setStatusMessage("Task kind name, provider kind, and capability key are required.");
-      return;
-    }
-    setTaskKindCreateInFlight(true);
-    setStatusMessage(null);
-    try {
-      await authedJson(accessToken, "/api/settings/task-kinds", {
-        method: "POST",
-        body: JSON.stringify({
-          displayName: newTaskKindDraft.displayName,
-          description: newTaskKindDraft.description,
-          providerKind: newTaskKindDraft.providerKind,
-          capabilityKey: newTaskKindDraft.capabilityKey,
-          promptFieldsEnabled: newTaskKindDraft.promptFieldsEnabled,
-          enabled: newTaskKindDraft.enabled && taskKindCanBeEnabled(deriveTaskKeyPreview(newTaskKindDraft.displayName))
-        })
-      });
-      setNewTaskKindDraft(defaultNewTaskKindDraft);
-      await loadSettings(accessToken);
-      setStatusMessage("Task kind added.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to add task kind.");
-    } finally {
-      setTaskKindCreateInFlight(false);
-    }
-  }
-
-  async function saveTaskKind(taskKindId: string) {
-    if (accessToken === null) {
-      return;
-    }
-    const draft = taskKindDrafts[taskKindId];
-    if (draft === undefined) {
-      return;
-    }
-    const taskKind = settingsSummary?.taskKinds.find((candidate) => candidate.id === taskKindId);
-    const enabled = draft.enabled && taskKindCanBeEnabled(taskKind?.kindKey ?? "");
-    if (draft.displayName.trim() === "" || draft.providerKind.trim() === "" || draft.capabilityKey.trim() === "") {
-      setStatusMessage("Task kind name, provider kind, and capability key are required.");
-      return;
-    }
-    setTaskKindIdInFlight(taskKindId);
-    setStatusMessage(null);
-    try {
-      await authedJson(accessToken, `/api/settings/task-kinds/${encodeURIComponent(taskKindId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          displayName: draft.displayName,
-          description: draft.description,
-          providerKind: draft.providerKind,
-          capabilityKey: draft.capabilityKey,
-          promptFieldsEnabled: draft.promptFieldsEnabled,
-          enabled,
-          active: draft.active
-        })
-      });
-      await loadSettings(accessToken);
-      setStatusMessage("Task kind saved.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to save task kind.");
-    } finally {
-      setTaskKindIdInFlight(null);
-    }
   }
 
   async function createAiTaskDefinition() {
@@ -3213,7 +3138,7 @@ export function App() {
       return;
     }
     if (newAiTaskDraft.displayName.trim() === "" || newAiTaskDraft.hookKey.trim() === "") {
-      setStatusMessage("Display name and hook key are required.");
+      setStatusMessage("Task name and hook key are required.");
       return;
     }
     setAiTaskCreateInFlight(true);
@@ -3225,14 +3150,17 @@ export function App() {
           displayName: newAiTaskDraft.displayName,
           description: newAiTaskDraft.description,
           hookKey: newAiTaskDraft.hookKey,
-          taskKind: newAiTaskDraft.taskKind
+          providerConfigId: newAiTaskDraft.providerConfigId === "" ? null : newAiTaskDraft.providerConfigId,
+          modelName: newAiTaskDraft.modelName,
+          promptsEnabled: newAiTaskDraft.promptsEnabled,
+          enabled: newAiTaskDraft.enabled
         })
       });
       setNewAiTaskDraft(defaultNewAiTaskDraft);
       await loadSettings(accessToken);
-      setStatusMessage("AI task added as not implemented until app logic is registered.");
+      setStatusMessage("Task added.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to add AI task.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to add task.");
     } finally {
       setAiTaskCreateInFlight(false);
     }
@@ -3249,18 +3177,22 @@ export function App() {
     setAiTaskIdInFlight(taskId);
     setStatusMessage(null);
     try {
-      await authedJson(accessToken, `/api/settings/ai-tasks/${encodeURIComponent(taskId)}/route`, {
+      await authedJson(accessToken, `/api/settings/ai-tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         body: JSON.stringify({
+          displayName: draft.displayName,
+          description: draft.description,
+          hookKey: draft.hookKey,
           providerConfigId: draft.providerConfigId === "" ? null : draft.providerConfigId,
           modelName: draft.modelName,
+          promptsEnabled: draft.promptsEnabled,
           enabled: draft.enabled
         })
       });
       await loadSettings(accessToken);
-      setStatusMessage("AI task route saved. Relaunch from AppLauncher if runtime options changed.");
+      setStatusMessage("Task saved. Relaunch from AppLauncher if runtime options changed.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to save AI task route.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save task.");
     } finally {
       setAiTaskIdInFlight(null);
     }
@@ -3587,8 +3519,8 @@ export function App() {
     setPromptIdInFlight(prompt.id);
     setStatusMessage(null);
     try {
-      await authedJson(accessToken, `/api/settings/prompts/${encodeURIComponent(prompt.id)}/versions`, {
-        method: "POST",
+      await authedJson(accessToken, `/api/settings/prompts/${encodeURIComponent(prompt.id)}/current`, {
+        method: "PATCH",
         body: JSON.stringify({
           body: draft.freeformText,
           freeformText: draft.freeformText,
@@ -3599,7 +3531,7 @@ export function App() {
         })
       });
       await loadSettings(accessToken);
-      setStatusMessage("Prompt version saved.");
+      setStatusMessage("Prompt saved.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to save prompt version.");
     } finally {
@@ -5545,8 +5477,108 @@ export function App() {
                       </p>
                     </div>
                   </article>
+                  <article className="settings-row provider-task-row">
+                    <div>
+                      <div className="batch-title">
+                        <strong>Add provider</strong>
+                        <span>Key: {deriveTaskKeyPreview(newProviderDraft.displayName)}</span>
+                      </div>
+                      <div className="provider-route-controls">
+                        <label>
+                          <span>Provider Name</span>
+                          <input
+                            type="text"
+                            value={newProviderDraft.displayName}
+                            disabled={providerCreateInFlight}
+                            onChange={(event) => updateNewProviderDraft("displayName", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Provider Kind</span>
+                          <select
+                            value={newProviderDraft.providerKind}
+                            disabled={providerCreateInFlight}
+                            onChange={(event) => updateNewProviderDraft("providerKind", event.currentTarget.value)}
+                          >
+                            {providerKindSelectOptions.map((providerKind) => (
+                              <option value={providerKind} key={providerKind}>
+                                {providerKind}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Endpoint/base URL</span>
+                          <input
+                            type="text"
+                            value={newProviderDraft.endpoint}
+                            disabled={providerCreateInFlight}
+                            onChange={(event) => updateNewProviderDraft("endpoint", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Model ID/name</span>
+                          <input
+                            type="text"
+                            value={newProviderDraft.modelName}
+                            disabled={providerCreateInFlight}
+                            onChange={(event) => updateNewProviderDraft("modelName", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Required secret env</span>
+                          <input
+                            type="text"
+                            value={newProviderDraft.requiredSecretEnv}
+                            disabled={providerCreateInFlight}
+                            onChange={(event) =>
+                              updateNewProviderDraft("requiredSecretEnv", event.currentTarget.value)
+                            }
+                          />
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={newProviderDraft.externalSendEnabled}
+                            disabled={providerCreateInFlight}
+                            onChange={(event) =>
+                              updateNewProviderDraft("externalSendEnabled", event.currentTarget.checked)
+                            }
+                          />
+                          External send
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={newProviderDraft.enabled}
+                            disabled={providerCreateInFlight}
+                            onChange={(event) => updateNewProviderDraft("enabled", event.currentTarget.checked)}
+                          />
+                          Enabled
+                        </label>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={providerCreateInFlight}
+                          onClick={() => void createProvider()}
+                        >
+                          {providerCreateInFlight ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
+                          Add provider
+                        </button>
+                      </div>
+                    </div>
+                  </article>
                   <div className="settings-list">
-                    {settingsSummary.providers.map((provider) => (
+                    {settingsSummary.providers.map((provider) => {
+                      const draft = providerDrafts[provider.id] ?? {
+                        displayName: provider.displayName ?? provider.providerName,
+                        endpoint: provider.endpoint ?? "",
+                        modelName: provider.modelName ?? "",
+                        requiredSecretEnv: provider.requiredSecretEnv ?? "",
+                        externalSendEnabled: provider.externalSendEnabled === true,
+                        enabled: provider.enabled
+                      };
+                      return (
                       <article className="settings-row" key={provider.id}>
                         <div>
                           <div className="batch-title">
@@ -5554,24 +5586,12 @@ export function App() {
                             <span>{provider.enabled ? "Enabled" : "Disabled"}</span>
                           </div>
                           <p>
-                            Adapter {provider.adapterKey ?? provider.providerName}; model{" "}
-                            {provider.modelName ?? provider.runtimeModelName}; endpoint{" "}
-                            {provider.endpointConfigured ? "configured" : "not configured"}; external send{" "}
-                            {provider.externalSendEnabled ? "allowed" : "disabled"}
+                            Provider Key {provider.providerName}; adapter {provider.adapterKey ?? provider.providerName};
+                            runtime model {provider.runtimeModelName}
                           </p>
                           <p>
                             Secret {provider.requiredSecretEnv ?? "not required"}{" "}
                             {provider.secretConfigured ? "configured" : "not configured"}; health {provider.healthStatus}
-                          </p>
-                          <p>
-                            Capabilities{" "}
-                            {(provider.capabilities ?? []).length === 0
-                              ? "none"
-                              : (provider.capabilities ?? [])
-                                  .map((capability) =>
-                                    `${capability.capabilityKey}${capability.enabled ? "" : " disabled"}`
-                                  )
-                                  .join(", ")}
                           </p>
                           {provider.runtimeConfiguration === null ? null : (
                             <p>
@@ -5580,18 +5600,96 @@ export function App() {
                               timeout {provider.runtimeConfiguration.timeoutMs}ms
                             </p>
                           )}
+                          <div className="provider-route-controls">
+                            <label>
+                              <span>Provider Name</span>
+                              <input
+                                type="text"
+                                value={draft.displayName}
+                                disabled={providerIdInFlight === provider.id}
+                                onChange={(event) =>
+                                  updateProviderDraft(provider.id, "displayName", event.currentTarget.value)
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span>Provider Kind</span>
+                              <input type="text" value={provider.providerKind} readOnly />
+                            </label>
+                            <label>
+                              <span>Endpoint/base URL</span>
+                              <input
+                                type="text"
+                                value={draft.endpoint}
+                                disabled={providerIdInFlight === provider.id}
+                                onChange={(event) =>
+                                  updateProviderDraft(provider.id, "endpoint", event.currentTarget.value)
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span>Model ID/name</span>
+                              <input
+                                type="text"
+                                value={draft.modelName}
+                                disabled={providerIdInFlight === provider.id}
+                                onChange={(event) =>
+                                  updateProviderDraft(provider.id, "modelName", event.currentTarget.value)
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span>Required secret env</span>
+                              <input
+                                type="text"
+                                value={draft.requiredSecretEnv}
+                                disabled={providerIdInFlight === provider.id}
+                                onChange={(event) =>
+                                  updateProviderDraft(provider.id, "requiredSecretEnv", event.currentTarget.value)
+                                }
+                              />
+                            </label>
+                          </div>
                         </div>
                         <label className="toggle-row">
                           <input
                             type="checkbox"
-                            checked={provider.enabled}
-                            disabled={settingsLoading}
-                            onChange={(event) => void toggleProvider(provider.id, event.currentTarget.checked)}
+                            checked={draft.externalSendEnabled}
+                            disabled={providerIdInFlight === provider.id}
+                            onChange={(event) =>
+                              updateProviderDraft(provider.id, "externalSendEnabled", event.currentTarget.checked)
+                            }
                           />
-                          Enabled
+                          External send
                         </label>
+                        <div className="settings-table-actions">
+                          <label className="toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={draft.enabled}
+                              disabled={providerIdInFlight === provider.id}
+                              onChange={(event) =>
+                                updateProviderDraft(provider.id, "enabled", event.currentTarget.checked)
+                              }
+                            />
+                            Enabled
+                          </label>
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            disabled={providerIdInFlight === provider.id}
+                            onClick={() => void saveProvider(provider.id)}
+                          >
+                            {providerIdInFlight === provider.id ? (
+                              <RefreshCcw className="spin" size={18} />
+                            ) : (
+                              <Save size={18} />
+                            )}
+                            Save
+                          </button>
+                        </div>
                       </article>
-                    ))}
+                    );})}
                   </div>
                 </section>
               ) : activeSettingsSection === "tasks" ? (
@@ -5599,221 +5697,9 @@ export function App() {
                   <div className="settings-row-header">
                     <div className="section-title">
                       <Settings size={18} />
-                      <h3>Task kinds</h3>
+                      <h3>Tasks</h3>
                     </div>
-                    <span className="detail-count">{settingsSummary.taskKinds.length} configured</span>
-                  </div>
-                  <article className="settings-row provider-task-row">
-                    <div>
-                      <div className="batch-title">
-                        <strong>Add task kind</strong>
-                        <span>Key: {deriveTaskKeyPreview(newTaskKindDraft.displayName)}</span>
-                      </div>
-                      <div className="task-kind-controls">
-                        <label>
-                          <span>Display name</span>
-                          <input
-                            type="text"
-                            value={newTaskKindDraft.displayName}
-                            disabled={taskKindCreateInFlight}
-                            onChange={(event) => updateNewTaskKindDraft("displayName", event.currentTarget.value)}
-                          />
-                        </label>
-                        <label>
-                          <span>Provider kind</span>
-                          <select
-                            value={newTaskKindDraft.providerKind}
-                            disabled={taskKindCreateInFlight}
-                            onChange={(event) => updateNewTaskKindProviderKind(event.currentTarget.value)}
-                          >
-                            {providerKindOptions.map((providerKind) => (
-                              <option value={providerKind} key={providerKind}>
-                                {providerKind}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Capability key</span>
-                          <select
-                            value={newTaskKindDraft.capabilityKey}
-                            disabled={taskKindCreateInFlight}
-                            onChange={(event) => updateNewTaskKindDraft("capabilityKey", event.currentTarget.value)}
-                          >
-                            {(capabilityOptionsByProviderKind.get(newTaskKindDraft.providerKind) ?? []).map(
-                              (capabilityKey) => (
-                                <option value={capabilityKey} key={capabilityKey}>
-                                  {capabilityKey}
-                                </option>
-                              )
-                            )}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Description</span>
-                          <input
-                            type="text"
-                            value={newTaskKindDraft.description}
-                            disabled={taskKindCreateInFlight}
-                            onChange={(event) => updateNewTaskKindDraft("description", event.currentTarget.value)}
-                          />
-                        </label>
-                        <label className="toggle-row">
-                          <input
-                            type="checkbox"
-                            checked={newTaskKindDraft.promptFieldsEnabled}
-                            disabled={taskKindCreateInFlight}
-                            onChange={(event) =>
-                              updateNewTaskKindDraft("promptFieldsEnabled", event.currentTarget.checked)
-                            }
-                          />
-                          Prompts
-                        </label>
-                        <label className="toggle-row">
-                          <input
-                            type="checkbox"
-                            checked={
-                              newTaskKindDraft.enabled &&
-                              taskKindCanBeEnabled(deriveTaskKeyPreview(newTaskKindDraft.displayName))
-                            }
-                            disabled={
-                              taskKindCreateInFlight ||
-                              !taskKindCanBeEnabled(deriveTaskKeyPreview(newTaskKindDraft.displayName))
-                            }
-                            onChange={(event) => updateNewTaskKindDraft("enabled", event.currentTarget.checked)}
-                          />
-                          Enabled
-                        </label>
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          disabled={taskKindCreateInFlight}
-                          onClick={() => void createTaskKind()}
-                        >
-                          {taskKindCreateInFlight ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
-                          Add kind
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-
-                  <div className="settings-table registry-table task-kind-table">
-                    <div className="settings-table-header">
-                      <span>Kind</span>
-                      <span>Provider</span>
-                      <span>Capability</span>
-                      <span>Prompts</span>
-                      <span>Status</span>
-                    </div>
-                    {settingsSummary.taskKinds.map((taskKind) => {
-                      const draft = taskKindDrafts[taskKind.id] ?? {
-                        displayName: taskKind.displayName,
-                        description: taskKind.description ?? "",
-                        providerKind: taskKind.providerKind,
-                        capabilityKey: taskKind.capabilityKey,
-                        promptFieldsEnabled: taskKind.promptFieldsEnabled,
-                        enabled: taskKind.enabled,
-                        active: taskKind.active
-                      };
-                      const canEnableTaskKind = taskKindCanBeEnabled(taskKind.kindKey);
-                      const capabilityOptions = capabilityOptionsByProviderKind.get(draft.providerKind) ?? [];
-                      return (
-                        <div className="settings-table-row" key={taskKind.id}>
-                          <div className="task-kind-name-cell">
-                            <label>
-                              <span>Kind</span>
-                              <input
-                                type="text"
-                                value={draft.displayName}
-                                disabled={taskKindIdInFlight === taskKind.id}
-                                onChange={(event) =>
-                                  updateTaskKindDraft(taskKind.id, "displayName", event.currentTarget.value)
-                                }
-                              />
-                            </label>
-                            <label>
-                              <span>Description</span>
-                              <input
-                                type="text"
-                                value={draft.description}
-                                disabled={taskKindIdInFlight === taskKind.id}
-                                onChange={(event) =>
-                                  updateTaskKindDraft(taskKind.id, "description", event.currentTarget.value)
-                                }
-                              />
-                            </label>
-                          </div>
-                          <label>
-                            <span>Provider</span>
-                            <select
-                              value={draft.providerKind}
-                              disabled={taskKindIdInFlight === taskKind.id}
-                              onChange={(event) => updateTaskKindProviderKind(taskKind.id, event.currentTarget.value)}
-                            >
-                              {providerKindOptions.map((providerKind) => (
-                                <option value={providerKind} key={providerKind}>
-                                  {providerKind}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            <span>Capability</span>
-                            <select
-                              value={draft.capabilityKey}
-                              disabled={taskKindIdInFlight === taskKind.id}
-                              onChange={(event) =>
-                                updateTaskKindDraft(taskKind.id, "capabilityKey", event.currentTarget.value)
-                              }
-                            >
-                              {capabilityOptions.map((capabilityKey) => (
-                                <option value={capabilityKey} key={capabilityKey}>
-                                  {capabilityKey}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="toggle-row">
-                            <input
-                              type="checkbox"
-                              checked={draft.promptFieldsEnabled}
-                              disabled={taskKindIdInFlight === taskKind.id}
-                              onChange={(event) =>
-                                updateTaskKindDraft(taskKind.id, "promptFieldsEnabled", event.currentTarget.checked)
-                              }
-                            />
-                            Prompts
-                          </label>
-                          <div className="settings-table-actions">
-                            <label className="toggle-row">
-                              <input
-                                type="checkbox"
-                                checked={draft.enabled && draft.active && canEnableTaskKind}
-                                disabled={taskKindIdInFlight === taskKind.id || !canEnableTaskKind}
-                                onChange={(event) => {
-                                  updateTaskKindDraft(taskKind.id, "enabled", event.currentTarget.checked);
-                                  updateTaskKindDraft(taskKind.id, "active", event.currentTarget.checked);
-                                }}
-                              />
-                              Enabled
-                            </label>
-                            <button
-                              className="secondary-button"
-                              type="button"
-                              disabled={taskKindIdInFlight === taskKind.id}
-                              onClick={() => void saveTaskKind(taskKind.id)}
-                            >
-                              {taskKindIdInFlight === taskKind.id ? (
-                                <RefreshCcw className="spin" size={18} />
-                              ) : (
-                                <Save size={18} />
-                              )}
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    <span className="detail-count">{settingsSummary.aiTasks.length} configured</span>
                   </div>
 
                   <article className="settings-row provider-task-row">
@@ -5824,7 +5710,7 @@ export function App() {
                       </div>
                       <div className="provider-route-controls">
                         <label>
-                          <span>Display name</span>
+                          <span>Task Name</span>
                           <input
                             type="text"
                             value={newAiTaskDraft.displayName}
@@ -5839,7 +5725,7 @@ export function App() {
                           />
                         </label>
                         <label>
-                          <span>Hook key</span>
+                          <span>Hook Key</span>
                           <input
                             type="text"
                             list="registered-task-hooks"
@@ -5856,27 +5742,69 @@ export function App() {
                           </datalist>
                         </label>
                         <label>
-                          <span>Task kind</span>
+                          <span>Provider Key</span>
                           <select
-                            value={newAiTaskDraft.taskKind}
+                            value={newAiTaskDraft.providerConfigId}
                             disabled={aiTaskCreateInFlight}
-                            onChange={(event) => updateNewAiTaskDraft("taskKind", event.currentTarget.value)}
+                            onChange={(event) => {
+                              const provider = settingsSummary.providers.find(
+                                (candidate) => candidate.id === event.currentTarget.value
+                              );
+                              updateNewAiTaskDraft("providerConfigId", event.currentTarget.value);
+                              updateNewAiTaskDraft("modelName", provider?.modelName ?? "");
+                            }}
                           >
-                            {activeTaskKinds.map((taskKind) => (
-                              <option value={taskKind.kindKey} key={taskKind.id}>
-                                {taskKind.displayName}{taskKind.enabled ? "" : " (disabled)"}
+                            <option value="">No provider</option>
+                            {settingsSummary.providers.map((provider) => (
+                              <option value={provider.id} key={provider.id}>
+                                {provider.providerName}
                               </option>
                             ))}
                           </select>
                         </label>
                         <label>
-                          <span>Description</span>
+                          <span>Provider Kind</span>
+                          <input
+                            type="text"
+                            value={
+                              settingsSummary.providers.find(
+                                (provider) => provider.id === newAiTaskDraft.providerConfigId
+                              )?.providerKind ?? ""
+                            }
+                            readOnly
+                          />
+                        </label>
+                        <label>
+                          <span>Task Description</span>
                           <input
                             type="text"
                             value={newAiTaskDraft.description}
                             disabled={aiTaskCreateInFlight}
                             onChange={(event) => updateNewAiTaskDraft("description", event.currentTarget.value)}
                           />
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={newAiTaskDraft.promptsEnabled}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) => updateNewAiTaskDraft("promptsEnabled", event.currentTarget.checked)}
+                          />
+                          Prompts
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={newAiTaskDraft.enabled}
+                            disabled={
+                              aiTaskCreateInFlight ||
+                              !registeredTaskHooks.some(
+                                (hook) => hook.hookKey === newAiTaskDraft.hookKey && hook.implemented
+                              )
+                            }
+                            onChange={(event) => updateNewAiTaskDraft("enabled", event.currentTarget.checked)}
+                          />
+                          Enabled
                         </label>
                         <button
                           className="secondary-button"
@@ -5894,18 +5822,16 @@ export function App() {
                   <div className="settings-list">
                     {settingsSummary.aiTasks.map((task) => {
                       const draft = aiTaskRouteDrafts[task.id] ?? {
+                        displayName: task.displayName,
+                        description: task.description ?? "",
+                        hookKey: task.hookKey,
                         providerConfigId: task.selectedProviderId ?? "",
                         modelName: task.selectedModelName ?? "",
+                        promptsEnabled: task.prompt !== null,
                         enabled: task.routeEnabled
                       };
-                      const compatibleProviders = settingsSummary.providers.filter(
-                        (provider) =>
-                          provider.providerKind === task.taskKindProviderKind &&
-                          (task.taskKindCapabilityKey === null ||
-                            (provider.capabilities ?? []).some(
-                              (capability) =>
-                                capability.capabilityKey === task.taskKindCapabilityKey && capability.enabled
-                            ))
+                      const selectedProvider = settingsSummary.providers.find(
+                        (provider) => provider.id === draft.providerConfigId
                       );
                       const prompt = task.prompt;
                       const promptDraft =
@@ -5935,24 +5861,66 @@ export function App() {
                             {task.unavailableReason === null ? null : <p>{task.unavailableReason}</p>}
                             <div className="provider-route-controls">
                               <label>
-                                <span>Provider</span>
+                                <span>Task Name</span>
+                                <input
+                                  type="text"
+                                  value={draft.displayName}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(task.id, "displayName", event.currentTarget.value)
+                                  }
+                                />
+                              </label>
+                              <label>
+                                <span>Hook Key</span>
+                                <input
+                                  type="text"
+                                  list="registered-task-hooks"
+                                  value={draft.hookKey}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(task.id, "hookKey", event.currentTarget.value)
+                                  }
+                                />
+                              </label>
+                              <label>
+                                <span>Provider Key</span>
                                 <select
                                   value={draft.providerConfigId}
                                   disabled={aiTaskIdInFlight === task.id}
-                                  onChange={(event) =>
-                                    updateAiTaskRouteDraft(task.id, "providerConfigId", event.currentTarget.value)
-                                  }
+                                  onChange={(event) => {
+                                    const provider = settingsSummary.providers.find(
+                                      (candidate) => candidate.id === event.currentTarget.value
+                                    );
+                                    updateAiTaskRouteDraft(task.id, "providerConfigId", event.currentTarget.value);
+                                    updateAiTaskRouteDraft(task.id, "modelName", provider?.modelName ?? "");
+                                  }}
                                 >
                                   <option value="">No provider</option>
-                                  {compatibleProviders.map((provider) => (
+                                  {settingsSummary.providers.map((provider) => (
                                     <option key={provider.id} value={provider.id}>
-                                      {provider.displayName ?? provider.providerName}
+                                      {provider.providerName}
                                     </option>
                                   ))}
                                 </select>
                               </label>
                               <label>
-                                <span>Model</span>
+                                <span>Provider Kind</span>
+                                <input type="text" value={selectedProvider?.providerKind ?? ""} readOnly />
+                              </label>
+                              <label>
+                                <span>Task Description</span>
+                                <input
+                                  type="text"
+                                  value={draft.description}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(task.id, "description", event.currentTarget.value)
+                                  }
+                                />
+                              </label>
+                              <label>
+                                <span>Model ID/name</span>
                                 <input
                                   type="text"
                                   value={draft.modelName}
@@ -5965,8 +5933,24 @@ export function App() {
                               <label className="toggle-row">
                                 <input
                                   type="checkbox"
+                                  checked={draft.promptsEnabled}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(task.id, "promptsEnabled", event.currentTarget.checked)
+                                  }
+                                />
+                                Prompts
+                              </label>
+                              <label className="toggle-row">
+                                <input
+                                  type="checkbox"
                                   checked={draft.enabled}
-                                  disabled={aiTaskIdInFlight === task.id || !task.hookImplemented}
+                                  disabled={
+                                    aiTaskIdInFlight === task.id ||
+                                    !registeredTaskHooks.some(
+                                      (hook) => hook.hookKey === draft.hookKey && hook.implemented
+                                    )
+                                  }
                                   onChange={(event) =>
                                     updateAiTaskRouteDraft(task.id, "enabled", event.currentTarget.checked)
                                   }
@@ -5980,10 +5964,10 @@ export function App() {
                                 onClick={() => void saveAiTaskRoute(task.id)}
                               >
                                 {aiTaskIdInFlight === task.id ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
-                                Save route
+                                Save task
                               </button>
                             </div>
-                            {prompt === null || promptDraft === null ? null : (
+                            {!draft.promptsEnabled || prompt === null || promptDraft === null ? null : (
                               <div className="prompt-editor-row task-prompt-editor">
                                 <div className="prompt-editor-header">
                                   <div>
@@ -6000,7 +5984,7 @@ export function App() {
                                     onClick={() => void savePromptVersion(prompt)}
                                   >
                                     <Save size={18} />
-                                    Save version
+                                    Save prompt
                                   </button>
                                 </div>
                                 <div className="field-group">

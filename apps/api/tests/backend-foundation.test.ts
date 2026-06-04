@@ -67,7 +67,12 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   assert.equal(summary.taskKinds.find((kind) => kind.kindKey === "llm")?.promptFieldsEnabled, true);
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.prompt?.name, "work_item_expansion");
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.runtimeReady, true);
-  assert.deepEqual(summary.registeredTaskHooks.map((hook) => hook.hookKey), ["memo-expansion"]);
+  assert.deepEqual(summary.registeredTaskHooks.map((hook) => hook.hookKey), [
+    "memo-expansion",
+    "revise-memo",
+    "suggest-new-memos",
+    "suggest-tags"
+  ]);
 });
 
 test("AI task creation derives task key and reports duplicate derived key conflicts", async () => {
@@ -1553,8 +1558,8 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(fileTypeDelete.response.status, 200);
     assert.equal(fileTypeDelete.body.deleted, true);
 
-    const promptVersion = await authedJson(baseUrl, "/api/settings/prompts/prompt-1/versions", {
-      method: "POST",
+    const promptVersion = await authedJson(baseUrl, "/api/settings/prompts/prompt-1/current", {
+      method: "PATCH",
       body: JSON.stringify({
         freeformText: "Expand with implementation detail.",
         includeProjectSynopsis: true,
@@ -1564,7 +1569,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
       })
     });
     assert.equal(promptVersion.response.status, 200);
-    assert.equal(promptVersion.body.prompt.activeVersion, 2);
+    assert.equal(promptVersion.body.prompt.activeVersion, 1);
     assert.equal(promptVersion.body.prompt.contextConfig.includeMemoMetadata, false);
 
     const auditEvents = await authedJson(baseUrl, "/api/audit-events?event_name=provider_config.updated");
@@ -1802,13 +1807,22 @@ function stubServices(): AppServices {
       updateProvider: async () => {
         throw new Error("not used");
       },
+      createProvider: async () => {
+        throw new Error("not used");
+      },
       createAiTaskDefinition: async () => {
+        throw new Error("not used");
+      },
+      updateAiTaskDefinition: async () => {
         throw new Error("not used");
       },
       updateAiTaskRoute: async () => {
         throw new Error("not used");
       },
       createPromptVersion: async () => {
+        throw new Error("not used");
+      },
+      updateCurrentPrompt: async () => {
         throw new Error("not used");
       }
     } as unknown as AppServices["settings"],
@@ -2409,6 +2423,23 @@ function captureRouteServices(): AppServices {
           updatedAt: "2026-05-29T00:06:00.000Z"
         }
       }),
+      createProvider: async () => ({
+        provider: {
+          id: "provider-new",
+          providerKind: "llm",
+          providerName: "openai-compatible",
+          displayName: "OpenAI-compatible",
+          enabled: false
+        }
+      }),
+      updateAiTaskDefinition: async () => ({
+        aiTask: {
+          id: "task-1",
+          taskKey: "memo-expansion",
+          displayName: "Memo expansion",
+          runtimeReady: true
+        }
+      }),
       updateAiTaskRoute: async () => ({
         aiTask: {
           id: "task-1",
@@ -2432,6 +2463,25 @@ function captureRouteServices(): AppServices {
       createPromptVersion: async (_promptDefinitionId: string, body: unknown) => {
         const record = body as typeof promptContextConfig;
         promptActiveVersion = 2;
+        promptContextConfig = {
+          freeformText: record.freeformText,
+          includeProjectSynopsis: record.includeProjectSynopsis,
+          includeMemoMetadata: record.includeMemoMetadata,
+          includeMemoTranscriptText: record.includeMemoTranscriptText
+        };
+        return {
+          prompt: {
+            id: "prompt-1",
+            name: "work_item_expansion",
+            activeVersion: promptActiveVersion,
+            body: promptContextConfig.freeformText,
+            outputSchema: {},
+            contextConfig: promptContextConfig
+          }
+        };
+      },
+      updateCurrentPrompt: async (_promptDefinitionId: string, body: unknown) => {
+        const record = body as typeof promptContextConfig;
         promptContextConfig = {
           freeformText: record.freeformText,
           includeProjectSynopsis: record.includeProjectSynopsis,
@@ -2865,6 +2915,71 @@ class FakeDatabase implements Database {
       return rows([{ exists }] as unknown as Row[]);
     }
 
+    if (text.includes("insert into provider_configs")) {
+      const row = {
+        id: values[0],
+        provider_kind: values[1],
+        provider_name: values[2],
+        display_name: values[3],
+        adapter_key: values[4],
+        enabled: values[5],
+        endpoint: values[6],
+        model_name: values[7],
+        secret_source: "environment",
+        required_secret_env: values[8],
+        external_send_enabled: values[9],
+        runtime_provider_env: null,
+        runtime_model_env: null,
+        runtime_endpoint_env: null,
+        health_status: "unknown",
+        last_health_check_at: null,
+        created_by: values[10],
+        updated_by: values[10],
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.providers.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("update provider_configs")) {
+      const provider = this.providers.find((row) => row.id === values[0]);
+      if (provider === undefined) {
+        return rows([]);
+      }
+      if (values[1] === true) {
+        provider.display_name = values[2];
+      }
+      if (values[3] !== null) {
+        provider.enabled = values[3];
+      }
+      if (values[4] === true) {
+        provider.endpoint = values[5];
+      }
+      if (values[6] === true) {
+        provider.model_name = values[7];
+      }
+      if (values[8] === true) {
+        provider.required_secret_env = values[9];
+      }
+      if (values[10] !== null) {
+        provider.external_send_enabled = values[10];
+      }
+      provider.updated_by = values[11];
+      provider.updated_at = "2026-05-29T00:01:00.000Z";
+      return rows([provider] as unknown as Row[]);
+    }
+
+    if (text.includes("from provider_configs") && text.includes("where lower(provider_kind)")) {
+      const providerKind = String(values[0]).toLowerCase();
+      const providerName = String(values[1]).toLowerCase();
+      const provider = this.providers.find(
+        (row) =>
+          String(row.provider_kind).toLowerCase() === providerKind &&
+          String(row.provider_name).toLowerCase() === providerName
+      );
+      return rows(provider === undefined ? [] : [provider as Row]);
+    }
+
     if (text.includes("from provider_configs") && text.includes("where id =")) {
       const provider = this.providers.find((row) => row.id === values[0]);
       return rows(provider === undefined ? [] : [provider as Row]);
@@ -2923,6 +3038,16 @@ class FakeDatabase implements Database {
       return rows([]);
     }
 
+    if (text.includes("update prompt_versions")) {
+      const version = this.promptVersions.find((row) => row.id === values[0]);
+      if (version !== undefined) {
+        version.body = values[1];
+        version.output_schema = JSON.parse(String(values[2] ?? "{}")) as Record<string, unknown>;
+        version.context_config = JSON.parse(String(values[3] ?? "{}")) as Record<string, unknown>;
+      }
+      return rows([]);
+    }
+
     if (text.includes("from prompt_definitions") && text.includes("where prompt_definitions.id =")) {
       const definition = this.promptDefinitions.find((row) => row.id === values[0]);
       return rows(definition === undefined ? [] : [buildFakePromptRow(this, definition) as Row]);
@@ -2952,6 +3077,37 @@ class FakeDatabase implements Database {
         updated_by: values[14],
         updated_at: "2026-05-29T00:00:00.000Z"
       });
+      return rows([]);
+    }
+
+    if (text.includes("update ai_task_definitions")) {
+      const definition = this.aiTaskDefinitions.find((row) => row.id === values[0]);
+      if (definition === undefined) {
+        return rows([]);
+      }
+      if (values[1] === true) {
+        definition.display_name = values[2];
+      }
+      if (values[3] === true) {
+        definition.description = values[4];
+      }
+      if (values[5] === true) {
+        definition.hook_key = values[6];
+      }
+      if (values[7] === true) {
+        definition.task_kind = values[8];
+      }
+      if (values[9] === true) {
+        definition.task_kind_id = values[10];
+      }
+      if (values[11] === true) {
+        definition.implemented = values[12];
+      }
+      if (values[13] === true) {
+        definition.prompt_definition_id = values[14];
+      }
+      definition.updated_by = values[15];
+      definition.updated_at = "2026-05-29T00:01:00.000Z";
       return rows([]);
     }
 

@@ -97,10 +97,12 @@ export interface SettingsOperations {
   getSummary(): Promise<unknown>;
   updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  createProvider(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createTaskKind(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTaskKind(taskKindId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createAiTaskDefinition(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateAiTaskDefinition(taskDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateAiTaskRoute(taskDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createMediaType(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateMediaType(mediaTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
@@ -112,6 +114,7 @@ export interface SettingsOperations {
   updateFileType(fileTypeId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   deleteFileType(fileTypeId: string, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createPromptVersion(promptDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateCurrentPrompt(promptDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
 }
 
 export interface TagOperations {

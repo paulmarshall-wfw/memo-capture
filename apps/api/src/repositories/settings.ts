@@ -624,6 +624,75 @@ export class SettingsRepository {
     return result.rows;
   }
 
+  async findProviderByKindAndName(providerKind: string, providerName: string): Promise<ProviderConfigRow | null> {
+    const result = await this.db.query<ProviderConfigRow>(
+      `select id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
+              secret_source, required_secret_env, external_send_enabled, runtime_provider_env, runtime_model_env,
+              runtime_endpoint_env, health_status, last_health_check_at, updated_at
+       from provider_configs
+       where lower(provider_kind) = lower($1)
+         and lower(provider_name) = lower($2)
+       limit 1`,
+      [providerKind, providerName]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async createProvider(input: {
+    providerKind: string;
+    providerName: string;
+    displayName: string;
+    adapterKey: string;
+    enabled: boolean;
+    endpoint: string | null;
+    modelName: string | null;
+    requiredSecretEnv: string | null;
+    externalSendEnabled: boolean;
+    actorUserId: string;
+  }): Promise<ProviderConfigRow> {
+    const result = await this.db.query<ProviderConfigRow>(
+      `insert into provider_configs (
+         id,
+         provider_kind,
+         provider_name,
+         display_name,
+         adapter_key,
+         enabled,
+         endpoint,
+         model_name,
+         secret_source,
+         required_secret_env,
+         external_send_enabled,
+         runtime_provider_env,
+         runtime_model_env,
+         runtime_endpoint_env,
+         health_status,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at
+       )
+       values ($1, $2, $3, $4, $5, $6, $7, $8, 'environment', $9, $10, null, null, null, 'unknown', $11, $11, now(), now())
+       returning id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
+                 secret_source, required_secret_env, external_send_enabled, runtime_provider_env, runtime_model_env,
+                 runtime_endpoint_env, health_status, last_health_check_at, updated_at`,
+      [
+        randomUUID(),
+        input.providerKind,
+        input.providerName,
+        input.displayName,
+        input.adapterKey,
+        input.enabled,
+        nullIfBlank(input.endpoint),
+        nullIfBlank(input.modelName),
+        nullIfBlank(input.requiredSecretEnv),
+        input.externalSendEnabled,
+        input.actorUserId
+      ]
+    );
+    return requiredRow(result.rows[0], "provider create failed");
+  }
+
   async listTaskKinds(): Promise<TaskKindRow[]> {
     const result = await this.db.query<TaskKindRow>(
       `select id, kind_key, display_name, description, provider_kind, capability_key,
@@ -830,6 +899,9 @@ export class SettingsRepository {
     taskKindId: string;
     implemented: boolean;
     promptDefinitionId: string | null;
+    providerConfigId: string | null;
+    routeModelName: string | null;
+    routeEnabled: boolean;
     runtimeOptionId: string;
     runtimeOptionPurpose: string;
     runtimeProviderEnv: string;
@@ -866,8 +938,8 @@ export class SettingsRepository {
     );
     await this.db.query(
       `insert into ai_task_routes (task_definition_id, provider_config_id, model_name, enabled, updated_by, updated_at)
-       values ($1, null, null, false, $2, now())`,
-      [taskId, input.actorUserId]
+       values ($1, $2::uuid, $3::text, $4::boolean, $5, now())`,
+      [taskId, input.providerConfigId, nullIfBlank(input.routeModelName), input.routeEnabled, input.actorUserId]
     );
     const createdTask = await this.findAiTaskRouteById(taskId);
     if (createdTask === null) {
@@ -906,6 +978,52 @@ export class SettingsRepository {
     return this.findAiTaskRouteById(input.taskDefinitionId);
   }
 
+  async updateAiTaskDefinition(input: {
+    taskDefinitionId: string;
+    displayName?: string | undefined;
+    description?: string | null | undefined;
+    hookKey?: string | undefined;
+    taskKind?: string | undefined;
+    taskKindId?: string | undefined;
+    implemented?: boolean | undefined;
+    promptDefinitionId?: string | null | undefined;
+    actorUserId: string;
+  }): Promise<AiTaskRouteRow | null> {
+    await this.db.query(
+      `update ai_task_definitions
+       set
+         display_name = case when $2::boolean then $3::text else display_name end,
+         description = case when $4::boolean then $5::text else description end,
+         hook_key = case when $6::boolean then $7::text else hook_key end,
+         task_kind = case when $8::boolean then $9::text else task_kind end,
+         task_kind_id = case when $10::boolean then $11::uuid else task_kind_id end,
+         implemented = case when $12::boolean then $13::boolean else implemented end,
+         prompt_definition_id = case when $14::boolean then $15::uuid else prompt_definition_id end,
+         updated_by = $16,
+         updated_at = now()
+       where id = $1`,
+      [
+        input.taskDefinitionId,
+        input.displayName !== undefined,
+        input.displayName ?? null,
+        input.description !== undefined,
+        input.description ?? null,
+        input.hookKey !== undefined,
+        input.hookKey ?? null,
+        input.taskKind !== undefined,
+        input.taskKind ?? null,
+        input.taskKindId !== undefined,
+        input.taskKindId ?? null,
+        input.implemented !== undefined,
+        input.implemented ?? null,
+        input.promptDefinitionId !== undefined,
+        input.promptDefinitionId ?? null,
+        input.actorUserId
+      ]
+    );
+    return this.findAiTaskRouteById(input.taskDefinitionId);
+  }
+
   async findAiTaskRouteById(taskDefinitionId: string): Promise<AiTaskRouteRow | null> {
     const result = await this.db.query<AiTaskRouteRow>(
       `${aiTaskRouteSelectSql}
@@ -918,18 +1036,24 @@ export class SettingsRepository {
 
   async updateProvider(input: {
     providerId: string;
+    displayName?: string | undefined;
     enabled?: boolean | undefined;
     endpoint?: string | null | undefined;
     modelName?: string | null | undefined;
+    requiredSecretEnv?: string | null | undefined;
+    externalSendEnabled?: boolean | undefined;
     actorUserId: string;
   }): Promise<ProviderConfigRow | null> {
     const result = await this.db.query<ProviderConfigRow>(
       `update provider_configs
        set
-         enabled = coalesce($2::boolean, enabled),
-         endpoint = case when $3::boolean then $4::text else endpoint end,
-         model_name = case when $5::boolean then $6::text else model_name end,
-         updated_by = $7,
+         display_name = case when $2::boolean then $3::text else display_name end,
+         enabled = coalesce($4::boolean, enabled),
+         endpoint = case when $5::boolean then $6::text else endpoint end,
+         model_name = case when $7::boolean then $8::text else model_name end,
+         required_secret_env = case when $9::boolean then $10::text else required_secret_env end,
+         external_send_enabled = coalesce($11::boolean, external_send_enabled),
+         updated_by = $12,
          updated_at = now()
        where id = $1
        returning id, provider_kind, provider_name, enabled, endpoint, model_name,
@@ -938,11 +1062,16 @@ export class SettingsRepository {
                  health_status, last_health_check_at, updated_at`,
       [
         input.providerId,
+        input.displayName !== undefined,
+        input.displayName ?? null,
         input.enabled ?? null,
         input.endpoint !== undefined,
         nullIfBlank(input.endpoint),
         input.modelName !== undefined,
         nullIfBlank(input.modelName),
+        input.requiredSecretEnv !== undefined,
+        nullIfBlank(input.requiredSecretEnv),
+        input.externalSendEnabled ?? null,
         input.actorUserId
       ]
     );
@@ -1111,6 +1240,35 @@ export class SettingsRepository {
       prompts.find((prompt) => prompt.id === input.promptDefinitionId),
       "prompt version create failed"
     );
+  }
+
+  async updateCurrentPrompt(input: {
+    promptDefinitionId: string;
+    body: string;
+    outputSchema: Record<string, unknown>;
+    contextConfig: Record<string, unknown>;
+    actorUserId: string;
+  }): Promise<PromptDefinitionRow | null> {
+    const prompt = await this.getPromptById(input.promptDefinitionId);
+    if (prompt === null || prompt.active_prompt_version_id === null) {
+      return null;
+    }
+    await this.db.query(
+      `update prompt_versions
+       set
+         body = $2,
+         output_schema = $3::jsonb,
+         context_config = $4::jsonb
+       where id = $1`,
+      [prompt.active_prompt_version_id, input.body, JSON.stringify(input.outputSchema), JSON.stringify(input.contextConfig)]
+    );
+    await this.db.query(
+      `update prompt_definitions
+       set updated_by = $2, updated_at = now()
+       where id = $1`,
+      [input.promptDefinitionId, input.actorUserId]
+    );
+    return this.getPromptById(input.promptDefinitionId);
   }
 }
 

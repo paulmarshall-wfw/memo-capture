@@ -14,7 +14,16 @@ import {
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
 import { normalizePromptContextConfig } from "./llm.js";
 
-const IMPLEMENTED_AI_TASK_HOOKS = new Set(["memo-expansion"]);
+const REGISTERED_AI_TASK_HOOKS = [
+  { hookKey: "memo-expansion", implemented: true },
+  { hookKey: "revise-memo", implemented: false },
+  { hookKey: "suggest-new-memos", implemented: false },
+  { hookKey: "suggest-tags", implemented: false }
+] as const;
+const IMPLEMENTED_AI_TASK_HOOKS: Set<string> = new Set(
+  REGISTERED_AI_TASK_HOOKS.filter((hook) => hook.implemented).map((hook) => hook.hookKey)
+);
+const PROVIDER_KIND_OPTIONS = new Set(["llm", "transcription", "stt", "tts", "ocr", "script"]);
 
 export class SettingsService {
   constructor(
@@ -172,6 +181,38 @@ export class SettingsService {
     });
   }
 
+  async createProvider(body: unknown, actor: AppUserRecord, requestId: string): Promise<Record<string, unknown>> {
+    const input = parseCreateProviderBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findProviderByKindAndName(input.providerKind, input.providerName);
+      if (existing !== null) {
+        throw new HttpError(409, "provider_config_exists", "A provider already exists for the derived provider key.", {
+          providerKind: input.providerKind,
+          providerName: input.providerName
+        });
+      }
+      const provider = await settings.createProvider({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "provider_config.created",
+        actor,
+        subjectType: "provider_config",
+        subjectId: provider.id,
+        requestId,
+        metadata: {
+          providerKind: provider.provider_kind,
+          providerName: provider.provider_name,
+          enabled: provider.enabled,
+          endpointConfigured: provider.endpoint !== null,
+          modelName: provider.model_name
+        },
+        redactionApplied: true
+      });
+      return { provider: serializeProvider(provider, this.config, await settings.listProviderCapabilities()) };
+    });
+  }
+
   async createTaskKind(body: unknown, actor: AppUserRecord, requestId: string): Promise<Record<string, unknown>> {
     const input = parseCreateTaskKindBody(body);
     return this.db.transaction(async (client) => {
@@ -282,6 +323,97 @@ export class SettingsService {
     });
   }
 
+  async updateAiTaskDefinition(
+    taskDefinitionId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseUpdateAiTaskBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const current = await settings.findAiTaskRouteById(taskDefinitionId);
+      if (current === null) {
+        throw new HttpError(404, "not_found", "ai_task_definition was not found.");
+      }
+      const provider =
+        input.providerConfigId === undefined
+          ? current.provider_config_id === null
+            ? null
+            : await settings.findProviderById(current.provider_config_id)
+          : input.providerConfigId === null || input.providerConfigId.trim() === ""
+            ? null
+            : await settings.findProviderById(input.providerConfigId);
+      if (input.providerConfigId !== undefined && input.providerConfigId !== null && provider === null) {
+        throw new HttpError(400, "invalid_request", "providerConfigId must reference a configured provider.");
+      }
+      const hookKey = input.hookKey ?? current.hook_key;
+      const taskKindRow =
+        provider === null
+          ? await settings.findTaskKindByKey(current.task_kind)
+          : await findTaskKindForProvider(settings, provider.provider_kind);
+      if (taskKindRow === null || !taskKindRow.active) {
+        throw new HttpError(400, "invalid_request", "Selected provider kind does not have an active task mapping.");
+      }
+      const promptText =
+        input.initialPromptText ??
+        `Return strict JSON for ${input.displayName ?? current.display_name}. Do not include prose outside JSON.`;
+      const promptsEnabled = input.promptsEnabled ?? current.prompt_definition_id !== null;
+      const promptDefinitionId =
+        promptsEnabled && current.prompt_definition_id === null
+          ? (
+              await settings.createPromptDefinition({
+                name: promptNameForTaskKey(current.task_key),
+                purpose: `Prompt for ${input.displayName ?? current.display_name}.`,
+                body: promptText,
+                outputSchema: {},
+                contextConfig: defaultPromptContextConfig(promptText),
+                actorUserId: actor.id
+              })
+            ).id
+          : promptsEnabled
+            ? current.prompt_definition_id
+            : null;
+      await settings.updateAiTaskDefinition({
+        taskDefinitionId,
+        displayName: input.displayName,
+        description: input.description,
+        hookKey: input.hookKey,
+        taskKind: taskKindRow.kind_key,
+        taskKindId: taskKindRow.id,
+        implemented: IMPLEMENTED_AI_TASK_HOOKS.has(hookKey),
+        promptDefinitionId,
+        actorUserId: actor.id
+      });
+      const refreshed = await settings.findAiTaskRouteById(taskDefinitionId);
+      if (refreshed === null) {
+        throw new HttpError(404, "not_found", "ai_task_definition was not found.");
+      }
+      await validateAiTaskRouteUpdate(settings, refreshed, input, this.config);
+      const task = await settings.updateAiTaskRoute({ taskDefinitionId, ...input, actorUserId: actor.id });
+      if (task === null) {
+        throw new HttpError(404, "not_found", "ai_task_definition was not found.");
+      }
+      await audit.record({
+        eventName: "ai_task_definition.updated",
+        actor,
+        subjectType: "ai_task_definition",
+        subjectId: task.id,
+        requestId,
+        metadata: {
+          taskKey: task.task_key,
+          hookKey: task.hook_key,
+          providerName: task.provider_name,
+          enabled: task.route_enabled,
+          promptsEnabled: task.prompt_definition_id !== null
+        },
+        redactionApplied: true
+      });
+      return { aiTask: serializeAiTaskRoute(task, this.config) };
+    });
+  }
+
   async createAiTaskDefinition(
     body: unknown,
     actor: AppUserRecord,
@@ -303,7 +435,7 @@ export class SettingsService {
         throw new HttpError(400, "invalid_request", "taskKind must reference an active configured task kind.");
       }
       const prompt =
-        taskKind.prompt_fields_enabled
+        input.promptsEnabled
           ? await settings.createPromptDefinition({
               name: promptNameForTaskKey(input.taskKey),
               purpose: `Prompt for ${input.displayName}.`,
@@ -318,6 +450,7 @@ export class SettingsService {
         promptDefinitionId: prompt?.id ?? null,
         actorUserId: actor.id
       });
+      await validateAiTaskRouteUpdate(settings, task, { enabled: input.routeEnabled }, this.config);
       await audit.record({
         eventName: "ai_task_definition.created",
         actor,
@@ -328,7 +461,10 @@ export class SettingsService {
           taskKey: task.task_key,
           hookKey: task.hook_key,
           taskKind: task.task_kind,
-          implemented: task.implemented
+          providerName: task.provider_name,
+          implemented: task.implemented,
+          promptsEnabled: task.prompt_definition_id !== null,
+          enabled: task.route_enabled
         },
         redactionApplied: true
       });
@@ -666,6 +802,42 @@ export class SettingsService {
       };
     });
   }
+
+  async updateCurrentPrompt(
+    promptDefinitionId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parsePromptVersionBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const prompt = await settings.updateCurrentPrompt({
+        promptDefinitionId,
+        body: input.body,
+        outputSchema: input.outputSchema,
+        contextConfig: input.contextConfig,
+        actorUserId: actor.id
+      });
+      if (prompt === null) {
+        throw new HttpError(404, "not_found", "prompt_definition was not found.");
+      }
+      await audit.record({
+        eventName: "prompt_definition.updated_current",
+        actor,
+        subjectType: "prompt_definition",
+        subjectId: prompt.id,
+        requestId,
+        metadata: {
+          name: prompt.name,
+          activeVersion: prompt.active_version
+        },
+        redactionApplied: true
+      });
+      return { prompt: serializePrompt(prompt) };
+    });
+  }
 }
 
 function defaultExtractionSettings() {
@@ -771,13 +943,11 @@ function serializeProviderCapability(row: ProviderCapabilityRow): Record<string,
 }
 
 function serializeRegisteredTaskHooks(): Array<Record<string, unknown>> {
-  return Array.from(IMPLEMENTED_AI_TASK_HOOKS)
-    .sort()
-    .map((hookKey) => ({
-      hookKey,
-      displayName: humanizeKey(hookKey),
-      implemented: true
-    }));
+  return REGISTERED_AI_TASK_HOOKS.map((hook) => ({
+    hookKey: hook.hookKey,
+    displayName: humanizeKey(hook.hookKey),
+    implemented: hook.implemented
+  }));
 }
 
 function serializeProvider(
@@ -797,6 +967,7 @@ function serializeProvider(
     displayName: provider.display_name ?? provider.provider_name,
     adapterKey: provider.adapter_key ?? provider.provider_name,
     enabled: provider.enabled,
+    endpoint: provider.endpoint,
     endpointConfigured: provider.endpoint !== null && provider.endpoint.trim() !== "",
     modelName: provider.model_name,
     secretSource: provider.secret_source,
@@ -1125,11 +1296,27 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
   const displayName = assertNonEmptyString(record.displayName, "displayName");
   const taskKey = deriveTaskKey(displayName);
   const hookKey = parseConfigKey(record.hookKey ?? taskKey, "hookKey");
-  const taskKind = record.taskKind === undefined ? "llm" : parseConfigKey(record.taskKind, "taskKind");
+  const providerConfigId =
+    record.providerConfigId === undefined ? null : optionalString(record.providerConfigId, "providerConfigId");
+  const provider =
+    providerConfigId === null || providerConfigId.trim() === "" ? null : await settings.findProviderById(providerConfigId);
+  if (providerConfigId !== null && provider === null) {
+    throw new HttpError(400, "invalid_request", "providerConfigId must reference a configured provider.");
+  }
+  const taskKind =
+    record.taskKind === undefined
+      ? provider === null
+        ? "llm"
+        : (await findTaskKindForProvider(settings, provider.provider_kind))?.kind_key
+      : parseConfigKey(record.taskKind, "taskKind");
+  if (taskKind === undefined) {
+    throw new HttpError(400, "invalid_request", "Selected provider kind does not have an active task mapping.");
+  }
   const taskKindRow = await settings.findTaskKindByKey(taskKind);
   if (taskKindRow === null || !taskKindRow.active) {
     throw new HttpError(400, "invalid_request", "taskKind must reference an active configured task kind.");
   }
+  const routeEnabled = parseOptionalBoolean(record.enabled, "enabled") ?? false;
   const runtimeEnvPrefix = runtimeEnvPrefixForTaskKey(taskKey);
   return {
     taskKey,
@@ -1140,6 +1327,12 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     taskKindId: taskKindRow.id,
     implemented: IMPLEMENTED_AI_TASK_HOOKS.has(hookKey),
     promptDefinitionId: null,
+    providerConfigId,
+    routeModelName: record.modelName === undefined ? provider?.model_name ?? null : optionalString(record.modelName, "modelName"),
+    routeEnabled,
+    promptsEnabled:
+      parseOptionalBoolean(record.promptsEnabled ?? record.promptFieldsEnabled, "promptsEnabled") ??
+      taskKindRow.prompt_fields_enabled,
     initialPromptText:
       record.initialPromptText === undefined
         ? `Return strict JSON for ${displayName}. Do not include prose outside JSON.`
@@ -1150,6 +1343,31 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     runtimeModelEnv: `${runtimeEnvPrefix}_MODEL`,
     runtimeEndpointEnv: `${runtimeEnvPrefix}_ENDPOINT`
   };
+}
+
+function parseUpdateAiTaskBody(body: unknown) {
+  const record = parseObject(body);
+  const route = parseAiTaskRouteBody(record);
+  return {
+    displayName:
+      record.displayName === undefined ? undefined : assertNonEmptyString(record.displayName, "displayName"),
+    description: record.description === undefined ? undefined : optionalString(record.description, "description"),
+    hookKey: record.hookKey === undefined ? undefined : parseConfigKey(record.hookKey, "hookKey"),
+    promptsEnabled: parseOptionalBoolean(record.promptsEnabled ?? record.promptFieldsEnabled, "promptsEnabled"),
+    initialPromptText:
+      record.initialPromptText === undefined ? undefined : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
+    ...route
+  };
+}
+
+async function findTaskKindForProvider(settings: SettingsRepository, providerKind: string) {
+  const normalizedProviderKind = providerKind === "stt" ? "transcription" : providerKind;
+  const candidates = await settings.listTaskKinds();
+  return (
+    candidates.find((candidate) => candidate.active && candidate.provider_kind === normalizedProviderKind) ??
+    candidates.find((candidate) => candidate.active && candidate.kind_key === normalizedProviderKind) ??
+    null
+  );
 }
 
 function deriveTaskKey(displayName: string): string {
@@ -1215,11 +1433,54 @@ function parseProviderBody(body: unknown) {
   if (record.enabled !== undefined && typeof record.enabled !== "boolean") {
     throw new HttpError(400, "invalid_request", "enabled must be a boolean.");
   }
+  if (record.externalSendEnabled !== undefined && typeof record.externalSendEnabled !== "boolean") {
+    throw new HttpError(400, "invalid_request", "externalSendEnabled must be a boolean.");
+  }
   return {
+    displayName: record.displayName === undefined ? undefined : assertNonEmptyString(record.displayName, "displayName"),
     enabled: record.enabled === undefined ? undefined : record.enabled === true,
     endpoint: record.endpoint === undefined ? undefined : optionalString(record.endpoint, "endpoint"),
-    modelName: record.modelName === undefined ? undefined : optionalString(record.modelName, "modelName")
+    modelName: record.modelName === undefined ? undefined : optionalString(record.modelName, "modelName"),
+    requiredSecretEnv:
+      record.requiredSecretEnv === undefined ? undefined : optionalString(record.requiredSecretEnv, "requiredSecretEnv"),
+    externalSendEnabled:
+      record.externalSendEnabled === undefined ? undefined : record.externalSendEnabled === true
   };
+}
+
+function parseCreateProviderBody(body: unknown) {
+  const record = parseObject(body);
+  const displayName = assertNonEmptyString(record.displayName ?? record.providerName, "displayName");
+  const providerKind = parseProviderKind(record.providerKind);
+  const providerName = deriveTaskKey(displayName);
+  const enabled = parseOptionalBoolean(record.enabled, "enabled") ?? false;
+  const externalSendEnabled = parseOptionalBoolean(record.externalSendEnabled, "externalSendEnabled") ?? false;
+  const adapterKey =
+    record.adapterKey === undefined
+      ? providerKind === "llm"
+        ? "openai-compatible"
+        : providerName
+      : parseConfigKey(record.adapterKey, "adapterKey");
+  return {
+    providerKind,
+    providerName,
+    displayName,
+    adapterKey,
+    enabled,
+    endpoint: record.endpoint === undefined ? null : optionalString(record.endpoint, "endpoint"),
+    modelName: record.modelName === undefined ? null : optionalString(record.modelName, "modelName"),
+    requiredSecretEnv:
+      record.requiredSecretEnv === undefined ? null : optionalString(record.requiredSecretEnv, "requiredSecretEnv"),
+    externalSendEnabled
+  };
+}
+
+function parseProviderKind(value: unknown): string {
+  const providerKind = parseConfigKey(value, "providerKind");
+  if (!PROVIDER_KIND_OPTIONS.has(providerKind)) {
+    throw new HttpError(400, "invalid_request", "providerKind must be llm, stt, tts, ocr, script, or transcription.");
+  }
+  return providerKind === "stt" ? "transcription" : providerKind;
 }
 
 function parseFileTypeBody(body: unknown) {

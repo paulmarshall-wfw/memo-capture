@@ -158,7 +158,7 @@ function readLlmTaskRuntimeConfig(env: NodeJS.ProcessEnv): Record<string, LlmTas
   const tasks = [
     ["memo-expansion", "MEMO_EXPANSION"],
     ["suggest-new-memos", "SUGGEST_NEW_MEMOS"],
-    ["suggest-selected-tags", "SUGGEST_SELECTED_TAGS"],
+    ["suggest-tags", "SUGGEST_TAGS"],
     ["ocr", "OCR"]
   ] as const;
 
