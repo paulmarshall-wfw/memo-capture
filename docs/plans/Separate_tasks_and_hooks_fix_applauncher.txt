@@ -1,0 +1,155 @@
+Using `engineering-project-standard` plus the LLM integration standard, this is the plan I’d use.
+
+**Implementation Plan**
+
+1. **Lock The Target Model**
+   Define the new contract in docs before code:
+   - AppLauncher provides generic LLM runtime invocation settings only.
+   - Memo Capture owns tasks, prompts, provider selection, and hook routing.
+   - `hookKey` identifies app-owned implementation logic.
+   - `taskKey` identifies a configured task instance for invocation.
+   - `displayName` is the only normal user-facing task label.
+   - `taskKey` is generated once, unique, hidden, and stable.
+
+2. **Update Runtime Configuration**
+   Change [apps/api/src/config.ts](/Users/paulmarshall/Software%20Development/memo-capture/apps/api/src/config.ts) so runtime config no longer exposes `llmTasks[taskKey]`.
+
+   Replace task-specific env handling like:
+   - `MEMO_EXPANSION_PROVIDER`
+   - `SUGGEST_TAGS_PROVIDER`
+   - `OCR_PROVIDER`
+
+   with generic LLM runtime fields:
+   - `LLM_PROVIDER`
+   - `LLM_MODEL`
+   - `LLM_ENDPOINT`
+   - `OPENAI_COMPATIBLE_API_KEY`
+
+   Keep secrets out of runtime options.
+
+3. **Update AppLauncher Manifests**
+   Update the Memo Capture AppLauncher manifests under `dist/applauncher-manifests/...` so runtime options are generic LLM provider/model/endpoint choices, not task names.
+
+   The AppLauncher UI should read like:
+   - LLM runtime: disabled / local-dev / OpenAI-compatible
+   - Model
+   - Endpoint, where relevant
+
+   It should not mention memo expansion, suggest tags, OCR, revision, or task routing.
+
+4. **Refactor Task Route Validation**
+   In [apps/api/src/services/settings.ts](/Users/paulmarshall/Software%20Development/memo-capture/apps/api/src/services/settings.ts), change enablement checks from:
+
+   ```text
+   config.llmTasks[current.task_key]
+   ```
+
+   to generic runtime/provider readiness.
+
+   Validation should require:
+   - hook exists and is implemented
+   - selected provider exists
+   - selected provider is enabled
+   - provider kind matches the hook/task kind
+   - required secret is configured
+   - generic LLM runtime provider is not disabled
+   - generic LLM runtime provider is compatible with the selected provider
+
+   It should not depend on task key matching a runtime option.
+
+5. **Route Invocation By Task Key, Dispatch By Hook Key**
+   Add or formalize a backend invocation path like:
+
+   ```text
+   invokeTask(taskKey, context)
+     -> load task by taskKey
+     -> validate route/provider/prompt
+     -> dispatch task.hookKey
+   ```
+
+   For memo expansion, the UI/action button can call the configured `taskKey`; the service then runs the implementation registered to `hookKey = memo-expansion`.
+
+6. **Allow Multiple Tasks Per Hook**
+   Remove any implied “one enabled route per hook” constraint.
+
+   Supported example:
+
+   ```text
+   taskKey: expand-memo-concise
+   displayName: Concise expansion
+   hookKey: memo-expansion
+
+   taskKey: expand-memo-detailed
+   displayName: Detailed expansion
+   hookKey: memo-expansion
+   ```
+
+   Same implementation, different prompt/provider/model settings.
+
+7. **Hide Task Key In UI**
+   Update [apps/desktop/src/App.tsx](/Users/paulmarshall/Software%20Development/memo-capture/apps/desktop/src/App.tsx) so Settings does not display `taskKey`.
+
+   UI should show:
+   - task name
+   - description
+   - hook key or hook label
+   - provider
+   - model override
+   - prompt editor
+   - enabled state
+   - readiness/error message
+
+   Debug APIs may still return `taskKey`; normal Settings UI should not foreground it.
+
+8. **Stabilize Task Key Semantics**
+   Ensure `taskKey` is generated only at task creation and never recalculated when `displayName` changes.
+
+   If current update paths risk changing task identity, block that. The user can rename a task without breaking buttons or saved invocations.
+
+9. **Database Migration**
+   Add a migration to clean up existing task/runtime metadata:
+   - keep existing task rows
+   - preserve `task_key`
+   - preserve `hook_key`
+   - remove or stop relying on task-specific runtime env fields
+   - migrate existing seeded memo expansion route to generic runtime readiness
+   - ensure existing `expand-memo` with `hook_key = memo-expansion` can work after generic runtime is enabled
+
+10. **Update API Shapes Carefully**
+   Keep backward-compatible response fields where practical during the transition, but mark task runtime env fields as deprecated or remove them if tests and UI no longer need them.
+
+   The Settings summary should expose:
+   - generic LLM runtime status
+   - provider catalog status
+   - task route readiness
+   - task hook registry
+   - no task-specific AppLauncher runtime contract
+
+11. **Tests**
+   Add/adjust focused tests for:
+   - generic `LLM_PROVIDER=local-dev` makes an enabled local-dev LLM task route valid
+   - task key no longer needs to match hook key
+   - `expand-memo` + `hookKey=memo-expansion` can enable and invoke
+   - multiple enabled tasks can share one `hookKey`
+   - display name rename does not change task key
+   - disabled generic LLM runtime blocks LLM task enablement
+   - provider/runtime mismatch still blocks safely
+   - AppLauncher manifest no longer contains task-specific runtime option names
+
+12. **Docs**
+   Update:
+   - [docs/env.md](/Users/paulmarshall/Software%20Development/memo-capture/docs/env.md)
+   - [docs/design/memo-capture-design-learnings.md](/Users/paulmarshall/Software%20Development/memo-capture/docs/design/memo-capture-design-learnings.md)
+   - [docs/specs/settings-and-audit.md](/Users/paulmarshall/Software%20Development/memo-capture/docs/specs/settings-and-audit.md)
+   - completed-task ledger only after implementation is done
+
+13. **Verification**
+   Run the narrow tests first, then broader checks:
+   - targeted API tests around settings/task invocation
+   - desktop copy/UI tests
+   - `npm run typecheck`
+   - `npm run test:postgres` if migrations or persisted task settings changed
+   - `npm run verify`
+   - rebuild `Memo Capture.app` if user-facing Settings changed
+
+The key design correction is: AppLauncher selects a generic LLM runtime; Memo Capture tasks select what to do with that runtime.
