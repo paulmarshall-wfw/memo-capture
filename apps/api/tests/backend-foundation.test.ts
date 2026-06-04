@@ -114,6 +114,83 @@ test("AI task creation derives task key and reports duplicate derived key confli
   );
 });
 
+test("settings allow additional task kinds and task definitions can use them", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const created = (await services.settings.createTaskKind(
+    {
+      displayName: "Image enrichment",
+      description: "Image analysis tasks",
+      providerKind: "llm",
+      capabilityKey: "structured-generation",
+      promptFieldsEnabled: true,
+      enabled: false
+    },
+    session.user,
+    "request-create-task-kind"
+  )) as { taskKind: { kindKey: string; promptFieldsEnabled: boolean; enabled: boolean } };
+
+  assert.equal(created.taskKind.kindKey, "image-enrichment");
+  assert.equal(created.taskKind.promptFieldsEnabled, true);
+  assert.equal(created.taskKind.enabled, false);
+
+  const taskKindRow = db.taskKinds.find((row) => row.kind_key === "image-enrichment");
+  assert.notEqual(taskKindRow, undefined);
+
+  const updated = (await services.settings.updateTaskKind(
+    String(taskKindRow!.id),
+    {
+      displayName: "Image enrichment",
+      description: "Image enrichment and analysis tasks",
+      providerKind: "llm",
+      capabilityKey: "structured-generation",
+      promptFieldsEnabled: true,
+      enabled: false
+    },
+    session.user,
+    "request-update-task-kind"
+  )) as { taskKind: { kindKey: string; description: string; enabled: boolean } };
+
+  assert.equal(updated.taskKind.kindKey, "image-enrichment");
+  assert.equal(updated.taskKind.description, "Image enrichment and analysis tasks");
+  assert.equal(updated.taskKind.enabled, false);
+
+  await assert.rejects(
+    () =>
+      services.settings.updateTaskKind(
+        String(taskKindRow!.id),
+        { enabled: true },
+        session.user,
+        "request-enable-task-kind"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "task_kind_route_not_implemented"
+  );
+
+  const aiTask = (await services.settings.createAiTaskDefinition(
+    {
+      displayName: "Image digest",
+      hookKey: "image-digest",
+      taskKind: "image-enrichment"
+    },
+    session.user,
+    "request-create-image-digest-task"
+  )) as { aiTask: { taskKey: string; taskKind: string; prompt: { id: string } | null } };
+
+  assert.equal(aiTask.aiTask.taskKey, "image-digest");
+  assert.equal(aiTask.aiTask.taskKind, "image-enrichment");
+  assert.notEqual(aiTask.aiTask.prompt, null);
+});
+
 test("AI task route enablement blocks unimplemented hooks and incompatible providers", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -1409,6 +1486,27 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(settings.body.providers[0].providerName, "local-dev");
     assert.equal(settings.body.fileTypes[0].extension, ".md");
 
+    const taskKindCreate = await authedJson(baseUrl, "/api/settings/task-kinds", {
+      method: "POST",
+      body: JSON.stringify({
+        displayName: "Image enrichment",
+        description: "Image enrichment tasks",
+        providerKind: "llm",
+        capabilityKey: "structured-generation",
+        promptFieldsEnabled: true,
+        enabled: false
+      })
+    });
+    assert.equal(taskKindCreate.response.status, 200, JSON.stringify(taskKindCreate.body));
+    assert.equal(taskKindCreate.body.taskKind.kindKey, "image-enrichment");
+
+    const taskKindPatch = await authedJson(baseUrl, `/api/settings/task-kinds/${taskKindCreate.body.taskKind.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: false })
+    });
+    assert.equal(taskKindPatch.response.status, 200, JSON.stringify(taskKindPatch.body));
+    assert.equal(taskKindPatch.body.taskKind.enabled, false);
+
     const providerPatch = await authedJson(baseUrl, "/api/settings/providers/provider-1", {
       method: "PATCH",
       body: JSON.stringify({ enabled: true, modelName: "memo-capture-local-dev-expander-v1" })
@@ -2145,6 +2243,20 @@ function captureRouteServices(): AppServices {
             updatedAt: "2026-05-29T00:00:00.000Z"
           }
         ],
+        taskKinds: [
+          {
+            id: "task-kind-llm",
+            kindKey: "llm",
+            displayName: "LLM generation",
+            description: "Structured generation",
+            providerKind: "llm",
+            capabilityKey: "structured-generation",
+            promptFieldsEnabled: true,
+            enabled: true,
+            active: true,
+            updatedAt: "2026-05-29T00:00:00.000Z"
+          }
+        ],
         aiTasks: [
           {
             id: "task-1",
@@ -2199,6 +2311,47 @@ function captureRouteServices(): AppServices {
         ],
         auth: { mode: "local-dev", oidcConfigured: false }
       }),
+      createTaskKind: async (body: unknown) => {
+        const record = body as {
+          displayName: string;
+          description?: string | null;
+          providerKind: string;
+          capabilityKey: string;
+          promptFieldsEnabled: boolean;
+          enabled: boolean;
+        };
+        return {
+          taskKind: {
+            id: "task-kind-image-enrichment",
+            kindKey: "image-enrichment",
+            displayName: record.displayName,
+            description: record.description ?? null,
+            providerKind: record.providerKind,
+            capabilityKey: record.capabilityKey,
+            promptFieldsEnabled: record.promptFieldsEnabled,
+            enabled: record.enabled,
+            active: true,
+            updatedAt: "2026-05-29T00:06:00.000Z"
+          }
+        };
+      },
+      updateTaskKind: async (id: string, body: unknown) => {
+        const record = body as { enabled?: boolean };
+        return {
+          taskKind: {
+            id,
+            kindKey: "image-enrichment",
+            displayName: "Image enrichment",
+            description: "Image enrichment tasks",
+            providerKind: "llm",
+            capabilityKey: "structured-generation",
+            promptFieldsEnabled: true,
+            enabled: record.enabled ?? true,
+            active: true,
+            updatedAt: "2026-05-29T00:07:00.000Z"
+          }
+        };
+      },
       createMediaType: async (body: unknown) => ({ mediaType: body }),
       updateMediaType: async (_id: string, body: unknown) => ({ mediaType: body }),
       deleteMediaType: async (id: string) => ({ deleted: true, mediaType: { id } }),
@@ -2645,8 +2798,71 @@ class FakeDatabase implements Database {
       return rows(taskKind === undefined ? [] : [taskKind as Row]);
     }
 
+    if (text.includes("from task_kinds") && text.includes("where id =")) {
+      const taskKind = this.taskKinds.find((row) => row.id === values[0]);
+      return rows(taskKind === undefined ? [] : [taskKind as Row]);
+    }
+
     if (text.includes("from task_kinds")) {
       return rows([...this.taskKinds] as Row[]);
+    }
+
+    if (text.includes("insert into task_kinds")) {
+      const row = {
+        id: values[0],
+        kind_key: values[1],
+        display_name: values[2],
+        description: values[3],
+        provider_kind: values[4],
+        capability_key: values[5],
+        prompt_fields_enabled: values[6],
+        enabled: values[7],
+        active: true,
+        created_by: values[8],
+        updated_by: values[8],
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.taskKinds.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("update task_kinds")) {
+      const row = this.taskKinds.find((taskKind) => taskKind.id === values[0]);
+      if (row === undefined) {
+        return rows([]);
+      }
+      if (values[1] === true) {
+        row.display_name = values[2];
+      }
+      if (values[3] === true) {
+        row.description = values[4];
+      }
+      if (values[5] === true) {
+        row.provider_kind = values[6];
+      }
+      if (values[7] === true) {
+        row.capability_key = values[8];
+      }
+      if (values[9] === true) {
+        row.prompt_fields_enabled = values[10];
+      }
+      if (values[11] === true) {
+        row.enabled = values[12];
+      }
+      if (values[13] === true) {
+        row.active = values[14];
+      }
+      row.updated_by = values[15];
+      row.updated_at = "2026-05-29T00:01:00.000Z";
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("select exists") && text.includes("from ai_task_definitions")) {
+      const kindKey = String(values[0]).toLowerCase();
+      const exists = this.aiTaskDefinitions.some(
+        (definition) => String(definition.task_kind).toLowerCase() === kindKey && definition.implemented === true
+      );
+      return rows([{ exists }] as unknown as Row[]);
     }
 
     if (text.includes("from provider_configs") && text.includes("where id =")) {

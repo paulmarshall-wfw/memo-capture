@@ -646,6 +646,112 @@ export class SettingsRepository {
     return result.rows[0] ?? null;
   }
 
+  async findTaskKindById(taskKindId: string): Promise<TaskKindRow | null> {
+    const result = await this.db.query<TaskKindRow>(
+      `select id, kind_key, display_name, description, provider_kind, capability_key,
+              prompt_fields_enabled, enabled, active, updated_at
+       from task_kinds
+       where id = $1
+       limit 1`,
+      [taskKindId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async taskKindHasImplementedRoute(kindKey: string): Promise<boolean> {
+    const result = await this.db.query<{ exists: boolean }>(
+      `select exists (
+         select 1
+         from ai_task_definitions
+         where lower(task_kind) = lower($1)
+           and implemented = true
+       ) as exists`,
+      [kindKey]
+    );
+    return result.rows[0]?.exists === true;
+  }
+
+  async createTaskKind(input: {
+    kindKey: string;
+    displayName: string;
+    description: string | null;
+    providerKind: string;
+    capabilityKey: string;
+    promptFieldsEnabled: boolean;
+    enabled: boolean;
+    actorUserId: string;
+  }): Promise<TaskKindRow> {
+    const result = await this.db.query<TaskKindRow>(
+      `insert into task_kinds (
+         id, kind_key, display_name, description, provider_kind, capability_key,
+         prompt_fields_enabled, enabled, active, created_by, updated_by, created_at, updated_at
+       )
+       values ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $9, now(), now())
+       returning id, kind_key, display_name, description, provider_kind, capability_key,
+                 prompt_fields_enabled, enabled, active, updated_at`,
+      [
+        randomUUID(),
+        input.kindKey,
+        input.displayName,
+        input.description,
+        input.providerKind,
+        input.capabilityKey,
+        input.promptFieldsEnabled,
+        input.enabled,
+        input.actorUserId
+      ]
+    );
+    return result.rows[0]!;
+  }
+
+  async updateTaskKind(input: {
+    taskKindId: string;
+    displayName?: string | undefined;
+    description?: string | null | undefined;
+    providerKind?: string | undefined;
+    capabilityKey?: string | undefined;
+    promptFieldsEnabled?: boolean | undefined;
+    enabled?: boolean | undefined;
+    active?: boolean | undefined;
+    actorUserId: string;
+  }): Promise<TaskKindRow | null> {
+    const result = await this.db.query<TaskKindRow>(
+      `update task_kinds
+       set
+         display_name = case when $2::boolean then $3::text else display_name end,
+         description = case when $4::boolean then $5::text else description end,
+         provider_kind = case when $6::boolean then $7::text else provider_kind end,
+         capability_key = case when $8::boolean then $9::text else capability_key end,
+         prompt_fields_enabled = case when $10::boolean then $11::boolean else prompt_fields_enabled end,
+         enabled = case when $12::boolean then $13::boolean else enabled end,
+         active = case when $14::boolean then $15::boolean else active end,
+         updated_by = $16,
+         updated_at = now()
+       where id = $1
+       returning id, kind_key, display_name, description, provider_kind, capability_key,
+                 prompt_fields_enabled, enabled, active, updated_at`,
+      [
+        input.taskKindId,
+        input.displayName !== undefined,
+        input.displayName ?? null,
+        input.description !== undefined,
+        input.description ?? null,
+        input.providerKind !== undefined,
+        input.providerKind ?? null,
+        input.capabilityKey !== undefined,
+        input.capabilityKey ?? null,
+        input.promptFieldsEnabled !== undefined,
+        input.promptFieldsEnabled ?? null,
+        input.enabled !== undefined,
+        input.enabled ?? null,
+        input.active !== undefined,
+        input.active ?? null,
+        input.actorUserId
+      ]
+    );
+    return result.rows[0] ?? null;
+  }
+
   async listProviderCapabilities(): Promise<ProviderCapabilityRow[]> {
     const result = await this.db.query<ProviderCapabilityRow>(
       `select id, provider_config_id, capability_key, enabled, updated_at

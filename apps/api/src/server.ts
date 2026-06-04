@@ -309,6 +309,22 @@ function matchProtectedRoute(
       );
   }
 
+  if (method === "POST" && pathname === "/api/settings/task-kinds") {
+    return async (context, session) =>
+      services.settings.createTaskKind(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
+  const taskKindPatchMatch = /^\/api\/settings\/task-kinds\/([^/]+)$/.exec(pathname);
+  if (method === "PATCH" && taskKindPatchMatch !== null) {
+    return async (context, session) =>
+      services.settings.updateTaskKind(
+        decodeURIComponent(taskKindPatchMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
   if (method === "POST" && pathname === "/api/settings/ai-tasks") {
     return async (context, session) =>
       services.settings.createAiTaskDefinition(await readJsonBody(context.request), session.user, context.requestId);

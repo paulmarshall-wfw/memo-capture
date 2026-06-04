@@ -43,6 +43,10 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /No pending suggested work items/);
   assert.match(appSource, /AppLauncher runtime options/);
   assert.match(appSource, /Task kinds/);
+  assert.match(appSource, /Add task kind/);
+  assert.match(appSource, /Add kind/);
+  assert.match(appSource, /\/api\/settings\/task-kinds/);
+  assert.match(appSource, /taskKindDrafts/);
   assert.match(appSource, /Key: \{deriveTaskKeyPreview\(newAiTaskDraft\.displayName\)\}/);
   assert.match(appSource, /registered-task-hooks/);
   assert.match(appSource, /Add task/);

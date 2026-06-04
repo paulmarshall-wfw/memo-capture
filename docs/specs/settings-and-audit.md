@@ -191,10 +191,13 @@ Provider kinds:
 
 - `llm`
 - `transcription`
+- `ocr`
+- `tts`
 
 Rules:
 
 - Transcription providers and LLM providers are configured independently.
+- OCR and TTS provider kinds are represented for task routing but remain disabled until their app routes exist.
 - Disabled providers never receive jobs.
 - Provider secrets come from environment/config in MVP.
 - UI displays redacted provider status and non-secret settings.
@@ -221,7 +224,8 @@ Required columns:
 Rules:
 
 - Task kinds define routing compatibility and whether prompt fields apply.
-- V1 seeds `llm`, `ocr`, `stt`, and `tts`; only enabled/active kinds are selectable for new tasks.
+- V1 seeds `llm`, `ocr`, `stt`, and `tts`; active kinds are selectable for task-definition drafting.
+- Task kinds can be created before protected app logic exists, but cannot be enabled until at least one task route for that kind is implemented.
 
 ### provider_capabilities
 
@@ -566,6 +570,43 @@ Request:
 }
 ```
 
+### Create or update task kinds
+
+`POST /api/settings/task-kinds`
+
+Request:
+
+```json
+{
+  "displayName": "Image enrichment",
+  "description": "Image analysis tasks.",
+  "providerKind": "llm",
+  "capabilityKey": "structured-generation",
+  "promptFieldsEnabled": true,
+  "enabled": false
+}
+```
+
+Creates a task kind with a server-derived `kindKey` of `image-enrichment`. Task kinds define provider routing compatibility and whether task definitions of that kind get prompt fields.
+
+`PATCH /api/settings/task-kinds/{taskKindId}`
+
+Request:
+
+```json
+{
+  "displayName": "Image enrichment",
+  "description": "Image analysis and enrichment tasks.",
+  "providerKind": "llm",
+  "capabilityKey": "structured-generation",
+  "promptFieldsEnabled": true,
+  "enabled": true,
+  "active": true
+}
+```
+
+Updates task-kind routing metadata, prompt-field support, and availability. Task-kind keys stay stable after creation. Setting `enabled` to `true` fails until protected app logic exists for at least one task route of that kind.
+
 ### Create AI task definition
 
 `POST /api/settings/ai-tasks`
@@ -663,7 +704,7 @@ Providers section:
 
 Tasks section:
 
-- Task kinds show provider kind, capability key, prompt-field support, and enabled/active status.
+- Task kinds can be added and edited with controlled provider kind and capability options, prompt-field support, and enabled/active status.
 - Task creation accepts display name, hook key, task kind, and description; the task key is derived and previewed read-only.
 - Task routing shows task name, hook key, implementation status, compatible provider selection, optional model override, route enablement, and readiness reason.
 - Prompt editing is attached to prompt-backed task rows, preserving versioning and context toggles.

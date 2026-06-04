@@ -385,6 +385,25 @@ interface AiTaskRouteDraft {
   enabled: boolean;
 }
 
+interface TaskKindDraft {
+  displayName: string;
+  description: string;
+  providerKind: string;
+  capabilityKey: string;
+  promptFieldsEnabled: boolean;
+  enabled: boolean;
+  active: boolean;
+}
+
+interface NewTaskKindDraft {
+  displayName: string;
+  description: string;
+  providerKind: string;
+  capabilityKey: string;
+  promptFieldsEnabled: boolean;
+  enabled: boolean;
+}
+
 interface NewAiTaskDraft {
   displayName: string;
   description: string;
@@ -637,6 +656,14 @@ const defaultNewAiTaskDraft: NewAiTaskDraft = {
   description: "",
   hookKey: "",
   taskKind: "llm"
+};
+const defaultNewTaskKindDraft: NewTaskKindDraft = {
+  displayName: "",
+  description: "",
+  providerKind: "llm",
+  capabilityKey: "structured-generation",
+  promptFieldsEnabled: true,
+  enabled: false
 };
 const defaultNewMediaTypeDraft: MediaTypeDraft = {
   mediaKey: "",
@@ -1381,7 +1408,11 @@ export function App() {
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
   const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
+  const [taskKindDrafts, setTaskKindDrafts] = useState<Record<string, TaskKindDraft>>({});
   const [aiTaskRouteDrafts, setAiTaskRouteDrafts] = useState<Record<string, AiTaskRouteDraft>>({});
+  const [taskKindIdInFlight, setTaskKindIdInFlight] = useState<string | null>(null);
+  const [newTaskKindDraft, setNewTaskKindDraft] = useState<NewTaskKindDraft>(defaultNewTaskKindDraft);
+  const [taskKindCreateInFlight, setTaskKindCreateInFlight] = useState(false);
   const [aiTaskIdInFlight, setAiTaskIdInFlight] = useState<string | null>(null);
   const [newAiTaskDraft, setNewAiTaskDraft] = useState<NewAiTaskDraft>(defaultNewAiTaskDraft);
   const [aiTaskCreateInFlight, setAiTaskCreateInFlight] = useState(false);
@@ -1451,11 +1482,52 @@ export function App() {
     const fileTypes = settingsSummary?.fileTypes ?? [];
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
-  const enabledTaskKinds = useMemo(
-    () => (settingsSummary?.taskKinds ?? []).filter((taskKind) => taskKind.active && taskKind.enabled),
+  const activeTaskKinds = useMemo(
+    () => (settingsSummary?.taskKinds ?? []).filter((taskKind) => taskKind.active),
     [settingsSummary]
   );
   const registeredTaskHooks = settingsSummary?.registeredTaskHooks ?? [];
+  const providerKindOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const provider of settingsSummary?.providers ?? []) {
+      values.add(provider.providerKind);
+    }
+    for (const taskKind of settingsSummary?.taskKinds ?? []) {
+      values.add(taskKind.providerKind);
+    }
+    return Array.from(values).sort();
+  }, [settingsSummary]);
+  const capabilityOptionsByProviderKind = useMemo(() => {
+    const options = new Map<string, Set<string>>();
+    const addOption = (providerKind: string, capabilityKey: string) => {
+      const capabilitySet = options.get(providerKind) ?? new Set<string>();
+      capabilitySet.add(capabilityKey);
+      options.set(providerKind, capabilitySet);
+    };
+    for (const provider of settingsSummary?.providers ?? []) {
+      for (const capability of provider.capabilities ?? []) {
+        addOption(provider.providerKind, capability.capabilityKey);
+      }
+    }
+    for (const taskKind of settingsSummary?.taskKinds ?? []) {
+      addOption(taskKind.providerKind, taskKind.capabilityKey);
+    }
+    return new Map(
+      Array.from(options.entries()).map(([providerKind, capabilities]) => [
+        providerKind,
+        Array.from(capabilities).sort()
+      ])
+    );
+  }, [settingsSummary]);
+  const implementedTaskKindKeys = useMemo(
+    () =>
+      new Set(
+        (settingsSummary?.aiTasks ?? [])
+          .filter((task) => task.hookImplemented)
+          .map((task) => task.taskKind)
+      ),
+    [settingsSummary]
+  );
   const memoExpansionTask = useMemo(
     () => (settingsSummary?.aiTasks ?? []).find((task) => task.taskKey === "memo-expansion") ?? null,
     [settingsSummary]
@@ -2064,6 +2136,22 @@ export function App() {
               mediaKind: fileType.mediaKind,
               parserKey: fileType.parserKey ?? "",
               capabilityState: fileType.capabilityState
+            }
+          ])
+        )
+      );
+      setTaskKindDrafts(
+        Object.fromEntries(
+          normalized.taskKinds.map((taskKind) => [
+            taskKind.id,
+            {
+              displayName: taskKind.displayName,
+              description: taskKind.description ?? "",
+              providerKind: taskKind.providerKind,
+              capabilityKey: taskKind.capabilityKey,
+              promptFieldsEnabled: taskKind.promptFieldsEnabled,
+              enabled: taskKind.enabled,
+              active: taskKind.active
             }
           ])
         )
@@ -2975,8 +3063,149 @@ export function App() {
     }));
   }
 
+  function updateTaskKindDraft<Field extends keyof TaskKindDraft>(
+    taskKindId: string,
+    field: Field,
+    value: TaskKindDraft[Field]
+  ) {
+    setTaskKindDrafts((current) => ({
+      ...current,
+      [taskKindId]: {
+        ...(current[taskKindId] ?? {
+          displayName: "",
+          description: "",
+          providerKind: "llm",
+          capabilityKey: "structured-generation",
+          promptFieldsEnabled: false,
+          enabled: true,
+          active: true
+        }),
+        [field]: value
+      }
+    }));
+  }
+
+  function updateNewTaskKindDraft<Field extends keyof NewTaskKindDraft>(
+    field: Field,
+    value: NewTaskKindDraft[Field]
+  ) {
+    setNewTaskKindDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function taskKindCanBeEnabled(kindKey: string): boolean {
+    return implementedTaskKindKeys.has(kindKey);
+  }
+
+  function updateNewTaskKindProviderKind(providerKind: string) {
+    const capabilities = capabilityOptionsByProviderKind.get(providerKind) ?? [];
+    setNewTaskKindDraft((current) => ({
+      ...current,
+      providerKind,
+      capabilityKey: capabilities.includes(current.capabilityKey) ? current.capabilityKey : (capabilities[0] ?? "")
+    }));
+  }
+
+  function updateTaskKindProviderKind(taskKindId: string, providerKind: string) {
+    const capabilities = capabilityOptionsByProviderKind.get(providerKind) ?? [];
+    setTaskKindDrafts((current) => {
+      const existing = current[taskKindId] ?? {
+        displayName: "",
+        description: "",
+        providerKind: "llm",
+        capabilityKey: "structured-generation",
+        promptFieldsEnabled: false,
+        enabled: false,
+        active: true
+      };
+      return {
+        ...current,
+        [taskKindId]: {
+          ...existing,
+          providerKind,
+          capabilityKey: capabilities.includes(existing.capabilityKey)
+            ? existing.capabilityKey
+            : (capabilities[0] ?? "")
+        }
+      };
+    });
+  }
+
   function updateNewAiTaskDraft<Field extends keyof NewAiTaskDraft>(field: Field, value: NewAiTaskDraft[Field]) {
     setNewAiTaskDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function createTaskKind() {
+    if (accessToken === null) {
+      return;
+    }
+    if (
+      newTaskKindDraft.displayName.trim() === "" ||
+      newTaskKindDraft.providerKind.trim() === "" ||
+      newTaskKindDraft.capabilityKey.trim() === ""
+    ) {
+      setStatusMessage("Task kind name, provider kind, and capability key are required.");
+      return;
+    }
+    setTaskKindCreateInFlight(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/task-kinds", {
+        method: "POST",
+        body: JSON.stringify({
+          displayName: newTaskKindDraft.displayName,
+          description: newTaskKindDraft.description,
+          providerKind: newTaskKindDraft.providerKind,
+          capabilityKey: newTaskKindDraft.capabilityKey,
+          promptFieldsEnabled: newTaskKindDraft.promptFieldsEnabled,
+          enabled: newTaskKindDraft.enabled && taskKindCanBeEnabled(deriveTaskKeyPreview(newTaskKindDraft.displayName))
+        })
+      });
+      setNewTaskKindDraft(defaultNewTaskKindDraft);
+      await loadSettings(accessToken);
+      setStatusMessage("Task kind added.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to add task kind.");
+    } finally {
+      setTaskKindCreateInFlight(false);
+    }
+  }
+
+  async function saveTaskKind(taskKindId: string) {
+    if (accessToken === null) {
+      return;
+    }
+    const draft = taskKindDrafts[taskKindId];
+    if (draft === undefined) {
+      return;
+    }
+    const taskKind = settingsSummary?.taskKinds.find((candidate) => candidate.id === taskKindId);
+    const enabled = draft.enabled && taskKindCanBeEnabled(taskKind?.kindKey ?? "");
+    if (draft.displayName.trim() === "" || draft.providerKind.trim() === "" || draft.capabilityKey.trim() === "") {
+      setStatusMessage("Task kind name, provider kind, and capability key are required.");
+      return;
+    }
+    setTaskKindIdInFlight(taskKindId);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, `/api/settings/task-kinds/${encodeURIComponent(taskKindId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          displayName: draft.displayName,
+          description: draft.description,
+          providerKind: draft.providerKind,
+          capabilityKey: draft.capabilityKey,
+          promptFieldsEnabled: draft.promptFieldsEnabled,
+          enabled,
+          active: draft.active
+        })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage("Task kind saved.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save task kind.");
+    } finally {
+      setTaskKindIdInFlight(null);
+    }
   }
 
   async function createAiTaskDefinition() {
@@ -5374,7 +5603,101 @@ export function App() {
                     </div>
                     <span className="detail-count">{settingsSummary.taskKinds.length} configured</span>
                   </div>
-                  <div className="settings-table registry-table">
+                  <article className="settings-row provider-task-row">
+                    <div>
+                      <div className="batch-title">
+                        <strong>Add task kind</strong>
+                        <span>Key: {deriveTaskKeyPreview(newTaskKindDraft.displayName)}</span>
+                      </div>
+                      <div className="task-kind-controls">
+                        <label>
+                          <span>Display name</span>
+                          <input
+                            type="text"
+                            value={newTaskKindDraft.displayName}
+                            disabled={taskKindCreateInFlight}
+                            onChange={(event) => updateNewTaskKindDraft("displayName", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Provider kind</span>
+                          <select
+                            value={newTaskKindDraft.providerKind}
+                            disabled={taskKindCreateInFlight}
+                            onChange={(event) => updateNewTaskKindProviderKind(event.currentTarget.value)}
+                          >
+                            {providerKindOptions.map((providerKind) => (
+                              <option value={providerKind} key={providerKind}>
+                                {providerKind}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Capability key</span>
+                          <select
+                            value={newTaskKindDraft.capabilityKey}
+                            disabled={taskKindCreateInFlight}
+                            onChange={(event) => updateNewTaskKindDraft("capabilityKey", event.currentTarget.value)}
+                          >
+                            {(capabilityOptionsByProviderKind.get(newTaskKindDraft.providerKind) ?? []).map(
+                              (capabilityKey) => (
+                                <option value={capabilityKey} key={capabilityKey}>
+                                  {capabilityKey}
+                                </option>
+                              )
+                            )}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Description</span>
+                          <input
+                            type="text"
+                            value={newTaskKindDraft.description}
+                            disabled={taskKindCreateInFlight}
+                            onChange={(event) => updateNewTaskKindDraft("description", event.currentTarget.value)}
+                          />
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={newTaskKindDraft.promptFieldsEnabled}
+                            disabled={taskKindCreateInFlight}
+                            onChange={(event) =>
+                              updateNewTaskKindDraft("promptFieldsEnabled", event.currentTarget.checked)
+                            }
+                          />
+                          Prompts
+                        </label>
+                        <label className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={
+                              newTaskKindDraft.enabled &&
+                              taskKindCanBeEnabled(deriveTaskKeyPreview(newTaskKindDraft.displayName))
+                            }
+                            disabled={
+                              taskKindCreateInFlight ||
+                              !taskKindCanBeEnabled(deriveTaskKeyPreview(newTaskKindDraft.displayName))
+                            }
+                            onChange={(event) => updateNewTaskKindDraft("enabled", event.currentTarget.checked)}
+                          />
+                          Enabled
+                        </label>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={taskKindCreateInFlight}
+                          onClick={() => void createTaskKind()}
+                        >
+                          {taskKindCreateInFlight ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
+                          Add kind
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+
+                  <div className="settings-table registry-table task-kind-table">
                     <div className="settings-table-header">
                       <span>Kind</span>
                       <span>Provider</span>
@@ -5382,15 +5705,115 @@ export function App() {
                       <span>Prompts</span>
                       <span>Status</span>
                     </div>
-                    {settingsSummary.taskKinds.map((taskKind) => (
-                      <div className="settings-table-row" key={taskKind.id}>
-                        <span>{taskKind.displayName}</span>
-                        <span>{taskKind.providerKind}</span>
-                        <span>{taskKind.capabilityKey}</span>
-                        <span>{taskKind.promptFieldsEnabled ? "enabled" : "not used"}</span>
-                        <span>{taskKind.enabled && taskKind.active ? "active" : "inactive"}</span>
-                      </div>
-                    ))}
+                    {settingsSummary.taskKinds.map((taskKind) => {
+                      const draft = taskKindDrafts[taskKind.id] ?? {
+                        displayName: taskKind.displayName,
+                        description: taskKind.description ?? "",
+                        providerKind: taskKind.providerKind,
+                        capabilityKey: taskKind.capabilityKey,
+                        promptFieldsEnabled: taskKind.promptFieldsEnabled,
+                        enabled: taskKind.enabled,
+                        active: taskKind.active
+                      };
+                      const canEnableTaskKind = taskKindCanBeEnabled(taskKind.kindKey);
+                      const capabilityOptions = capabilityOptionsByProviderKind.get(draft.providerKind) ?? [];
+                      return (
+                        <div className="settings-table-row" key={taskKind.id}>
+                          <div className="task-kind-name-cell">
+                            <label>
+                              <span>Kind</span>
+                              <input
+                                type="text"
+                                value={draft.displayName}
+                                disabled={taskKindIdInFlight === taskKind.id}
+                                onChange={(event) =>
+                                  updateTaskKindDraft(taskKind.id, "displayName", event.currentTarget.value)
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span>Description</span>
+                              <input
+                                type="text"
+                                value={draft.description}
+                                disabled={taskKindIdInFlight === taskKind.id}
+                                onChange={(event) =>
+                                  updateTaskKindDraft(taskKind.id, "description", event.currentTarget.value)
+                                }
+                              />
+                            </label>
+                          </div>
+                          <label>
+                            <span>Provider</span>
+                            <select
+                              value={draft.providerKind}
+                              disabled={taskKindIdInFlight === taskKind.id}
+                              onChange={(event) => updateTaskKindProviderKind(taskKind.id, event.currentTarget.value)}
+                            >
+                              {providerKindOptions.map((providerKind) => (
+                                <option value={providerKind} key={providerKind}>
+                                  {providerKind}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Capability</span>
+                            <select
+                              value={draft.capabilityKey}
+                              disabled={taskKindIdInFlight === taskKind.id}
+                              onChange={(event) =>
+                                updateTaskKindDraft(taskKind.id, "capabilityKey", event.currentTarget.value)
+                              }
+                            >
+                              {capabilityOptions.map((capabilityKey) => (
+                                <option value={capabilityKey} key={capabilityKey}>
+                                  {capabilityKey}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={draft.promptFieldsEnabled}
+                              disabled={taskKindIdInFlight === taskKind.id}
+                              onChange={(event) =>
+                                updateTaskKindDraft(taskKind.id, "promptFieldsEnabled", event.currentTarget.checked)
+                              }
+                            />
+                            Prompts
+                          </label>
+                          <div className="settings-table-actions">
+                            <label className="toggle-row">
+                              <input
+                                type="checkbox"
+                                checked={draft.enabled && draft.active && canEnableTaskKind}
+                                disabled={taskKindIdInFlight === taskKind.id || !canEnableTaskKind}
+                                onChange={(event) => {
+                                  updateTaskKindDraft(taskKind.id, "enabled", event.currentTarget.checked);
+                                  updateTaskKindDraft(taskKind.id, "active", event.currentTarget.checked);
+                                }}
+                              />
+                              Enabled
+                            </label>
+                            <button
+                              className="secondary-button"
+                              type="button"
+                              disabled={taskKindIdInFlight === taskKind.id}
+                              onClick={() => void saveTaskKind(taskKind.id)}
+                            >
+                              {taskKindIdInFlight === taskKind.id ? (
+                                <RefreshCcw className="spin" size={18} />
+                              ) : (
+                                <Save size={18} />
+                              )}
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
 
                   <article className="settings-row provider-task-row">
@@ -5439,9 +5862,9 @@ export function App() {
                             disabled={aiTaskCreateInFlight}
                             onChange={(event) => updateNewAiTaskDraft("taskKind", event.currentTarget.value)}
                           >
-                            {enabledTaskKinds.map((taskKind) => (
+                            {activeTaskKinds.map((taskKind) => (
                               <option value={taskKind.kindKey} key={taskKind.id}>
-                                {taskKind.displayName}
+                                {taskKind.displayName}{taskKind.enabled ? "" : " (disabled)"}
                               </option>
                             ))}
                           </select>

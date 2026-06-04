@@ -1470,6 +1470,42 @@ button:disabled {
   min-width: 0;
 }
 
+.task-kind-controls {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 1fr) minmax(120px, 0.7fr) minmax(150px, 0.9fr)
+    minmax(160px, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: end;
+  margin-top: 10px;
+}
+
+.task-kind-controls label:not(.toggle-row),
+.task-kind-table label:not(.toggle-row),
+.task-kind-name-cell {
+  display: grid;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task-kind-table .settings-table-header,
+.task-kind-table .settings-table-row {
+  grid-template-columns: minmax(170px, 1.2fr) minmax(110px, 0.7fr) minmax(140px, 0.9fr) minmax(90px, auto) minmax(170px, auto);
+}
+
+.task-kind-table .settings-table-row {
+  align-items: end;
+}
+
+.task-kind-table input[type="text"],
+.task-kind-table select,
+.task-kind-controls input[type="text"],
+.task-kind-controls select {
+  min-width: 0;
+}
+
 .ai-suggestion-list {
   padding-top: 2px;
 }
@@ -2317,6 +2353,12 @@ button:disabled {
   }
 
   .provider-route-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .task-kind-controls,
+  .task-kind-table .settings-table-header,
+  .task-kind-table .settings-table-row {
     grid-template-columns: 1fr;
   }
 

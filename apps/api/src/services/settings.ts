@@ -172,6 +172,78 @@ export class SettingsService {
     });
   }
 
+  async createTaskKind(body: unknown, actor: AppUserRecord, requestId: string): Promise<Record<string, unknown>> {
+    const input = parseCreateTaskKindBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findTaskKindByKey(input.kindKey);
+      if (existing !== null) {
+        throw new HttpError(409, "task_kind_exists", "A task kind already exists for the derived kind key.", {
+          kindKey: input.kindKey,
+          displayName: input.displayName
+        });
+      }
+      await validateTaskKindEnablement(settings, input.kindKey, input.enabled);
+      const taskKind = await settings.createTaskKind({ ...input, actorUserId: actor.id });
+      await audit.record({
+        eventName: "task_kind.created",
+        actor,
+        subjectType: "task_kind",
+        subjectId: taskKind.id,
+        requestId,
+        metadata: {
+          kindKey: taskKind.kind_key,
+          providerKind: taskKind.provider_kind,
+          capabilityKey: taskKind.capability_key,
+          promptFieldsEnabled: taskKind.prompt_fields_enabled,
+          enabled: taskKind.enabled
+        },
+        redactionApplied: true
+      });
+      return { taskKind: serializeTaskKind(taskKind) };
+    });
+  }
+
+  async updateTaskKind(
+    taskKindId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<Record<string, unknown>> {
+    const input = parseUpdateTaskKindBody(body);
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const existing = await settings.findTaskKindById(taskKindId);
+      if (existing === null) {
+        throw new HttpError(404, "not_found", "task_kind was not found.");
+      }
+      await validateTaskKindEnablement(settings, existing.kind_key, input.enabled);
+      const taskKind = await settings.updateTaskKind({ taskKindId, ...input, actorUserId: actor.id });
+      if (taskKind === null) {
+        throw new HttpError(404, "not_found", "task_kind was not found.");
+      }
+      await audit.record({
+        eventName: "task_kind.updated",
+        actor,
+        subjectType: "task_kind",
+        subjectId: taskKind.id,
+        requestId,
+        metadata: {
+          kindKey: taskKind.kind_key,
+          providerKind: taskKind.provider_kind,
+          capabilityKey: taskKind.capability_key,
+          promptFieldsEnabled: taskKind.prompt_fields_enabled,
+          enabled: taskKind.enabled,
+          active: taskKind.active
+        },
+        redactionApplied: true
+      });
+      return { taskKind: serializeTaskKind(taskKind) };
+    });
+  }
+
   async updateAiTaskRoute(
     taskDefinitionId: string,
     body: unknown,
@@ -910,6 +982,37 @@ function parseExtractionBody(body: unknown) {
   };
 }
 
+function parseCreateTaskKindBody(body: unknown) {
+  const record = parseObject(body);
+  const displayName = assertNonEmptyString(record.displayName, "displayName");
+  const promptFieldsEnabled = parseOptionalBoolean(record.promptFieldsEnabled, "promptFieldsEnabled") ?? false;
+  const enabled = parseOptionalBoolean(record.enabled, "enabled") ?? false;
+  return {
+    kindKey: deriveTaskKey(displayName),
+    displayName,
+    description: record.description === undefined ? null : optionalString(record.description, "description"),
+    providerKind: parseConfigKey(record.providerKind, "providerKind"),
+    capabilityKey: parseConfigKey(record.capabilityKey, "capabilityKey"),
+    promptFieldsEnabled,
+    enabled
+  };
+}
+
+function parseUpdateTaskKindBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    displayName:
+      record.displayName === undefined ? undefined : assertNonEmptyString(record.displayName, "displayName"),
+    description: record.description === undefined ? undefined : optionalString(record.description, "description"),
+    providerKind: record.providerKind === undefined ? undefined : parseConfigKey(record.providerKind, "providerKind"),
+    capabilityKey:
+      record.capabilityKey === undefined ? undefined : parseConfigKey(record.capabilityKey, "capabilityKey"),
+    promptFieldsEnabled: parseOptionalBoolean(record.promptFieldsEnabled, "promptFieldsEnabled"),
+    enabled: parseOptionalBoolean(record.enabled, "enabled"),
+    active: parseOptionalBoolean(record.active, "active")
+  };
+}
+
 function parseAiTaskRouteBody(body: unknown) {
   const record = parseObject(body);
   const enabled = record.enabled;
@@ -921,6 +1024,35 @@ function parseAiTaskRouteBody(body: unknown) {
     modelName: record.modelName === undefined ? undefined : optionalString(record.modelName, "modelName"),
     enabled
   };
+}
+
+function parseOptionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new HttpError(400, "invalid_request", `${field} must be a boolean.`);
+  }
+  return value;
+}
+
+async function validateTaskKindEnablement(
+  settings: SettingsRepository,
+  kindKey: string,
+  enabled: boolean | undefined
+): Promise<void> {
+  if (enabled !== true) {
+    return;
+  }
+  if (await settings.taskKindHasImplementedRoute(kindKey)) {
+    return;
+  }
+  throw new HttpError(
+    409,
+    "task_kind_route_not_implemented",
+    "Task kind cannot be enabled until a protected task route is implemented.",
+    { kindKey }
+  );
 }
 
 async function validateAiTaskRouteUpdate(

@@ -98,6 +98,8 @@ export interface SettingsOperations {
   updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  createTaskKind(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  updateTaskKind(taskKindId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createAiTaskDefinition(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateAiTaskRoute(taskDefinitionId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createMediaType(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
