@@ -157,6 +157,7 @@ function readLlmTaskRuntimeConfig(env: NodeJS.ProcessEnv): Record<string, LlmTas
   const fallbackEndpoint = readStringEnv(env, "LLM_ENDPOINT", "");
   const tasks = [
     ["memo-expansion", "MEMO_EXPANSION"],
+    ["revise-memo", "REVISE_MEMO"],
     ["suggest-new-memos", "SUGGEST_NEW_MEMOS"],
     ["suggest-tags", "SUGGEST_TAGS"],
     ["ocr", "OCR"]

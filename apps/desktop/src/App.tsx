@@ -409,6 +409,7 @@ interface NewAiTaskDraft {
   providerConfigId: string;
   modelName: string;
   promptsEnabled: boolean;
+  promptDraft: PromptDraft;
   enabled: boolean;
 }
 
@@ -661,6 +662,12 @@ const defaultNewAiTaskDraft: NewAiTaskDraft = {
   providerConfigId: "",
   modelName: "",
   promptsEnabled: false,
+  promptDraft: {
+    freeformText: "",
+    includeProjectSynopsis: true,
+    includeMemoMetadata: true,
+    includeMemoTranscriptText: true
+  },
   enabled: false
 };
 const defaultNewProviderDraft: NewProviderDraft = {
@@ -1490,6 +1497,7 @@ export function App() {
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
   const registeredTaskHooks = settingsSummary?.registeredTaskHooks ?? [];
+  const firstRegisteredTaskHookKey = registeredTaskHooks[0]?.hookKey ?? "";
   const memoExpansionTask = useMemo(
     () => (settingsSummary?.aiTasks ?? []).find((task) => task.taskKey === "memo-expansion") ?? null,
     [settingsSummary]
@@ -1892,6 +1900,13 @@ export function App() {
       )
     );
   }, [settingsSummary]);
+
+  useEffect(() => {
+    if (newAiTaskDraft.hookKey !== "" || firstRegisteredTaskHookKey === "") {
+      return;
+    }
+    updateNewAiTaskDraft("hookKey", firstRegisteredTaskHookKey);
+  }, [firstRegisteredTaskHookKey, newAiTaskDraft.hookKey]);
 
   useEffect(() => {
     setProjectThresholdDraft(
@@ -3133,12 +3148,26 @@ export function App() {
     setNewAiTaskDraft((current) => ({ ...current, [field]: value }));
   }
 
+  function updateNewAiTaskPromptDraft<Field extends keyof PromptDraft>(field: Field, value: PromptDraft[Field]) {
+    setNewAiTaskDraft((current) => ({
+      ...current,
+      promptDraft: {
+        ...current.promptDraft,
+        [field]: value
+      }
+    }));
+  }
+
   async function createAiTaskDefinition() {
     if (accessToken === null) {
       return;
     }
     if (newAiTaskDraft.displayName.trim() === "" || newAiTaskDraft.hookKey.trim() === "") {
       setStatusMessage("Task name and hook key are required.");
+      return;
+    }
+    if (newAiTaskDraft.promptsEnabled && newAiTaskDraft.promptDraft.freeformText.trim() === "") {
+      setStatusMessage("Prompt text is required when prompts are enabled.");
       return;
     }
     setAiTaskCreateInFlight(true);
@@ -3153,6 +3182,12 @@ export function App() {
           providerConfigId: newAiTaskDraft.providerConfigId === "" ? null : newAiTaskDraft.providerConfigId,
           modelName: newAiTaskDraft.modelName,
           promptsEnabled: newAiTaskDraft.promptsEnabled,
+          initialPromptText: newAiTaskDraft.promptsEnabled
+            ? newAiTaskDraft.promptDraft.freeformText
+            : undefined,
+          includeProjectSynopsis: newAiTaskDraft.promptDraft.includeProjectSynopsis,
+          includeMemoMetadata: newAiTaskDraft.promptDraft.includeMemoMetadata,
+          includeMemoTranscriptText: newAiTaskDraft.promptDraft.includeMemoTranscriptText,
           enabled: newAiTaskDraft.enabled
         })
       });
@@ -5715,31 +5750,23 @@ export function App() {
                             type="text"
                             value={newAiTaskDraft.displayName}
                             disabled={aiTaskCreateInFlight}
-                            onChange={(event) => {
-                              const displayName = event.currentTarget.value;
-                              updateNewAiTaskDraft("displayName", displayName);
-                              if (newAiTaskDraft.hookKey === "") {
-                                updateNewAiTaskDraft("hookKey", deriveTaskKeyPreview(displayName));
-                              }
-                            }}
+                            onChange={(event) => updateNewAiTaskDraft("displayName", event.currentTarget.value)}
                           />
                         </label>
                         <label>
                           <span>Hook Key</span>
-                          <input
-                            type="text"
-                            list="registered-task-hooks"
+                          <select
                             value={newAiTaskDraft.hookKey}
                             disabled={aiTaskCreateInFlight}
                             onChange={(event) => updateNewAiTaskDraft("hookKey", event.currentTarget.value)}
-                          />
-                          <datalist id="registered-task-hooks">
+                          >
+                            {registeredTaskHooks.length === 0 ? <option value="">No registered hooks</option> : null}
                             {registeredTaskHooks.map((hook) => (
                               <option value={hook.hookKey} key={hook.hookKey}>
-                                {hook.displayName}
+                                {hook.hookKey}
                               </option>
                             ))}
-                          </datalist>
+                          </select>
                         </label>
                         <label>
                           <span>Provider Key</span>
@@ -5816,6 +5843,66 @@ export function App() {
                           Add task
                         </button>
                       </div>
+                      {!newAiTaskDraft.promptsEnabled ? null : (
+                        <div className="prompt-editor-row task-prompt-editor">
+                          <div className="prompt-editor-header">
+                            <div>
+                              <div className="batch-title">
+                                <strong>Prompt options</strong>
+                                <span>Initial prompt</span>
+                              </div>
+                              <p>These settings create the task-owned current prompt.</p>
+                            </div>
+                          </div>
+                          <div className="field-group">
+                            <label htmlFor="new-task-prompt-freeform">Prompt text</label>
+                            <textarea
+                              id="new-task-prompt-freeform"
+                              value={newAiTaskDraft.promptDraft.freeformText}
+                              rows={6}
+                              disabled={aiTaskCreateInFlight}
+                              onChange={(event) =>
+                                updateNewAiTaskPromptDraft("freeformText", event.currentTarget.value)
+                              }
+                            />
+                          </div>
+                          <div className="prompt-toggle-grid">
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={newAiTaskDraft.promptDraft.includeProjectSynopsis}
+                                disabled={aiTaskCreateInFlight}
+                                onChange={(event) =>
+                                  updateNewAiTaskPromptDraft("includeProjectSynopsis", event.currentTarget.checked)
+                                }
+                              />
+                              Project synopsis
+                            </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={newAiTaskDraft.promptDraft.includeMemoMetadata}
+                                disabled={aiTaskCreateInFlight}
+                                onChange={(event) =>
+                                  updateNewAiTaskPromptDraft("includeMemoMetadata", event.currentTarget.checked)
+                                }
+                              />
+                              Memo metadata
+                            </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                checked={newAiTaskDraft.promptDraft.includeMemoTranscriptText}
+                                disabled={aiTaskCreateInFlight}
+                                onChange={(event) =>
+                                  updateNewAiTaskPromptDraft("includeMemoTranscriptText", event.currentTarget.checked)
+                                }
+                              />
+                              Memo text/transcript
+                            </label>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </article>
 
@@ -5873,15 +5960,22 @@ export function App() {
                               </label>
                               <label>
                                 <span>Hook Key</span>
-                                <input
-                                  type="text"
-                                  list="registered-task-hooks"
+                                <select
                                   value={draft.hookKey}
                                   disabled={aiTaskIdInFlight === task.id}
                                   onChange={(event) =>
                                     updateAiTaskRouteDraft(task.id, "hookKey", event.currentTarget.value)
                                   }
-                                />
+                                >
+                                  {registeredTaskHooks.map((hook) => (
+                                    <option value={hook.hookKey} key={hook.hookKey}>
+                                      {hook.hookKey}
+                                    </option>
+                                  ))}
+                                  {registeredTaskHooks.some((hook) => hook.hookKey === draft.hookKey) ? null : (
+                                    <option value={draft.hookKey}>{draft.hookKey}</option>
+                                  )}
+                                </select>
                               </label>
                               <label>
                                 <span>Provider Key</span>
@@ -6477,7 +6571,18 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
         }))
       : [],
     appLauncher: summary.appLauncher ?? null,
-    registeredTaskHooks: Array.isArray(summary.registeredTaskHooks) ? summary.registeredTaskHooks : [],
+    registeredTaskHooks: Array.isArray(summary.registeredTaskHooks)
+      ? summary.registeredTaskHooks
+          .filter((hook) => typeof hook.hookKey === "string" && hook.hookKey.trim() !== "")
+          .map((hook) => ({
+            hookKey: hook.hookKey,
+            displayName:
+              typeof hook.displayName === "string" && hook.displayName.trim() !== ""
+                ? hook.displayName
+                : hook.hookKey,
+            implemented: hook.implemented === true
+          }))
+      : [],
     prompts: Array.isArray(summary.prompts)
       ? summary.prompts.map((prompt) => normalizePromptSummary(prompt))
       : [],

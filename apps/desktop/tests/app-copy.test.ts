@@ -50,7 +50,10 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /Add provider/);
   assert.match(appSource, /\/api\/settings\/providers/);
   assert.match(appSource, /Key: \{deriveTaskKeyPreview\(newAiTaskDraft\.displayName\)\}/);
-  assert.match(appSource, /registered-task-hooks/);
+  assert.match(appSource, /firstRegisteredTaskHookKey/);
+  assert.match(appSource, /newAiTaskDraft\.promptDraft\.freeformText/);
+  assert.match(appSource, /includeProjectSynopsis: newAiTaskDraft\.promptDraft\.includeProjectSynopsis/);
+  assert.doesNotMatch(appSource, /list="registered-task-hooks"/);
   assert.match(appSource, /Add task/);
   assert.match(appSource, /Save task/);
   assert.match(appSource, /\/api\/settings\/prompts\/\$\{encodeURIComponent\(prompt\.id\)\}\/current/);

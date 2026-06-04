@@ -14,6 +14,7 @@ const desktopPort = process.env.MEMO_CAPTURE_DESKTOP_PORT ?? process.env.PORT ??
 const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
 const desktopUrl = `http://127.0.0.1:${desktopPort}/`;
 const workflowBundlePath = path.join(root, "docs/design/memo-capture-0.2.2-workflow-definition-bundled.json");
+const requiredTaskHooks = ["memo-expansion", "revise-memo", "suggest-new-memos", "suggest-tags"];
 const children = new Set();
 let shuttingDown = false;
 
@@ -121,6 +122,31 @@ async function waitForHttp(url, timeoutMs) {
     await delay(500);
   }
   return false;
+}
+
+async function apiSettingsContractOk() {
+  try {
+    const sessionResponse = await fetch(`${apiBaseUrl}/api/dev-auth/session`, { method: "POST" });
+    if (!sessionResponse.ok) {
+      return false;
+    }
+    const session = await sessionResponse.json();
+    const settingsResponse = await fetch(`${apiBaseUrl}/api/settings`, {
+      headers: {
+        authorization: `Bearer ${session.accessToken}`
+      }
+    });
+    if (!settingsResponse.ok) {
+      return false;
+    }
+    const settings = await settingsResponse.json();
+    const hookKeys = Array.isArray(settings.registeredTaskHooks)
+      ? settings.registeredTaskHooks.map((hook) => hook?.hookKey)
+      : [];
+    return Array.isArray(settings.aiTasks) && requiredTaskHooks.every((hookKey) => hookKeys.includes(hookKey));
+  } catch {
+    return false;
+  }
 }
 
 function delay(ms) {
@@ -245,8 +271,12 @@ try {
   log("Applying database migrations.");
   runChecked(npmBin, ["run", "db:migrate"]);
 
-  if (await httpOk(`${apiBaseUrl}/health`)) {
+  if ((await httpOk(`${apiBaseUrl}/health`)) && (await apiSettingsContractOk())) {
     log("API is already running.");
+  } else if (await tcpReachable("127.0.0.1", Number(apiPort), 1000)) {
+    throw new Error(
+      `Port ${apiPort} is occupied by a Memo Capture API that does not expose the current Settings contract. Stop that process and relaunch.`
+    );
   } else {
     spawnService("API", ["run", "dev", "-w", "@memo-capture/api"]);
     if (!(await waitForHttp(`${apiBaseUrl}/health`, 30_000))) {

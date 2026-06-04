@@ -441,7 +441,7 @@ export class SettingsService {
               purpose: `Prompt for ${input.displayName}.`,
               body: input.initialPromptText,
               outputSchema: {},
-              contextConfig: defaultPromptContextConfig(input.initialPromptText),
+              contextConfig: input.initialPromptContextConfig,
               actorUserId: actor.id
             })
           : null;
@@ -1337,6 +1337,16 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
       record.initialPromptText === undefined
         ? `Return strict JSON for ${displayName}. Do not include prose outside JSON.`
         : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
+    initialPromptContextConfig: defaultPromptContextConfig(
+      record.initialPromptText === undefined
+        ? `Return strict JSON for ${displayName}. Do not include prose outside JSON.`
+        : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
+      {
+        includeProjectSynopsis: parsePromptToggle(record.includeProjectSynopsis, "includeProjectSynopsis"),
+        includeMemoMetadata: parsePromptToggle(record.includeMemoMetadata, "includeMemoMetadata"),
+        includeMemoTranscriptText: parsePromptToggle(record.includeMemoTranscriptText, "includeMemoTranscriptText")
+      }
+    ),
     runtimeOptionId: `${taskKey}-provider`,
     runtimeOptionPurpose: taskKey,
     runtimeProviderEnv: `${runtimeEnvPrefix}_PROVIDER`,
@@ -1389,12 +1399,19 @@ function promptNameForTaskKey(taskKey: string): string {
   return `task_${taskKey.replace(/[^a-z0-9]+/g, "_")}`;
 }
 
-function defaultPromptContextConfig(freeformText: string): Record<string, unknown> {
+function defaultPromptContextConfig(
+  freeformText: string,
+  toggles: {
+    includeProjectSynopsis?: boolean;
+    includeMemoMetadata?: boolean;
+    includeMemoTranscriptText?: boolean;
+  } = {}
+): Record<string, unknown> {
   return {
     freeformText,
-    includeProjectSynopsis: true,
-    includeMemoMetadata: true,
-    includeMemoTranscriptText: true
+    includeProjectSynopsis: toggles.includeProjectSynopsis ?? true,
+    includeMemoMetadata: toggles.includeMemoMetadata ?? true,
+    includeMemoTranscriptText: toggles.includeMemoTranscriptText ?? true
   };
 }
 

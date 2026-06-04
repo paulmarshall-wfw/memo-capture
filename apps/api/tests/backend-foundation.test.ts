@@ -89,7 +89,12 @@ test("AI task creation derives task key and reports duplicate derived key confli
     {
       displayName: "Custom Digest",
       hookKey: "custom-digest",
-      taskKind: "llm"
+      taskKind: "llm",
+      promptsEnabled: true,
+      initialPromptText: "Summarize this memo as strict JSON.",
+      includeProjectSynopsis: false,
+      includeMemoMetadata: true,
+      includeMemoTranscriptText: false
     },
     session.user,
     "request-create-task"
@@ -99,6 +104,15 @@ test("AI task creation derives task key and reports duplicate derived key confli
   assert.equal(created.aiTask.hookImplemented, false);
   assert.equal(created.aiTask.routeEnabled, false);
   assert.equal(typeof created.aiTask.prompt.id, "string");
+  const createdPromptVersion = db.promptVersions.find(
+    (row) => row.prompt_definition_id === created.aiTask.prompt.id
+  );
+  assert.deepEqual(createdPromptVersion?.context_config, {
+    freeformText: "Summarize this memo as strict JSON.",
+    includeProjectSynopsis: false,
+    includeMemoMetadata: true,
+    includeMemoTranscriptText: false
+  });
 
   await assert.rejects(
     () =>
