@@ -4,18 +4,17 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-04T10:51:44Z
+- Created timestamp UTC: 2026-06-04T22:31:39Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: local development database migration repair and continuity refresh.
+- Session scope: refresh hot continuity state after the Settings task/runtime/hook registry implementation work.
 
 ### Checkpoint Status
 
-- Git HEAD: `9d1a29e`
+- Git HEAD: `2f78e9c`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `docs/completed-tasks.md`
   - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
@@ -26,127 +25,164 @@
 - Canonical files described:
   - `handoff.md`
   - `docs/completed-tasks.md`
-  - `apps/api/db/migrations/0021_llm_task_routing_and_runtime_options.sql`
-  - `apps/api/db/migrations/0024_simplify_provider_task_settings.sql`
-  - `apps/api/db/migrations/0025_remove_seeded_ai_tasks.sql`
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/settings-and-audit.md`
+  - `apps/api/db/migrations/0026_generic_llm_runtime_options.sql`
+  - `apps/api/db/migrations/0027_processing_hooks_registry.sql`
+  - `apps/api/src/services/settings.ts`
+  - `apps/api/src/services/ai-expansion.ts`
+  - `apps/api/src/repositories/settings.ts`
+  - `apps/api/src/server.ts`
+  - `apps/desktop/src/App.tsx`
+  - `scripts/applauncher-dev.mjs`
   - `scripts/applauncher-native-dev.mjs`
-  - `scripts/applauncher-native-dev.sh`
 - Last verification:
-  - command: `npm run db:migrate`; repeat `npm run db:migrate`; Postgres `schema_migrations`/`ai_task_definitions` checks; `curl -sS http://127.0.0.1:4788/health`; native process check
-  - result: passed
-  - timestamp UTC: 2026-06-04T10:51:16Z
+  - command: `not run in this handoff-only session`
+  - result: not run
+  - timestamp UTC: unknown
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD` is recorded, only this handoff and the completed-task ledger are dirty, local Postgres is migrated through `0025`, the migration lane is idempotent, and the normal native helper restarted the app successfully.
-- Next checkpoint action: review and commit the two documentation updates only if explicitly requested.
+- Safe-to-continue basis: current `HEAD` is recorded, the completed-task ledger already contains the latest Processing Hooks registry entry, and the only intentional working-tree change is this refreshed handoff.
+- Next checkpoint action: review `git diff -- handoff.md`; commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-The repo is now at `main` `9d1a29e` after the AI task unseeding and prompt-save cleanup. The immediate operational issue was the local development database: the normal native helper could not start because previously applied migrations `0021` and `0024` had checksum drift relative to the current checked-in files.
+The repo is now on `main` at `2f78e9c` after the Settings/runtime cleanup around generic LLM runtime options and configurable Processing Hooks.
 
 Complete now:
 
-- Local `schema_migrations` checksums for `0021` and `0024` match the current repo files.
-- `0025_remove_seeded_ai_tasks` is applied to local database `memo_capture`.
-- A second migration pass applied nothing and skipped `0001` through `0025`.
-- `ai_task_definitions` is empty, matching the current Settings behavior where users create tasks themselves.
-- Normal native launch via `scripts/applauncher-native-dev.sh` now runs migrations, starts API/worker, and opens `Memo Capture.app`.
+- Task routing is separate from AppLauncher LLM runtime selection. AppLauncher exposes generic non-secret LLM runtime selectors rather than task-specific runtime options.
+- Tasks dispatch by app-owned `hookKey`; multiple task definitions can share one hook.
+- Tasks Settings hook controls use registered hook selections, while preserving existing custom hook values.
+- Processing Hooks are persisted as Settings-managed registry records with create/delete APIs, status display, and task dropdown backing.
+- The latest completed-task ledger entry for `Add configurable Processing Hooks registry` is present.
+
+Incomplete now:
+
+- No new product work is in progress in the working tree.
+- `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are absent, so handoff freshness is checked manually from Git state.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: leave Memo Capture safe for the next implementation or testing session after the local migration repair.
+Immediate goal: leave a fresh session with an accurate current checkpoint after the latest Settings/hooks work.
 
 Intended finished state:
 
-- The local dev DB no longer blocks normal native startup.
-- The current handoff describes `HEAD` `9d1a29e`, not the older dirty settings slice.
-- Completed work is recorded in `docs/completed-tasks.md`.
+- `handoff.md` describes `HEAD` `2f78e9c`.
+- The current clean-code checkpoint and this handoff-only dirty tree are explicitly accounted for.
+- The completed-task ledger remains the source for completed work history.
 
-Definition of done: met, except the documentation edits are intentionally uncommitted.
+Definition of done: update this handoff and verify the resulting dirty tree contains only the handoff refresh.
 
 ## 4. Current State
 
 ### Working
 
-- Local Postgres container `memo-capture-postgres-16-8` is reachable on `127.0.0.1:5432`.
-- Local database `memo_capture` has migrations `0001` through `0025` recorded.
-- `0025_remove_seeded_ai_tasks` deleted the earlier built-in task definition rows.
-- API health returns `ok: true` on `http://127.0.0.1:4788/health`.
-- Native `memo-capture-desktop` is running after restart through the normal helper.
-- Active workflow remains `0.2.5` according to the native launch log.
+- Root scripts remain:
+  - `npm install`
+  - `npm run dev:desktop`
+  - `npm run dev:api`
+  - `npm run dev:worker`
+  - `npm test`
+  - `npm run test:postgres`
+  - `npm run typecheck`
+  - `npm run build`
+  - `npm run verify`
+- Latest implementation checkpoint is `2f78e9c Add configurable processing hooks registry`.
+- Migration `0026_generic_llm_runtime_options` normalizes AI task runtime metadata around generic LLM runtime options.
+- Migration `0027_processing_hooks_registry` adds the persisted Processing Hooks registry.
+- Settings now exposes Providers, Processing Hooks, and Tasks as separate surfaces.
+- Processing Hooks can be created and deleted through Settings APIs/UI, with delete blocked while tasks reference the hook.
+- Hook implementation status is derived from backend app code; unimplemented hooks remain default no-ops and must not call providers.
+- Launcher scripts include current Settings contract checks to avoid reusing stale APIs.
 
 ### Partially Working
 
-- `schema_migrations` checksum reconciliation was done only on the local development database. This was an operational repair, not a repo schema change.
-- The latest code already includes `0025`; the current dirty tree is documentation-only.
+- Configurable hooks are registry-backed, but only hooks with backend handlers are implemented behavior. Custom hooks remain no-op until app code registers real logic.
+- The local development database status was not rechecked during this handoff-only pass. The last handoff described migrations applied through `0025`; the completed ledger records verification for `0026` and `0027`.
 
 ### Not Working Yet
 
-- Handoff helper scripts referenced by the handoff skill are absent in this repo (`scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` do not exist), so freshness was verified manually from Git state and file existence.
+- Handoff helper scripts referenced by the handoff skill are not present in this repo:
+  - `scripts/handoff_status.py`
+  - `scripts/verify_handoff_freshness.py`
 
 ### Not Yet Verified
 
-- Full `npm run verify` was not rerun after this docs-only handoff/ledger update.
-- No fresh browser click-through was run after the migration repair; the native app opened and issued API requests in the launch log.
+- No fresh `npm run verify`, `npm run test:postgres`, browser smoke, or native launch was run during this handoff-only refresh.
+- The latest ledger entry records that `npm run verify`, `npm run test:postgres`, `npm run build`, and native `.app` rebuild passed for the Processing Hooks registry work.
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
-- Do not commit, tag, release, publish, delete files, or install dependencies unless explicitly requested.
+- Do not commit, tag, release, publish, delete files, install dependencies, or mutate app/browser state unless explicitly requested.
 - Never use `latest`; always use numbered versions.
-- Use `npm run test:postgres` for database-sensitive automated checks; it resets only isolated `memo_capture_test`, not shared dev database `memo_capture`.
-- Do not point resettable automated lanes at the shared development database.
-- For native-testable changes, rebuild or launch the runnable `.app`; do not create a DMG unless explicitly requested.
-- Applied migration files should not be edited in place. If local checksum drift appears again, inspect whether the live schema effect already exists before any local ledger repair.
+- Read `docs/design/memo-capture-design-learnings.md` before architecture, schema, workflow, ingestion, AI, or export work.
+- Providers are catalog/configuration records. Routing, prompt, readiness, and hook choices belong under Tasks/Processing Hooks, not Providers.
+- AppLauncher runtime options are non-secret selectors only. API keys stay in AppLauncher secrets or process environment values.
+- Task keys are derived from display names and should not be foregrounded as editable Settings UI.
+- Use `npm run test:postgres` for database-sensitive automated checks; it resets `memo_capture_test`, not shared local dev database `memo_capture`.
+- For native-testable changes, rebuild the runnable `.app` bundle before handoff; do not create a DMG unless explicitly requested.
 
 ## 6. Commands and Verification
 
-Passed for the migration repair:
+Most recent implementation verification recorded in `docs/completed-tasks.md` for `2f78e9c`:
 
 ```bash
-DATABASE_URL=postgres://memo_capture:memo_capture@127.0.0.1:5432/memo_capture npm run db:migrate
-DATABASE_URL=postgres://memo_capture:memo_capture@127.0.0.1:5432/memo_capture npm run db:migrate
-docker exec memo-capture-postgres-16-8 psql -U memo_capture -d memo_capture -c "select version, checksum, applied_at from schema_migrations order by version desc limit 5; select count(*) as ai_task_definitions from ai_task_definitions;"
-curl -sS http://127.0.0.1:4788/health
+npm run typecheck
+npm test
+npm run test:postgres
+npm run build
+npm run verify
+npm run tauri:build -w @memo-capture/desktop -- --bundles app
+git diff --check
 ```
 
-Notes:
-
-- The sandboxed migration attempt hit known `tsx` IPC `listen EPERM`; rerunning outside the sandbox with Node `22.14.0` passed.
-- The normal native helper log shows `db_migrations_complete` with `applied: []` and skipped `0001` through `0025`, then API and worker startup.
-- API health response: service `memo-capture-api`, version `0.1.0`, commitSha `dev`.
+Verification not rerun in this session because this was a handoff-only documentation refresh.
 
 Useful next commands:
 
 ```bash
 git status --short --branch
+git diff -- handoff.md
 git diff --check
 npm run verify
 npm run test:postgres
 ```
 
+Notes:
+
+- If sandboxed API route tests fail with `listen EPERM`, rerun outside the sandbox before treating the slice as failed.
+- If Docker-backed `npm run test:postgres` is denied by sandboxing, rerun outside the sandbox before treating Postgres behavior as unverified.
+
 ## 7. Files to Open First
 
 - `handoff.md`: hot current-state context.
-- `docs/completed-tasks.md`: completed work ledger; newest entry records the local migration repair.
-- `apps/api/db/migrations/0025_remove_seeded_ai_tasks.sql`: latest migration applied to local dev DB.
-- `apps/api/db/migrations/0021_llm_task_routing_and_runtime_options.sql`: edited applied migration whose local checksum was reconciled.
-- `apps/api/db/migrations/0024_simplify_provider_task_settings.sql`: edited applied migration whose local checksum was reconciled.
-- `scripts/applauncher-native-dev.mjs`: normal native bootstrap path that runs migrations and launches API/worker/native app.
-- `scripts/applauncher-native-dev.sh`: AppLauncher/native wrapper using Node `22.14.0`.
+- `docs/completed-tasks.md`: completed work ledger; newest entries cover generic LLM runtime options, hook dropdown rationalization, and Processing Hooks registry.
+- `docs/design/memo-capture-design-learnings.md`: active product/design rules for workflow, AI tasks, providers, tags, and ingestion.
+- `docs/specs/settings-and-audit.md`: Settings contract documentation for providers, tasks, hooks, prompts, and audit.
+- `apps/api/db/migrations/0026_generic_llm_runtime_options.sql`: task/runtime normalization checkpoint.
+- `apps/api/db/migrations/0027_processing_hooks_registry.sql`: Processing Hooks registry schema.
+- `apps/api/src/services/settings.ts`: Settings business rules, task readiness, hook registry behavior.
+- `apps/api/src/repositories/settings.ts`: Settings persistence for providers, tasks, processing hooks, and prompts.
+- `apps/api/src/services/ai-expansion.ts`: AI task dispatch and generic runtime readiness checks.
+- `apps/desktop/src/App.tsx`: Settings UI for Providers, Processing Hooks, Tasks, and runtime status.
+- `scripts/applauncher-dev.mjs`: web AppLauncher/dev API reuse contract checks.
+- `scripts/applauncher-native-dev.mjs`: native AppLauncher/dev API reuse contract checks.
 
 ## 8. Next Actions
 
 Next:
 
-- Review `git diff -- docs/completed-tasks.md handoff.md`.
-- Commit the documentation updates only if explicitly requested.
+- Review `git diff -- handoff.md`.
+- If doing more Settings/hooks work, start by opening the files listed above and keep Providers catalog-only.
 
 Later:
 
 - Run `npm run verify` before any code commit after additional implementation work.
-- Use `npm run test:postgres` for future database-sensitive regression checks.
+- Run `npm run test:postgres` for any migration, SQL, locking, Settings persistence, or route-readiness change.
+- Rebuild `Memo Capture.app` after user-facing or native-testable changes.
 
 Blocked:
 
@@ -154,4 +190,4 @@ Blocked:
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current code checkpoint as `main` at `9d1a29e` with only documentation edits in scope unless Git says otherwise. Open `docs/completed-tasks.md`, `apps/api/db/migrations/0025_remove_seeded_ai_tasks.sql`, `apps/api/db/migrations/0021_llm_task_routing_and_runtime_options.sql`, `apps/api/db/migrations/0024_simplify_provider_task_settings.sql`, and `scripts/applauncher-native-dev.mjs` first. Preserve the database testing split: use `npm run test:postgres` for resettable DB checks against `memo_capture_test`, and do not reset the shared `memo_capture` development database. Distinguish confirmed current state from any new recommendations, and do not commit unless explicitly asked.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `2f78e9c`, with only `handoff.md` intentionally dirty unless Git says otherwise. Check `docs/completed-tasks.md` only for completed work history; do not duplicate it. Open `docs/design/memo-capture-design-learnings.md`, `docs/specs/settings-and-audit.md`, `apps/api/src/services/settings.ts`, `apps/api/src/repositories/settings.ts`, `apps/api/src/services/ai-expansion.ts`, `apps/desktop/src/App.tsx`, and the latest Settings migrations first. Preserve active constraints: Providers stay catalog-only, Tasks own routing/prompt/readiness, Processing Hooks are app-owned registry entries, AppLauncher runtime options are generic non-secret selectors, and custom hooks are no-op until backend app code implements them. Execute next actions in order, distinguish confirmed state from new recommendations, and do not commit unless explicitly asked.
