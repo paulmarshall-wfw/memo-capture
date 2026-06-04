@@ -203,6 +203,41 @@ Rules:
 - Provider failures mark the provider unhealthy and show diagnostics; they do not auto-disable providers.
 - Multiple providers of the same kind may be configured at the same time. App-owned jobs should route by explicit purpose/runtime provider where available rather than assuming only one enabled provider exists.
 
+### task_kinds
+
+Required columns:
+
+- `id uuid primary key`
+- `kind_key text not null unique`
+- `display_name text not null`
+- `description text`
+- `provider_kind text not null`
+- `capability_key text not null`
+- `prompt_fields_enabled boolean not null default false`
+- `enabled boolean not null default true`
+- `active boolean not null default true`
+- timestamps and actor columns
+
+Rules:
+
+- Task kinds define routing compatibility and whether prompt fields apply.
+- V1 seeds `llm`, `ocr`, `stt`, and `tts`; only enabled/active kinds are selectable for new tasks.
+
+### provider_capabilities
+
+Required columns:
+
+- `id uuid primary key`
+- `provider_config_id uuid not null references provider_configs(id)`
+- `capability_key text not null`
+- `enabled boolean not null default true`
+- timestamps
+
+Rules:
+
+- Provider capabilities let task routes filter compatible provider instances.
+- A provider kind match is required but not sufficient when the task kind declares a capability key.
+
 ### ai_task_definitions
 
 Required columns:
@@ -213,6 +248,8 @@ Required columns:
 - `description text`
 - `hook_key text not null`
 - `task_kind text not null default 'llm'`
+- `task_kind_id uuid references task_kinds(id)`
+- `prompt_definition_id uuid references prompt_definitions(id)`
 - `implemented boolean not null default false`
 - `default_provider_name text`
 - `default_model_name text`
@@ -234,6 +271,7 @@ Rules:
 
 - `implemented = true` only when app code has a registered handler for the hook.
 - User-created tasks are allowed, but start as `implemented = false`.
+- User-created `task_key` values are derived from `display_name`; callers do not provide manual task keys.
 - Unknown hooks must display `Not implemented`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
 - OCR is modeled as a task in V1, but remains no-op until OCR handler logic is implemented.
 
@@ -251,7 +289,8 @@ Required columns:
 Rules:
 
 - Global task routes are the V1 routing model.
-- A task runs only when the route is enabled, the hook is implemented, the selected provider is enabled, and AppLauncher/runtime env selects that same provider.
+- A task runs only when the route is enabled, the hook is implemented, the selected provider is enabled and compatible, required secrets are present, and AppLauncher/runtime env selects that same provider.
+- Enabling a route is rejected server-side if the hook is unimplemented, the provider is incompatible, the provider is disabled, a required secret is missing, or the runtime option does not match.
 - Model overrides are per route and affect only new processing attempts.
 
 ### prompt_definitions
@@ -535,7 +574,6 @@ Request:
 
 ```json
 {
-  "taskKey": "custom-summary",
   "displayName": "Custom summary",
   "description": "Summarize a memo for a downstream workflow.",
   "hookKey": "custom-summary",
@@ -543,7 +581,7 @@ Request:
 }
 ```
 
-Creates a user-extensible task hook with a disabled route and `implemented = false`. The task is visible in Settings as `Not implemented`; processing attempts must no-op until app logic exists.
+Creates a user-extensible task hook with a server-derived `taskKey` of `custom-summary`, a disabled route, and `implemented = false` unless `hookKey` matches registered app logic. The task is visible in Settings as `Not implemented`; processing attempts must no-op until app logic exists.
 
 ### Update AI task route
 
@@ -559,7 +597,7 @@ Request:
 }
 ```
 
-Updates the global route for one AI task. The route is ready only when the selected provider is enabled, the AppLauncher runtime option selects the same provider, required secrets are configured, and the hook is implemented.
+Updates the global route for one AI task. The route can be enabled only when the selected provider is compatible with the task kind/capability, the selected provider is enabled, the AppLauncher runtime option selects the same provider, required secrets are configured, and the hook is implemented.
 
 ### List audit events
 
@@ -610,8 +648,8 @@ Settings sections:
 
 - Watched folders and desktop-local paths
 - File types
-- AI prompts
 - Providers
+- Tasks
 - Export contract
 - Operations
 - Diagnostics
@@ -622,7 +660,13 @@ Providers section:
 
 - AppLauncher status shows manifest/runtime option readiness, required secret env names, and relaunch guidance after runtime changes.
 - Provider catalog shows enabled state, adapter, endpoint/model metadata, external-send posture, redacted secret status, and health.
-- Task routing shows task name, hook key, implementation status, provider selection, optional model override, and readiness reason.
+
+Tasks section:
+
+- Task kinds show provider kind, capability key, prompt-field support, and enabled/active status.
+- Task creation accepts display name, hook key, task kind, and description; the task key is derived and previewed read-only.
+- Task routing shows task name, hook key, implementation status, compatible provider selection, optional model override, route enablement, and readiness reason.
+- Prompt editing is attached to prompt-backed task rows, preserving versioning and context toggles.
 - User-created task hooks can be added from Settings, but they show `Not implemented` until app logic exists and must not process work.
 
 Operations section:

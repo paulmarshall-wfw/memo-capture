@@ -61,6 +61,27 @@ export interface ProviderConfigRow extends Record<string, unknown> {
   updated_at: Date | string;
 }
 
+export interface TaskKindRow extends Record<string, unknown> {
+  id: string;
+  kind_key: string;
+  display_name: string;
+  description: string | null;
+  provider_kind: string;
+  capability_key: string;
+  prompt_fields_enabled: boolean;
+  enabled: boolean;
+  active: boolean;
+  updated_at: Date | string;
+}
+
+export interface ProviderCapabilityRow extends Record<string, unknown> {
+  id: string;
+  provider_config_id: string;
+  capability_key: string;
+  enabled: boolean;
+  updated_at: Date | string;
+}
+
 export interface AiTaskRouteRow extends Record<string, unknown> {
   id: string;
   task_key: string;
@@ -68,6 +89,12 @@ export interface AiTaskRouteRow extends Record<string, unknown> {
   description: string | null;
   hook_key: string;
   task_kind: string;
+  task_kind_id: string | null;
+  task_kind_display_name: string | null;
+  task_kind_description: string | null;
+  task_kind_provider_kind: string | null;
+  task_kind_capability_key: string | null;
+  prompt_fields_enabled: boolean | null;
   implemented: boolean;
   default_provider_name: string | null;
   default_model_name: string | null;
@@ -90,6 +117,15 @@ export interface AiTaskRouteRow extends Record<string, unknown> {
   required_secret_env: string | null;
   external_send_enabled: boolean | null;
   health_status: string | null;
+  prompt_definition_id: string | null;
+  prompt_name: string | null;
+  prompt_purpose: string | null;
+  prompt_active_version: number | null;
+  active_prompt_version_id: string | null;
+  active_body: string | null;
+  active_output_schema: Record<string, unknown> | null;
+  active_context_config: Record<string, unknown> | null;
+  prompt_retention_policy: string | null;
   updated_at: Date | string;
 }
 
@@ -114,6 +150,12 @@ const aiTaskRouteSelectSql = `
     ai_task_definitions.description,
     ai_task_definitions.hook_key,
     ai_task_definitions.task_kind,
+    ai_task_definitions.task_kind_id,
+    task_kinds.display_name as task_kind_display_name,
+    task_kinds.description as task_kind_description,
+    task_kinds.provider_kind as task_kind_provider_kind,
+    task_kinds.capability_key as task_kind_capability_key,
+    task_kinds.prompt_fields_enabled,
     ai_task_definitions.implemented,
     ai_task_definitions.default_provider_name,
     ai_task_definitions.default_model_name,
@@ -136,10 +178,23 @@ const aiTaskRouteSelectSql = `
     provider_configs.required_secret_env,
     provider_configs.external_send_enabled,
     provider_configs.health_status,
+    prompt_definitions.id as prompt_definition_id,
+    prompt_definitions.name as prompt_name,
+    prompt_definitions.purpose as prompt_purpose,
+    prompt_definitions.active_version as prompt_active_version,
+    prompt_versions.id as active_prompt_version_id,
+    prompt_versions.body as active_body,
+    prompt_versions.output_schema as active_output_schema,
+    prompt_versions.context_config as active_context_config,
+    prompt_definitions.retention_policy as prompt_retention_policy,
     coalesce(ai_task_routes.updated_at, ai_task_definitions.updated_at) as updated_at
   from ai_task_definitions
+  left join task_kinds on task_kinds.id = ai_task_definitions.task_kind_id
   left join ai_task_routes on ai_task_routes.task_definition_id = ai_task_definitions.id
-  left join provider_configs on provider_configs.id = ai_task_routes.provider_config_id`;
+  left join provider_configs on provider_configs.id = ai_task_routes.provider_config_id
+  left join prompt_definitions on prompt_definitions.id = ai_task_definitions.prompt_definition_id
+  left join prompt_versions on prompt_versions.prompt_definition_id = prompt_definitions.id
+   and prompt_versions.version = prompt_definitions.active_version`;
 
 export class SettingsRepository {
   constructor(private readonly db: Queryable) {}
@@ -569,6 +624,63 @@ export class SettingsRepository {
     return result.rows;
   }
 
+  async listTaskKinds(): Promise<TaskKindRow[]> {
+    const result = await this.db.query<TaskKindRow>(
+      `select id, kind_key, display_name, description, provider_kind, capability_key,
+              prompt_fields_enabled, enabled, active, updated_at
+       from task_kinds
+       order by display_name asc, kind_key asc`
+    );
+    return result.rows;
+  }
+
+  async findTaskKindByKey(kindKey: string): Promise<TaskKindRow | null> {
+    const result = await this.db.query<TaskKindRow>(
+      `select id, kind_key, display_name, description, provider_kind, capability_key,
+              prompt_fields_enabled, enabled, active, updated_at
+       from task_kinds
+       where lower(kind_key) = lower($1)
+       limit 1`,
+      [kindKey]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async listProviderCapabilities(): Promise<ProviderCapabilityRow[]> {
+    const result = await this.db.query<ProviderCapabilityRow>(
+      `select id, provider_config_id, capability_key, enabled, updated_at
+       from provider_capabilities
+       order by capability_key asc`
+    );
+    return result.rows;
+  }
+
+  async providerHasCapability(providerConfigId: string, capabilityKey: string): Promise<boolean> {
+    const result = await this.db.query<{ id: string }>(
+      `select id
+       from provider_capabilities
+       where provider_config_id = $1
+         and capability_key = $2
+         and enabled = true
+       limit 1`,
+      [providerConfigId, capabilityKey]
+    );
+    return result.rows[0] !== undefined;
+  }
+
+  async findProviderById(providerConfigId: string): Promise<ProviderConfigRow | null> {
+    const result = await this.db.query<ProviderConfigRow>(
+      `select id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
+              secret_source, required_secret_env, external_send_enabled, runtime_provider_env, runtime_model_env,
+              runtime_endpoint_env, health_status, last_health_check_at, updated_at
+       from provider_configs
+       where id = $1
+       limit 1`,
+      [providerConfigId]
+    );
+    return result.rows[0] ?? null;
+  }
+
   async findEnabledProvider(providerKind: string, preferredProviderName?: string | null): Promise<ProviderConfigRow | null> {
     const result = await this.db.query<ProviderConfigRow>(
       `select id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
@@ -609,6 +721,9 @@ export class SettingsRepository {
     description: string | null;
     hookKey: string;
     taskKind: string;
+    taskKindId: string;
+    implemented: boolean;
+    promptDefinitionId: string | null;
     runtimeOptionId: string;
     runtimeOptionPurpose: string;
     runtimeProviderEnv: string;
@@ -620,10 +735,11 @@ export class SettingsRepository {
     await this.db.query(
       `insert into ai_task_definitions (
          id, task_key, display_name, description, hook_key, task_kind, implemented,
+         task_kind_id, prompt_definition_id,
          runtime_option_id, runtime_option_purpose, runtime_provider_env, runtime_model_env,
          runtime_endpoint_env, created_by, updated_by, created_at, updated_at
        )
-       values ($1, $2, $3, $4, $5, $6, false, $7, $8, $9, $10, $11, $12, $12, now(), now())`,
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15, now(), now())`,
       [
         taskId,
         input.taskKey,
@@ -631,6 +747,9 @@ export class SettingsRepository {
         input.description,
         input.hookKey,
         input.taskKind,
+        input.implemented,
+        input.taskKindId,
+        input.promptDefinitionId,
         input.runtimeOptionId,
         input.runtimeOptionPurpose,
         input.runtimeProviderEnv,
@@ -743,6 +862,78 @@ export class SettingsRepository {
        order by prompt_definitions.name asc`
     );
     return result.rows;
+  }
+
+  async createPromptDefinition(input: {
+    name: string;
+    purpose: string;
+    body: string;
+    outputSchema: Record<string, unknown>;
+    contextConfig: Record<string, unknown>;
+    actorUserId: string;
+  }): Promise<PromptDefinitionRow> {
+    const promptDefinitionId = randomUUID();
+    await this.db.query(
+      `insert into prompt_definitions (
+         id,
+         name,
+         purpose,
+         active_version,
+         retention_policy,
+         created_by,
+         updated_by,
+         created_at,
+         updated_at
+       )
+       values ($1, $2, $3, 1, 'retain_active_and_referenced', $4, $4, now(), now())`,
+      [promptDefinitionId, input.name, input.purpose, input.actorUserId]
+    );
+    await this.db.query(
+      `insert into prompt_versions (
+         id,
+         prompt_definition_id,
+         version,
+         body,
+         output_schema,
+         context_config,
+         created_by,
+         created_at
+       )
+       values ($1, $2, 1, $3, $4::jsonb, $5::jsonb, $6, now())`,
+      [
+        randomUUID(),
+        promptDefinitionId,
+        input.body,
+        JSON.stringify(input.outputSchema),
+        JSON.stringify(input.contextConfig),
+        input.actorUserId
+      ]
+    );
+    const prompt = await this.getPromptById(promptDefinitionId);
+    return requiredRow(prompt ?? undefined, "prompt definition create failed");
+  }
+
+  async getPromptById(promptDefinitionId: string): Promise<PromptDefinitionRow | null> {
+    const result = await this.db.query<PromptDefinitionRow>(
+      `select
+         prompt_definitions.id,
+         prompt_definitions.name,
+         prompt_definitions.purpose,
+         prompt_definitions.active_version,
+         prompt_definitions.retention_policy,
+         prompt_versions.id as active_prompt_version_id,
+         prompt_versions.body as active_body,
+         prompt_versions.output_schema as active_output_schema,
+         prompt_versions.context_config as active_context_config,
+         prompt_definitions.updated_at
+       from prompt_definitions
+       left join prompt_versions on prompt_versions.prompt_definition_id = prompt_definitions.id
+        and prompt_versions.version = prompt_definitions.active_version
+       where prompt_definitions.id = $1
+       limit 1`,
+      [promptDefinitionId]
+    );
+    return result.rows[0] ?? null;
   }
 
   async getActivePrompt(name: string): Promise<PromptDefinitionRow | null> {

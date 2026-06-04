@@ -42,6 +42,123 @@ test("local-dev auth creates a fixed development session when explicitly enabled
   assert.equal(db.users.length, 1);
 });
 
+test("settings summary separates provider catalog from task-owned prompts and capabilities", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    LLM_PROVIDER: "local-dev",
+    MEMO_EXPANSION_PROVIDER: "local-dev"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+
+  const summary = (await services.settings.getSummary()) as {
+    providers: Array<{ providerName: string; capabilities: Array<{ capabilityKey: string }> }>;
+    taskKinds: Array<{ kindKey: string; capabilityKey: string; promptFieldsEnabled: boolean }>;
+    aiTasks: Array<{ taskKey: string; prompt: { name: string } | null; runtimeReady: boolean }>;
+    registeredTaskHooks: Array<{ hookKey: string }>;
+  };
+
+  assert.equal(summary.providers[0]?.providerName, "local-dev");
+  assert.deepEqual(summary.providers[0]?.capabilities.map((capability) => capability.capabilityKey), [
+    "structured-generation"
+  ]);
+  assert.equal(summary.taskKinds.find((kind) => kind.kindKey === "llm")?.promptFieldsEnabled, true);
+  assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.prompt?.name, "work_item_expansion");
+  assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.runtimeReady, true);
+  assert.deepEqual(summary.registeredTaskHooks.map((hook) => hook.hookKey), ["memo-expansion"]);
+});
+
+test("AI task creation derives task key and reports duplicate derived key conflicts", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const created = (await services.settings.createAiTaskDefinition(
+    {
+      displayName: "Custom Digest",
+      hookKey: "custom-digest",
+      taskKind: "llm"
+    },
+    session.user,
+    "request-create-task"
+  )) as { aiTask: { taskKey: string; hookImplemented: boolean; routeEnabled: boolean; prompt: { id: string } } };
+
+  assert.equal(created.aiTask.taskKey, "custom-digest");
+  assert.equal(created.aiTask.hookImplemented, false);
+  assert.equal(created.aiTask.routeEnabled, false);
+  assert.equal(typeof created.aiTask.prompt.id, "string");
+
+  await assert.rejects(
+    () =>
+      services.settings.createAiTaskDefinition(
+        {
+          displayName: "Custom   Digest",
+          hookKey: "custom-digest-again",
+          taskKind: "llm"
+        },
+        session.user,
+        "request-create-task-duplicate"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "ai_task_exists" &&
+      (error.details as { taskKey?: string } | undefined)?.taskKey === "custom-digest"
+  );
+});
+
+test("AI task route enablement blocks unimplemented hooks and incompatible providers", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    LLM_PROVIDER: "local-dev",
+    MEMO_EXPANSION_PROVIDER: "local-dev"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  await assert.rejects(
+    () =>
+      services.settings.updateAiTaskRoute(
+        "task-custom",
+        {
+          providerConfigId: "provider-local-dev",
+          enabled: true
+        },
+        session.user,
+        "request-enable-unimplemented"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "ai_task_hook_not_implemented"
+  );
+
+  await assert.rejects(
+    () =>
+      services.settings.updateAiTaskRoute(
+        "task-memo-expansion",
+        {
+          providerConfigId: "provider-whisper",
+          enabled: true
+        },
+        session.user,
+        "request-enable-incompatible"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError && error.statusCode === 400 && error.code === "provider_incompatible"
+  );
+});
+
 test("form memo service creates source memo, work item, import event, and audit rows", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
@@ -2436,6 +2553,13 @@ class FakeDatabase implements Database {
   readonly mediaTypes: Record<string, unknown>[] = [];
   readonly parserTypes: Record<string, unknown>[] = [];
   readonly fileTypes: Record<string, unknown>[] = [];
+  readonly providers: Record<string, unknown>[] = [];
+  readonly providerCapabilities: Record<string, unknown>[] = [];
+  readonly taskKinds: Record<string, unknown>[] = [];
+  readonly aiTaskDefinitions: Record<string, unknown>[] = [];
+  readonly aiTaskRoutes: Record<string, unknown>[] = [];
+  readonly promptDefinitions: Record<string, unknown>[] = [];
+  readonly promptVersions: Record<string, unknown>[] = [];
   readonly importUploadSessions: Record<string, unknown>[] = [];
   readonly sourceMemos: Record<string, unknown>[] = [];
   readonly sourceMemoArtifacts: Record<string, unknown>[] = [];
@@ -2502,6 +2626,144 @@ class FakeDatabase implements Database {
 
     if (text.includes("from extraction_settings")) {
       return rows(this.extractionSettings === null ? [] : [this.extractionSettings as Row]);
+    }
+
+    if (text.includes("from provider_capabilities") && text.includes("where provider_config_id =")) {
+      const capability = this.providerCapabilities.find(
+        (row) => row.provider_config_id === values[0] && row.capability_key === values[1] && row.enabled === true
+      );
+      return rows(capability === undefined ? [] : [capability as Row]);
+    }
+
+    if (text.includes("from provider_capabilities")) {
+      return rows([...this.providerCapabilities] as Row[]);
+    }
+
+    if (text.includes("from task_kinds") && text.includes("where lower(kind_key)")) {
+      const kindKey = String(values[0]).toLowerCase();
+      const taskKind = this.taskKinds.find((row) => String(row.kind_key).toLowerCase() === kindKey);
+      return rows(taskKind === undefined ? [] : [taskKind as Row]);
+    }
+
+    if (text.includes("from task_kinds")) {
+      return rows([...this.taskKinds] as Row[]);
+    }
+
+    if (text.includes("from provider_configs") && text.includes("where id =")) {
+      const provider = this.providers.find((row) => row.id === values[0]);
+      return rows(provider === undefined ? [] : [provider as Row]);
+    }
+
+    if (text.includes("from provider_configs")) {
+      return rows([...this.providers] as Row[]);
+    }
+
+    if (text.includes("from ai_task_definitions")) {
+      const taskRows = this.aiTaskDefinitions.map((definition) =>
+        buildFakeAiTaskRouteRow(this, definition)
+      );
+      if (text.includes("where ai_task_definitions.task_key =")) {
+        return rows(taskRows.filter((row) => row.task_key === values[0]) as Row[]);
+      }
+      if (text.includes("where ai_task_definitions.id =")) {
+        return rows(taskRows.filter((row) => row.id === values[0]) as Row[]);
+      }
+      return rows(taskRows as Row[]);
+    }
+
+    if (text.includes("insert into prompt_definitions")) {
+      const row = {
+        id: values[0],
+        name: values[1],
+        purpose: values[2],
+        active_version: 1,
+        retention_policy: "retain_active_and_referenced",
+        created_by: values[3],
+        updated_by: values[3],
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.promptDefinitions.push(row);
+      return rows([]);
+    }
+
+    if (text.includes("insert into prompt_versions")) {
+      const initialVersionInsert = text.includes("values ($1, $2, 1, $3");
+      this.promptVersions.push({
+        id: values[0],
+        prompt_definition_id: values[1],
+        version: initialVersionInsert ? 1 : values[2] ?? 1,
+        body: initialVersionInsert ? values[2] : values[3],
+        output_schema: JSON.parse(String((initialVersionInsert ? values[3] : values[4]) ?? "{}")) as Record<
+          string,
+          unknown
+        >,
+        context_config: JSON.parse(String((initialVersionInsert ? values[4] : values[5]) ?? "{}")) as Record<
+          string,
+          unknown
+        >,
+        created_by: initialVersionInsert ? values[5] : values[6],
+        created_at: "2026-05-29T00:00:00.000Z"
+      });
+      return rows([]);
+    }
+
+    if (text.includes("from prompt_definitions") && text.includes("where prompt_definitions.id =")) {
+      const definition = this.promptDefinitions.find((row) => row.id === values[0]);
+      return rows(definition === undefined ? [] : [buildFakePromptRow(this, definition) as Row]);
+    }
+
+    if (text.includes("from prompt_definitions")) {
+      return rows(this.promptDefinitions.map((definition) => buildFakePromptRow(this, definition)) as Row[]);
+    }
+
+    if (text.includes("insert into ai_task_definitions")) {
+      this.aiTaskDefinitions.push({
+        id: values[0],
+        task_key: values[1],
+        display_name: values[2],
+        description: values[3],
+        hook_key: values[4],
+        task_kind: values[5],
+        implemented: values[6],
+        task_kind_id: values[7],
+        prompt_definition_id: values[8],
+        runtime_option_id: values[9],
+        runtime_option_purpose: values[10],
+        runtime_provider_env: values[11],
+        runtime_model_env: values[12],
+        runtime_endpoint_env: values[13],
+        created_by: values[14],
+        updated_by: values[14],
+        updated_at: "2026-05-29T00:00:00.000Z"
+      });
+      return rows([]);
+    }
+
+    if (text.includes("insert into ai_task_routes")) {
+      const existing = this.aiTaskRoutes.find((row) => row.task_definition_id === values[0]);
+      const createDisabledRoute = text.includes("values ($1, null, null, false, $2");
+      if (existing === undefined) {
+        this.aiTaskRoutes.push({
+          task_definition_id: values[0],
+          provider_config_id: createDisabledRoute ? null : values[1],
+          model_name: createDisabledRoute ? null : values[2],
+          enabled: createDisabledRoute ? false : values[3] ?? false,
+          updated_by: createDisabledRoute ? values[1] : values[4],
+          updated_at: "2026-05-29T00:00:00.000Z"
+        });
+      } else {
+        if (values[5] === true) {
+          existing.provider_config_id = values[1];
+        }
+        if (values[6] === true) {
+          existing.model_name = values[2] === "" ? null : values[2];
+        }
+        if (values[3] !== null) {
+          existing.enabled = values[3];
+        }
+        existing.updated_by = values[4];
+      }
+      return rows([]);
     }
 
     if (text.includes("from ai_suggestions") && text.includes("where id = $1")) {
@@ -3273,6 +3535,85 @@ interface FakeUserRow extends Record<string, unknown> {
   updated_at: string;
 }
 
+function buildFakePromptRow(db: FakeDatabase, definition: Record<string, unknown>): Record<string, unknown> {
+  const activeVersion = Number(definition.active_version ?? 1);
+  const version = db.promptVersions.find(
+    (row) => row.prompt_definition_id === definition.id && Number(row.version) === activeVersion
+  );
+  return {
+    id: definition.id,
+    name: definition.name,
+    purpose: definition.purpose,
+    active_version: activeVersion,
+    retention_policy: definition.retention_policy ?? "retain_active_and_referenced",
+    active_prompt_version_id: version?.id ?? null,
+    active_body: version?.body ?? null,
+    active_output_schema: version?.output_schema ?? null,
+    active_context_config: version?.context_config ?? null,
+    updated_at: definition.updated_at ?? "2026-05-29T00:00:00.000Z"
+  };
+}
+
+function buildFakeAiTaskRouteRow(
+  db: FakeDatabase,
+  definition: Record<string, unknown>
+): Record<string, unknown> {
+  const route = db.aiTaskRoutes.find((row) => row.task_definition_id === definition.id);
+  const provider = db.providers.find((row) => row.id === route?.provider_config_id);
+  const taskKind = db.taskKinds.find((row) => row.id === definition.task_kind_id);
+  const prompt =
+    definition.prompt_definition_id === null || definition.prompt_definition_id === undefined
+      ? null
+      : db.promptDefinitions.find((row) => row.id === definition.prompt_definition_id);
+  const promptRow = prompt === undefined || prompt === null ? null : buildFakePromptRow(db, prompt);
+  return {
+    id: definition.id,
+    task_key: definition.task_key,
+    display_name: definition.display_name,
+    description: definition.description ?? null,
+    hook_key: definition.hook_key,
+    task_kind: definition.task_kind,
+    task_kind_id: definition.task_kind_id ?? null,
+    task_kind_display_name: taskKind?.display_name ?? null,
+    task_kind_description: taskKind?.description ?? null,
+    task_kind_provider_kind: taskKind?.provider_kind ?? null,
+    task_kind_capability_key: taskKind?.capability_key ?? null,
+    prompt_fields_enabled: taskKind?.prompt_fields_enabled ?? null,
+    implemented: definition.implemented ?? false,
+    default_provider_name: definition.default_provider_name ?? null,
+    default_model_name: definition.default_model_name ?? null,
+    runtime_option_id: definition.runtime_option_id,
+    runtime_option_purpose: definition.runtime_option_purpose,
+    runtime_provider_env: definition.runtime_provider_env,
+    runtime_model_env: definition.runtime_model_env,
+    runtime_endpoint_env: definition.runtime_endpoint_env ?? null,
+    route_enabled: route?.enabled ?? false,
+    route_model_name: route?.model_name ?? null,
+    provider_config_id: route?.provider_config_id ?? null,
+    provider_kind: provider?.provider_kind ?? null,
+    provider_name: provider?.provider_name ?? null,
+    provider_display_name: provider?.display_name ?? null,
+    adapter_key: provider?.adapter_key ?? null,
+    provider_enabled: provider?.enabled ?? null,
+    provider_model_name: provider?.model_name ?? null,
+    endpoint: provider?.endpoint ?? null,
+    secret_source: provider?.secret_source ?? null,
+    required_secret_env: provider?.required_secret_env ?? null,
+    external_send_enabled: provider?.external_send_enabled ?? null,
+    health_status: provider?.health_status ?? null,
+    prompt_definition_id: promptRow?.id ?? null,
+    prompt_name: promptRow?.name ?? null,
+    prompt_purpose: promptRow?.purpose ?? null,
+    prompt_active_version: promptRow?.active_version ?? null,
+    active_prompt_version_id: promptRow?.active_prompt_version_id ?? null,
+    active_body: promptRow?.active_body ?? null,
+    active_output_schema: promptRow?.active_output_schema ?? null,
+    active_context_config: promptRow?.active_context_config ?? null,
+    prompt_retention_policy: promptRow?.retention_policy ?? null,
+    updated_at: route?.updated_at ?? definition.updated_at ?? "2026-05-29T00:00:00.000Z"
+  };
+}
+
 function seedMediaParserRegistry(db: FakeDatabase): void {
   db.mediaTypes.push(
     {
@@ -3318,6 +3659,169 @@ function seedMediaParserRegistry(db: FakeDatabase): void {
       description: "Audio transcription parser",
       media_key: "audio",
       capability_state: "active",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
+}
+
+function seedTaskSettings(db: FakeDatabase): void {
+  db.taskKinds.push(
+    {
+      id: "task-kind-llm",
+      kind_key: "llm",
+      display_name: "LLM generation",
+      description: "Structured generation",
+      provider_kind: "llm",
+      capability_key: "structured-generation",
+      prompt_fields_enabled: true,
+      enabled: true,
+      active: true,
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      id: "task-kind-stt",
+      kind_key: "stt",
+      display_name: "Speech to text",
+      description: "Audio transcription",
+      provider_kind: "transcription",
+      capability_key: "speech-to-text",
+      prompt_fields_enabled: false,
+      enabled: true,
+      active: true,
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
+  db.providers.push(
+    {
+      id: "provider-local-dev",
+      provider_kind: "llm",
+      provider_name: "local-dev",
+      display_name: "Local development",
+      adapter_key: "local-dev",
+      enabled: true,
+      endpoint: null,
+      model_name: "memo-capture-local-dev-expander-v1",
+      secret_source: "environment",
+      required_secret_env: null,
+      external_send_enabled: false,
+      runtime_provider_env: "LLM_PROVIDER",
+      runtime_model_env: "LLM_MODEL",
+      runtime_endpoint_env: "LLM_ENDPOINT",
+      health_status: "healthy",
+      last_health_check_at: null,
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      id: "provider-whisper",
+      provider_kind: "transcription",
+      provider_name: "whisper-cpp",
+      display_name: "Whisper.cpp",
+      adapter_key: "whisper-cpp",
+      enabled: true,
+      endpoint: null,
+      model_name: "ggml-base.en",
+      secret_source: "none",
+      required_secret_env: null,
+      external_send_enabled: false,
+      runtime_provider_env: "TRANSCRIPTION_PROVIDER",
+      runtime_model_env: "TRANSCRIPTION_MODEL",
+      runtime_endpoint_env: null,
+      health_status: "unknown",
+      last_health_check_at: null,
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
+  db.providerCapabilities.push(
+    {
+      id: "cap-local-dev-generation",
+      provider_config_id: "provider-local-dev",
+      capability_key: "structured-generation",
+      enabled: true,
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      id: "cap-whisper-stt",
+      provider_config_id: "provider-whisper",
+      capability_key: "speech-to-text",
+      enabled: true,
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
+  db.promptDefinitions.push({
+    id: "prompt-work-item-expansion",
+    name: "work_item_expansion",
+    purpose: "Expand work items.",
+    active_version: 1,
+    retention_policy: "retain_active_and_referenced",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  db.promptVersions.push({
+    id: "prompt-version-work-item-expansion",
+    prompt_definition_id: "prompt-work-item-expansion",
+    version: 1,
+    body: "Return strict JSON.",
+    output_schema: {},
+    context_config: {
+      freeformText: "Return strict JSON.",
+      includeProjectSynopsis: true,
+      includeMemoMetadata: true,
+      includeMemoTranscriptText: true
+    },
+    created_at: "2026-05-29T00:00:00.000Z"
+  });
+  db.aiTaskDefinitions.push(
+    {
+      id: "task-memo-expansion",
+      task_key: "memo-expansion",
+      display_name: "Memo expansion",
+      description: "Expand one memo.",
+      hook_key: "memo-expansion",
+      task_kind: "llm",
+      task_kind_id: "task-kind-llm",
+      prompt_definition_id: "prompt-work-item-expansion",
+      implemented: true,
+      default_provider_name: "local-dev",
+      default_model_name: "memo-capture-local-dev-expander-v1",
+      runtime_option_id: "memo-expansion-provider",
+      runtime_option_purpose: "memo-expansion",
+      runtime_provider_env: "MEMO_EXPANSION_PROVIDER",
+      runtime_model_env: "MEMO_EXPANSION_MODEL",
+      runtime_endpoint_env: "MEMO_EXPANSION_ENDPOINT",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      id: "task-custom",
+      task_key: "custom-summary",
+      display_name: "Custom summary",
+      description: "Unimplemented task.",
+      hook_key: "custom-summary",
+      task_kind: "llm",
+      task_kind_id: "task-kind-llm",
+      prompt_definition_id: null,
+      implemented: false,
+      default_provider_name: "local-dev",
+      default_model_name: "memo-capture-local-dev-expander-v1",
+      runtime_option_id: "custom-summary-provider",
+      runtime_option_purpose: "custom-summary",
+      runtime_provider_env: "AI_TASK_CUSTOM_SUMMARY_PROVIDER",
+      runtime_model_env: "AI_TASK_CUSTOM_SUMMARY_MODEL",
+      runtime_endpoint_env: "AI_TASK_CUSTOM_SUMMARY_ENDPOINT",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    }
+  );
+  db.aiTaskRoutes.push(
+    {
+      task_definition_id: "task-memo-expansion",
+      provider_config_id: "provider-local-dev",
+      model_name: "memo-capture-local-dev-expander-v1",
+      enabled: true,
+      updated_at: "2026-05-29T00:00:00.000Z"
+    },
+    {
+      task_definition_id: "task-custom",
+      provider_config_id: null,
+      model_name: null,
+      enabled: false,
       updated_at: "2026-05-29T00:00:00.000Z"
     }
   );

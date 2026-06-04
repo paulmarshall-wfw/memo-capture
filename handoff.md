@@ -4,39 +4,31 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-04T01:02:23Z
+- Created timestamp UTC: 2026-06-04T02:26:55Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: multiple LLM providers, task routing, AppLauncher `manifestVersion: "1.2.0"` runtime options, native app rebuild, and docs refresh.
+- Session scope: split Settings into provider-instance catalog plus task-owned routing/prompt configuration.
 
 ### Checkpoint Status
 
-- Git HEAD: `9b329f7`
+- Git HEAD: `cc7c611`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `.env.example`
-  - `apps/api/src/config.ts`
   - `apps/api/src/repositories/settings.ts`
-  - `apps/api/src/server.ts`
-  - `apps/api/src/services/ai-expansion.ts`
-  - `apps/api/src/services/app.ts`
-  - `apps/api/src/services/llm.ts`
   - `apps/api/src/services/settings.ts`
   - `apps/api/tests/backend-foundation.test.ts`
-  - `apps/api/tests/llm-prompt.test.ts`
+  - `apps/api/tests/postgres/integration.test.ts`
   - `apps/desktop/src/App.tsx`
-  - `apps/desktop/src/styles.css`
   - `apps/desktop/tests/app-copy.test.ts`
-  - `docs/design/memo-capture-design-learnings.md`
-  - `docs/env.md`
-  - `docs/specs/settings-and-audit.md`
   - `docs/completed-tasks.md`
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/settings-and-audit.md`
   - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `apps/api/db/migrations/0021_llm_task_routing_and_runtime_options.sql`
+  - `apps/api/db/migrations/0022_split_provider_catalog_and_task_settings.sql`
 - Untracked files intentionally out of scope:
   - None
 - Canonical files described:
@@ -44,79 +36,78 @@
   - `docs/completed-tasks.md`
   - `docs/specs/settings-and-audit.md`
   - `docs/design/memo-capture-design-learnings.md`
-  - `docs/env.md`
-  - `apps/api/db/migrations/0021_llm_task_routing_and_runtime_options.sql`
-  - `apps/api/src/config.ts`
+  - `apps/api/db/migrations/0022_split_provider_catalog_and_task_settings.sql`
   - `apps/api/src/repositories/settings.ts`
   - `apps/api/src/services/settings.ts`
-  - `apps/api/src/services/ai-expansion.ts`
-  - `apps/api/src/services/llm.ts`
   - `apps/desktop/src/App.tsx`
-- Non-Git artifacts updated on disk:
-  - `dist/applauncher-manifests/memo-capture/0.1.0/manifest.json`
-  - `dist/applauncher-manifests/memo-capture-native/0.1.0/manifest.json`
-  - `/Users/paulmarshall/Library/Application Support/AppLauncher/manifest-install/memo-capture/0.1.0/manifest.json`
-  - `/Users/paulmarshall/Library/Application Support/AppLauncher/manifest-install/memo-capture-native/0.1.0/manifest.json`
+  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/api/tests/postgres/integration.test.ts`
+  - `apps/desktop/tests/app-copy.test.ts`
 - Last verification:
-  - command: `node --test --import tsx apps/api/tests/llm-prompt.test.ts`; `node --test --import tsx apps/api/tests/backend-foundation.test.ts`; `node --test apps/desktop/tests/app-copy.test.ts`; AppLauncher manifest validation for repo and install-source web/native manifests; `npm run typecheck`; `npm test`; `npm run test:postgres`; `npm run verify`; `git diff --check`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
+  - command: `node --test --import tsx --test-name-pattern "settings summary|AI task" apps/api/tests/backend-foundation.test.ts`; `npm run test -w @memo-capture/desktop`; `npm run typecheck`; `npm test`; `npm run test:postgres`; `npm run verify`; `git diff --check`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
   - result: passed
-  - timestamp UTC: 2026-06-04T00:36Z
+  - timestamp UTC: 2026-06-04T02:26:55Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD`, dirty tree, non-Git manifest artifacts, installed AppLauncher manifests, Postgres migration verification, full repo verification, and rebuilt native app are recorded here.
+- Safe-to-continue basis: current `HEAD`, dirty/untracked files, changed docs, passed full repo verification, passed isolated Postgres migration lane, and rebuilt native app are all recorded here.
 - Next checkpoint action: review the dirty diff and commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-Memo Capture now has task-aware LLM routing instead of a single global development LLM path. Backend settings include provider catalog metadata, seeded AI task definitions and global routes, and a user-created task path that starts new hooks as `Not implemented` no-ops until app logic exists.
+Memo Capture Settings now separates provider instances from task configuration.
 
-The Providers screen now carries provider/task readiness: AppLauncher runtime option status, task routing, user-created task hooks, and provider catalog rows. The redundant top Settings banner for the development provider has been removed.
+Complete now:
 
-AppLauncher runtime selection is represented in the web and native manifests as `manifestVersion: "1.2.0"` runtime options. Runtime options contain only non-secret provider/model/endpoint selectors; OpenAI-compatible API keys are declared as AppLauncher secrets with env delivery. The native manifest keeps the `scripts/applauncher-native-dev.sh` `executablePath` wrapper so AppLauncher can inject runtime-option env vars.
+- Providers page is catalog-only: named provider instances, kind, adapter, enabled state, health/secret/runtime status, and capability labels.
+- New Tasks page owns task kinds, derived task-key creation, registered/custom hook selection, route provider filtering, route enablement, readiness reasons, and prompt editing for prompt-backed task kinds.
+- Backend settings now return task kinds, provider capabilities, registered task hook metadata, and task-owned prompt summaries.
+- `ai_task_routes.enabled` is enforced server-side: enabling a route requires implemented hook logic, compatible enabled provider/capability, required secret readiness, and runtime provider match.
+- Existing prompt history is preserved by linking the memo-expansion task to the existing `work_item_expansion` prompt definition.
+- Native `.app` bundle was rebuilt at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-The requested multi-provider/runtime-options implementation is complete.
+Immediate goal: finish the provider/task Settings split and leave the repo ready for review or commit.
 
-Definition of done met:
+Intended finished state:
 
-- Provider catalog supports `local-dev` and `openai-compatible`.
-- Seeded AI tasks: `memo-expansion`, `suggest-new-memos`, `suggest-selected-tags`, and `ocr`.
-- Memo expansion resolves provider/model through the task route plus AppLauncher runtime env.
-- User-created tasks can be added and show `Not implemented` until app logic exists.
-- OCR is represented as a task and remains no-op/not implemented.
-- AppLauncher web/native manifests use runtime options and secrets correctly.
-- Native `.app` bundle was rebuilt.
+- Provider catalog rows represent provider instances.
+- Task kinds define routing compatibility and prompt support.
+- Task routes filter compatible providers and cannot be enabled unless executable.
+- Prompt controls live on task rows, not a standalone AI Prompts page.
+- Verification covers API behavior, migration/Postgres preservation, desktop copy expectations, full repo build/test, and native app rebuild.
+
+Definition of done: met.
 
 ## 4. Current State
 
 ### Working
 
-- `GET /api/settings` returns provider catalog metadata, AI task routes, and AppLauncher runtime status.
-- `PATCH /api/settings/providers/{providerConfigId}` updates provider enabled/model/endpoint settings without returning secrets.
-- `POST /api/settings/ai-tasks` creates user-defined task hooks with disabled routes and `implemented = false`.
-- `PATCH /api/settings/ai-tasks/{taskDefinitionId}/route` updates global task routes.
-- Memo expansion requires route enabled, hook implemented, selected provider enabled, required secrets present, and runtime env selecting the same provider.
-- Unknown/user-created hooks display `Not implemented` and are blocked from provider calls.
-- OpenAI-compatible LLM adapter sends strict JSON chat-completions requests when configured.
-- Settings > Providers shows AppLauncher status, Task routing, Add task hook, and Provider catalog.
-- AppLauncher install-source manifests have been updated and validated.
-- Native app bundle exists at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`; timestamp checked as `Jun 4 10:36:48 2026`.
+- Migration `0022_split_provider_catalog_and_task_settings` adds `task_kinds`, `provider_capabilities`, `ai_task_definitions.task_kind_id`, and `ai_task_definitions.prompt_definition_id`.
+- Seeded task kinds include `llm`, `ocr`, `stt`, and `tts`; only active/enabled kinds are selectable in the UI.
+- Provider capability backfill marks LLM providers as `structured-generation`, transcription providers as `speech-to-text`, OCR providers as `ocr`, and TTS providers as `text-to-speech`.
+- Settings summary serializes provider capabilities, task kinds, registered task hooks, and task-owned prompt summaries.
+- `POST /api/settings/ai-tasks` derives `taskKey` from `displayName`, rejects duplicate derived keys with conflict details, and creates a task-owned prompt for prompt-backed task kinds.
+- `PATCH /api/settings/ai-tasks/{taskDefinitionId}/route` rejects enabled routes when the hook is unimplemented, the selected provider is incompatible or disabled, a required secret is absent, or runtime provider selection does not match Settings.
+- Desktop Settings nav is now: Watched folders, File types, Suppressed Tags, Providers, Tasks, Export contract, Operations, Diagnostics.
+- Providers page no longer contains task routing or prompt controls.
+- Tasks page shows task kinds, add-task form with read-only derived key preview, compatible provider selectors, route readiness, and per-task prompt editor.
 
 ### Partially Working
 
-- Suggested new memos, suggested selected tags, and OCR are configured as task rows but do not yet have processing handlers.
-- User-created task hooks are routable in settings but intentionally no-op until handler logic is added.
+- Only `memo-expansion` is treated as an implemented app-owned AI task hook.
+- Custom task hooks can be created and shown, but remain disabled/not implemented until app code registers real logic.
+- OCR/STT/TTS task-kind rows exist for routing compatibility, but new task handlers still need separate implementation.
 
 ### Not Working Yet
 
-- No OCR provider handler exists yet.
-- No AppLauncher UI refresh/relaunch was performed in this thread; AppLauncher should refresh manifests and relaunch Memo Capture to inject new runtime env selections.
+- No new OCR or TTS processing handler was added in this slice.
+- No live Chrome/native visual smoke was run after the Settings UI rewrite; static desktop tests and native build passed.
 
 ### Not Yet Verified
 
-- No live Chrome/native UI smoke was run after the rebuild. Static desktop copy tests and full build verification passed.
+- Handoff helper scripts `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are absent from this checkout, so helper-based freshness verification could not be run.
 
 ## 5. Active Constraints
 
@@ -125,23 +116,20 @@ Definition of done met:
 - Never use `latest`; always use numbered versions.
 - Backend settings are canonical; watched-folder/archive paths remain desktop-local.
 - Desktop clients must not connect directly to Postgres or object storage.
-- AI output consumed by code must be strict structured JSON and validated before storage.
+- AI output consumed by code must be structured JSON and validated before storage.
 - Secrets must not be stored in Memo Capture DB or AppLauncher runtime options.
-- AppLauncher owns launch-time runtime option selection; Memo Capture owns provider/task semantics.
+- Provider catalog rows are named provider instances and may coexist by kind.
+- Task kinds own provider kind/capability compatibility and whether prompt fields apply.
+- User-created/custom hooks remain `Not implemented` and cannot enable routes until app logic exists.
 - For native-testable changes, rebuild the runnable `.app`; do not create a DMG unless explicitly requested.
 
 ## 6. Commands and Verification
 
-Passed:
+Passed in this session:
 
 ```bash
-node --test --import tsx apps/api/tests/llm-prompt.test.ts
-node --test --import tsx apps/api/tests/backend-foundation.test.ts
-node --test apps/desktop/tests/app-copy.test.ts
-node "/Users/paulmarshall/Software Development/All Skills/applauncher-manifest/scripts/validate_manifest.mjs" --manifest dist/applauncher-manifests/memo-capture/0.1.0/manifest.json
-node "/Users/paulmarshall/Software Development/All Skills/applauncher-manifest/scripts/validate_manifest.mjs" --manifest dist/applauncher-manifests/memo-capture-native/0.1.0/manifest.json --verify-native-launch-targets
-node "/Users/paulmarshall/Software Development/All Skills/applauncher-manifest/scripts/validate_manifest.mjs" --manifest "/Users/paulmarshall/Library/Application Support/AppLauncher/manifest-install/memo-capture/0.1.0/manifest.json"
-node "/Users/paulmarshall/Software Development/All Skills/applauncher-manifest/scripts/validate_manifest.mjs" --manifest "/Users/paulmarshall/Library/Application Support/AppLauncher/manifest-install/memo-capture-native/0.1.0/manifest.json" --verify-native-launch-targets
+node --test --import tsx --test-name-pattern "settings summary|AI task" apps/api/tests/backend-foundation.test.ts
+npm run test -w @memo-capture/desktop
 npm run typecheck
 npm test
 npm run test:postgres
@@ -152,10 +140,10 @@ npm run tauri:build -w @memo-capture/desktop -- --bundles app
 
 Verification notes:
 
-- Initial sandboxed `npm test` failed only on route-test `listen EPERM`; rerun with local bind permission passed.
-- Initial sandboxed `npm run test:postgres` failed on Docker socket permission; rerun with Docker access passed.
-- The first Postgres rerun exposed a real duplicate seed UUID in migration `0021`; fixed by moving OpenAI-compatible provider to `00000000-0000-4000-8000-000000000303`, then `npm run test:postgres` passed.
-- AppLauncher native manifest validation checked the `executablePath` target.
+- A broader sandboxed API test attempt initially hit expected route-test `listen EPERM`; rerunning `npm test` with local bind permission passed.
+- `npm run test:postgres` reset and migrated only isolated database `memo_capture_test`, including migration `0022`.
+- Native app build output: `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
+- `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are not present, so handoff freshness is manually grounded from Git status and verification output.
 
 Useful next commands:
 
@@ -168,27 +156,28 @@ npm run test:postgres
 
 ## 7. Files to Open First
 
-- `apps/api/db/migrations/0021_llm_task_routing_and_runtime_options.sql`: provider catalog and task-route schema/seed data.
-- `apps/api/src/config.ts`: global and task-specific LLM runtime env parsing.
-- `apps/api/src/services/ai-expansion.ts`: memo-expansion route/runtime readiness checks.
-- `apps/api/src/services/llm.ts`: local-dev and OpenAI-compatible adapter boundary.
-- `apps/api/src/repositories/settings.ts`: provider catalog, AI task route, and user-created task persistence.
-- `apps/api/src/services/settings.ts`: settings serialization, task readiness, redacted secret status.
-- `apps/desktop/src/App.tsx`: Providers screen AppLauncher status, task routing, Add task hook, provider catalog.
-- `docs/specs/settings-and-audit.md`: canonical settings/task/provider contract.
-- `docs/design/memo-capture-design-learnings.md`: product/architecture notes for task routing and no-op hooks.
+- `docs/plans/Split Providers and Task Settings.md`: accepted implementation scope.
+- `apps/api/db/migrations/0022_split_provider_catalog_and_task_settings.sql`: schema and seed changes for task kinds/provider capabilities/prompt links.
+- `apps/api/src/repositories/settings.ts`: task-kind, provider-capability, task-route, and prompt repository queries.
+- `apps/api/src/services/settings.ts`: settings serialization, derived task-key creation, route readiness enforcement, and task-owned prompt creation.
+- `apps/desktop/src/App.tsx`: Settings nav, Providers catalog page, Tasks page, compatible provider filtering, and task prompt editor.
+- `apps/api/tests/backend-foundation.test.ts`: focused API/service coverage for task settings behavior.
+- `apps/api/tests/postgres/integration.test.ts`: migration/Postgres coverage for multiple providers and prompt preservation.
+- `apps/desktop/tests/app-copy.test.ts`: static desktop expectations for the new Settings split.
+- `docs/specs/settings-and-audit.md`: canonical settings/provider/task contract.
+- `docs/design/memo-capture-design-learnings.md`: design-level provider/task/prompt decisions.
 
 ## 8. Next Actions
 
 Next:
 
-- Refresh AppLauncher manifests in the AppLauncher UI and relaunch Memo Capture so runtime-option env values are injected.
-- Review the dirty diff and commit only if explicitly requested.
+- Review the dirty diff.
+- Commit only if explicitly requested.
 
 Later:
 
-- Add real handlers for `suggest-new-memos`, `suggest-selected-tags`, and `ocr`.
-- Add live native/Chrome smoke coverage if further UI behavior changes.
+- Add actual handlers for non-`memo-expansion` task hooks when their product behavior is defined.
+- Add live Chrome or native UI smoke coverage if further Settings interaction behavior changes.
 
 Blocked:
 
@@ -196,4 +185,4 @@ Blocked:
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `9b329f7` with a dirty tree implementing multiple LLM providers and AppLauncher `manifestVersion: "1.2.0"` runtime options. Open `apps/api/db/migrations/0021_llm_task_routing_and_runtime_options.sql`, `apps/api/src/config.ts`, `apps/api/src/services/ai-expansion.ts`, `apps/api/src/services/llm.ts`, `apps/api/src/services/settings.ts`, `apps/api/src/repositories/settings.ts`, and `apps/desktop/src/App.tsx` first. Preserve the AppLauncher boundary: runtime options are non-secret provider/model/endpoint selectors, API keys are AppLauncher secrets/env, and the native manifest must keep `executablePath` so runtime env injection works.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `cc7c611` with a dirty tree implementing the Split Providers and Task Settings plan. Open `docs/plans/Split Providers and Task Settings.md`, `apps/api/db/migrations/0022_split_provider_catalog_and_task_settings.sql`, `apps/api/src/repositories/settings.ts`, `apps/api/src/services/settings.ts`, `apps/desktop/src/App.tsx`, and `docs/specs/settings-and-audit.md` first. Preserve the key boundary: Providers is a provider-instance catalog; Tasks owns task kinds, hook readiness, provider routing, route enablement, and prompt editing. Do not commit unless the user explicitly asks.

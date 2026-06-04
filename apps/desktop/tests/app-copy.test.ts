@@ -7,7 +7,7 @@ test("desktop surface references the v1 export schema contract", () => {
   assert.equal(MEMO_CAPTURE_EXPORT_SCHEMA_VERSION, "memo-capture-export.v1");
 });
 
-test("settings page exposes file type and prompt controls without manual import copy", () => {
+test("settings page exposes file type, provider catalog, and task-owned prompt controls", () => {
   const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 
   assert.match(appSource, /Save version/);
@@ -42,13 +42,16 @@ test("settings page exposes file type and prompt controls without manual import 
   assert.match(appSource, /Suggested new work item/);
   assert.match(appSource, /No pending suggested work items/);
   assert.match(appSource, /AppLauncher runtime options/);
-  assert.match(appSource, /Task routing/);
-  assert.match(appSource, /Add task hook/);
-  assert.match(appSource, /Not implemented by default/);
+  assert.match(appSource, /Task kinds/);
+  assert.match(appSource, /Key: \{deriveTaskKeyPreview\(newAiTaskDraft\.displayName\)\}/);
+  assert.match(appSource, /registered-task-hooks/);
   assert.match(appSource, /Add task/);
-  assert.match(appSource, /Provider catalog/);
+  assert.match(appSource, /Capabilities/);
   assert.match(appSource, /Save route/);
   assert.match(appSource, /runtime option/);
+  assert.match(appSource, /task\.prompt/);
+  assert.doesNotMatch(appSource, /label: "AI prompts"/);
+  assert.doesNotMatch(appSource, /newAiTaskDraft\.taskKey/);
   assert.doesNotMatch(appSource, /LLM_PROVIDER=local-dev/);
   assert.doesNotMatch(appSource, /Development LLM/);
   assert.doesNotMatch(appSource, /Enable dev expander/);

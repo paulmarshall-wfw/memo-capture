@@ -179,3 +179,70 @@ test("audit repository lists events with display context in real Postgres", asyn
     await db.close();
   }
 });
+
+test("settings migration supports multiple provider instances and task-owned prompt preservation", async () => {
+  const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
+  const providerId = "10000000-0000-4000-8000-000000000101";
+
+  try {
+    await db.query(
+      `insert into provider_configs (
+         id,
+         provider_kind,
+         provider_name,
+         display_name,
+         adapter_key,
+         enabled,
+         endpoint,
+         model_name,
+         secret_source,
+         required_secret_env,
+         external_send_enabled,
+         health_status
+       )
+       values ($1, 'llm', 'local-dev-shadow', 'Local development shadow', 'local-dev', false, null,
+               'memo-capture-local-dev-expander-v1', 'environment', null, false, 'unknown')
+       on conflict (provider_kind, provider_name) do nothing`,
+      [providerId]
+    );
+    await db.query(
+      `insert into provider_capabilities (id, provider_config_id, capability_key, enabled)
+       values ($1, $2, 'structured-generation', true)
+       on conflict (provider_config_id, capability_key) do nothing`,
+      ["10000000-0000-4000-8000-000000000102", providerId]
+    );
+
+    const providers = await db.query<{ provider_count: string }>(
+      `select count(*)::text as provider_count
+       from provider_configs
+       join provider_capabilities on provider_capabilities.provider_config_id = provider_configs.id
+       where provider_configs.provider_kind = 'llm'
+         and provider_capabilities.capability_key = 'structured-generation'`
+    );
+    assert.ok(Number(providers.rows[0]?.provider_count ?? "0") >= 2);
+
+    const promptLink = await db.query<{
+      task_key: string;
+      prompt_name: string;
+      active_version: number;
+      version_count: string;
+    }>(
+      `select
+         ai_task_definitions.task_key,
+         prompt_definitions.name as prompt_name,
+         prompt_definitions.active_version,
+         count(prompt_versions.id)::text as version_count
+       from ai_task_definitions
+       join prompt_definitions on prompt_definitions.id = ai_task_definitions.prompt_definition_id
+       join prompt_versions on prompt_versions.prompt_definition_id = prompt_definitions.id
+       where ai_task_definitions.task_key = 'memo-expansion'
+       group by ai_task_definitions.task_key, prompt_definitions.name, prompt_definitions.active_version`
+    );
+
+    assert.equal(promptLink.rows[0]?.prompt_name, "work_item_expansion");
+    assert.equal(promptLink.rows[0]?.active_version, 1);
+    assert.ok(Number(promptLink.rows[0]?.version_count ?? "0") >= 1);
+  } finally {
+    await db.close();
+  }
+});
