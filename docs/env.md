@@ -43,14 +43,10 @@ See `.env.example` for the current non-secret template.
 
 ## AI And Transcription
 
-- `LLM_PROVIDER`: compatibility fallback LLM runtime provider. Supported values are `disabled`, `local-dev`, and `openai-compatible`.
-- `LLM_MODEL`: compatibility fallback model label. Defaults to `memo-capture-local-dev-expander-v1`.
-- `LLM_ENDPOINT`: compatibility fallback endpoint for OpenAI-compatible providers.
-- `MEMO_EXPANSION_PROVIDER`, `MEMO_EXPANSION_MODEL`, `MEMO_EXPANSION_ENDPOINT`: AppLauncher runtime option outputs for memo expansion.
-- `REVISE_MEMO_PROVIDER`, `REVISE_MEMO_MODEL`, `REVISE_MEMO_ENDPOINT`: AppLauncher runtime option outputs for memo revision. Revision remains no-op until a revise-memo handler is implemented.
-- `SUGGEST_NEW_MEMOS_PROVIDER`, `SUGGEST_NEW_MEMOS_MODEL`, `SUGGEST_NEW_MEMOS_ENDPOINT`: AppLauncher runtime option outputs for suggested new memo generation.
-- `SUGGEST_TAGS_PROVIDER`, `SUGGEST_TAGS_MODEL`, `SUGGEST_TAGS_ENDPOINT`: AppLauncher runtime option outputs for tag suggestion.
-- `OCR_PROVIDER`, `OCR_MODEL`, `OCR_ENDPOINT`: AppLauncher runtime option outputs for OCR. OCR remains no-op until an OCR handler is implemented.
+- `LLM_PROVIDER`: generic LLM runtime provider selected by AppLauncher. Supported values are `disabled`, `local-dev`, and `openai-compatible`.
+- `LLM_MODEL`: generic LLM runtime model label. Defaults to `memo-capture-local-dev-expander-v1`.
+- `LLM_ENDPOINT`: generic LLM runtime endpoint for OpenAI-compatible providers.
+- Memo expansion, revision, suggestion, tag, and OCR task routing is configured inside Memo Capture Settings. AppLauncher does not emit task-specific LLM env names.
 - `OPENAI_COMPATIBLE_API_KEY`: AppLauncher secret/env value for the OpenAI-compatible adapter. Do not put API keys in manifest `runtimeOptions`.
 - `TRANSCRIPTION_PROVIDER`: configured transcription provider. Supported values are `disabled`, `local-dev`, and `whisper-cpp`. Use `whisper-cpp` for local V1 transcription once the binary and model are configured.
 - `TRANSCRIPTION_MODEL`: model label recorded on transcription jobs, such as `base.en`.

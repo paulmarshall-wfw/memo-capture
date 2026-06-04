@@ -5,7 +5,7 @@ import { AuditRepository } from "../repositories/audit.js";
 import { ProjectRepository } from "../repositories/catalog.js";
 import { ProcessingJobRepository } from "../repositories/jobs.js";
 import type { AppUserRecord } from "../repositories/rows.js";
-import { SettingsRepository } from "../repositories/settings.js";
+import { SettingsRepository, type AiTaskRouteRow } from "../repositories/settings.js";
 import { SourceMemoRepository } from "../repositories/source-memos.js";
 import { TagRepository } from "../repositories/tags.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
@@ -18,7 +18,7 @@ import {
   type WorkItemExpansionContext
 } from "./llm.js";
 
-const MEMO_EXPANSION_TASK_KEY = "memo-expansion";
+const MEMO_EXPANSION_HOOK_KEY = "memo-expansion";
 
 export class AiExpansionService {
   constructor(
@@ -46,13 +46,20 @@ export class AiExpansionService {
     validation: Record<string, unknown>;
   }> {
     const settings = new SettingsRepository(this.db);
-    const [prompt, taskRoute, workItem, sourceMemo, projects] = await Promise.all([
-      settings.getActivePrompt("work_item_expansion"),
-      settings.findAiTaskRoute(MEMO_EXPANSION_TASK_KEY),
+    const [taskRoutes, workItem, sourceMemo, projects] = await Promise.all([
+      settings.listAiTaskRoutes(),
       new WorkItemRepository(this.db).findById(workItemId),
       this.findSourceMemoForWorkItem(workItemId),
       new ProjectRepository(this.db).list()
     ]);
+    const taskRoute = selectMemoExpansionTask(taskRoutes);
+    if (taskRoute === null) {
+      throw new HttpError(409, "ai_task_missing", "Memo expansion task route is not configured.");
+    }
+    const promptDefinitionName = taskRoute.prompt_name ?? "work_item_expansion";
+    const prompt = await settings.getActivePrompt(promptDefinitionName);
+    await validateMemoExpansionTaskRoute(taskRoute, this.config);
+
     if (workItem === null) {
       throw new HttpError(404, "not_found", "work_item was not found.");
     }
@@ -61,18 +68,14 @@ export class AiExpansionService {
     }
     const promptVersionId = prompt.active_prompt_version_id;
     const promptBody = prompt.active_body;
-    if (taskRoute === null) {
-      throw new HttpError(409, "ai_task_missing", "Memo expansion task route is not configured.");
+    const providerName = taskRoute.provider_name;
+    if (providerName === null) {
+      throw new HttpError(409, "llm_provider_not_enabled", "No LLM provider is selected for memo expansion.");
     }
-    if (!taskRoute.implemented) {
-      throw new HttpError(409, "ai_task_not_implemented", "Memo expansion task hook is not implemented.");
-    }
-    if (!taskRoute.route_enabled) {
-      throw new HttpError(409, "ai_task_route_disabled", "Memo expansion task route is disabled.");
-    }
-    if (taskRoute.provider_name === null || taskRoute.provider_enabled !== true) {
-      throw new HttpError(409, "llm_provider_not_enabled", "No enabled LLM provider is selected for memo expansion.");
-    }
+    const modelName =
+      taskRoute.route_model_name ?? taskRoute.provider_model_name ?? taskRoute.default_model_name ?? this.config.llm.modelName;
+    const endpoint = this.config.llm.endpoint || (taskRoute.endpoint ?? "");
+    const provider = createLlmProvider(this.config.llm, providerName, modelName, this.config.llm.provider, endpoint);
 
     const project = projects.find((candidate) => candidate.id === workItem.projectId) ?? null;
     const context: WorkItemExpansionContext = {
@@ -96,30 +99,6 @@ export class AiExpansionService {
       },
       sourceMemo
     };
-    const taskRuntime = this.config.llmTasks[MEMO_EXPANSION_TASK_KEY] ?? {
-      provider: this.config.llm.provider,
-      modelName: this.config.llm.modelName,
-      endpoint: this.config.llm.endpoint
-    };
-    const providerName = taskRoute.provider_name;
-    if (taskRuntime.provider === "disabled") {
-      throw new HttpError(
-        409,
-        "llm_provider_disabled",
-        "Memo expansion is enabled in Settings, but the AppLauncher AI runtime option is disabled."
-      );
-    }
-    if (taskRuntime.provider !== providerName) {
-      throw new HttpError(
-        409,
-        "llm_provider_unavailable",
-        `Memo expansion uses ${providerName}, but the AppLauncher runtime selected ${taskRuntime.provider}.`
-      );
-    }
-    const modelName =
-      taskRuntime.modelName || taskRoute.route_model_name || taskRoute.provider_model_name || this.config.llm.modelName;
-    const endpoint = taskRuntime.endpoint || (taskRoute.endpoint ?? "") || this.config.llm.endpoint;
-    const provider = createLlmProvider(this.config.llm, providerName, modelName, taskRuntime.provider, endpoint);
     const job = await new ProcessingJobRepository(this.db).create({
       jobKind: "expand_work_item",
       status: "running",
@@ -139,6 +118,8 @@ export class AiExpansionService {
       sourceMemoId: workItem.sourceMemoId,
       workItemId: workItem.id,
       metadata: {
+        taskKey: taskRoute.task_key,
+        hookKey: taskRoute.hook_key,
         promptName: prompt.name,
         promptVersion: prompt.active_version,
         providerName,
@@ -185,6 +166,8 @@ export class AiExpansionService {
         sourceMemoId: workItem.sourceMemoId,
         workItemId: workItem.id,
         metadata: {
+          taskKey: taskRoute.task_key,
+          hookKey: taskRoute.hook_key,
           errors: validation.errors,
           providerName: output.providerName,
           modelName: output.modelName
@@ -218,30 +201,36 @@ export class AiExpansionService {
           actorUserId: actor.id
         });
         created.push(record);
-        await audit.record({
-          eventName: "ai_suggestion.created",
-          actor,
-          subjectType: "ai_suggestion",
-          subjectId: record.id,
-          requestId,
-          jobId: job.id,
-          sourceMemoId: workItem.sourceMemoId,
-          workItemId: workItem.id,
-          metadata: {
-            parentWorkItemId: workItem.id,
-            promptVersion: prompt.active_version,
-            providerName: output.providerName,
-            modelName: output.modelName
-          }
-        });
       }
+      await audit.record({
+        eventName: "ai_expansion.completed",
+        actor,
+        subjectType: "work_item",
+        subjectId: workItem.id,
+        requestId,
+        jobId: job.id,
+        sourceMemoId: workItem.sourceMemoId,
+        workItemId: workItem.id,
+        metadata: {
+          taskKey: taskRoute.task_key,
+          hookKey: taskRoute.hook_key,
+          providerName: output.providerName,
+          modelName: output.modelName,
+          latencyMs: output.latencyMs,
+          suggestionCount: created.length
+        }
+      });
       await new ProcessingJobRepository(client).markSucceeded(job.id);
       return {
         expandedWorkItem: validation.value.expandedWorkItem,
         suggestions: created,
         providerName: output.providerName,
         modelName: output.modelName,
-        validation: { ok: true, strictJson: true }
+        validation: {
+          ok: true,
+          promptVersion: prompt.active_version,
+          strictJson: true
+        }
       };
     });
   }
@@ -387,6 +376,51 @@ interface ValidExpandedWorkItem {
 
 interface ValidSuggestion extends ValidExpandedWorkItem {
   rationale: string;
+}
+
+function selectMemoExpansionTask(tasks: AiTaskRouteRow[]): AiTaskRouteRow | null {
+  const memoExpansionTasks = tasks.filter((task) => task.hook_key === MEMO_EXPANSION_HOOK_KEY);
+  return (
+    memoExpansionTasks.find((task) => task.task_key === MEMO_EXPANSION_HOOK_KEY) ??
+    memoExpansionTasks.find((task) => task.route_enabled) ??
+    memoExpansionTasks[0] ??
+    null
+  );
+}
+
+function validateMemoExpansionTaskRoute(task: AiTaskRouteRow, config: ApiConfig): void {
+  if (task.hook_key !== MEMO_EXPANSION_HOOK_KEY) {
+    throw new HttpError(409, "ai_task_hook_mismatch", "Configured task does not dispatch to memo expansion.");
+  }
+  if (!task.implemented) {
+    throw new HttpError(409, "ai_task_not_implemented", "Memo expansion task hook is not implemented.");
+  }
+  if (!task.route_enabled) {
+    throw new HttpError(409, "ai_task_route_disabled", "Memo expansion task route is disabled.");
+  }
+  if (task.provider_name === null || task.provider_enabled !== true) {
+    throw new HttpError(409, "llm_provider_not_enabled", "No enabled LLM provider is selected for memo expansion.");
+  }
+  if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm" || task.provider_kind !== "llm") {
+    throw new HttpError(409, "llm_provider_unavailable", "Memo expansion requires an LLM task route and provider.");
+  }
+  if (task.required_secret_env === "OPENAI_COMPATIBLE_API_KEY" && config.llm.openAiCompatibleApiKey.trim() === "") {
+    throw new HttpError(409, "llm_secret_missing", "OpenAI-compatible LLM API key is not configured.");
+  }
+  if (config.llm.provider === "disabled") {
+    throw new HttpError(
+      409,
+      "llm_provider_disabled",
+      "Memo expansion is enabled in Settings, but the AppLauncher LLM runtime is disabled."
+    );
+  }
+  if (config.llm.provider !== task.provider_name) {
+    throw new HttpError(
+      409,
+      "llm_provider_unavailable",
+      `Memo expansion uses ${task.provider_name}, but the AppLauncher LLM runtime selected ${config.llm.provider}.`
+    );
+  }
 }
 
 function validateExpansionOutput(output: unknown):

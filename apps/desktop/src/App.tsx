@@ -540,6 +540,12 @@ interface SettingsSummary {
     runtimeOptionsPresent: boolean;
     nativeLaunchTarget: string;
     secretEnvironmentNames: string[];
+    llmRuntime?: {
+      provider: string;
+      modelName: string;
+      endpointConfigured: boolean;
+      ready: boolean;
+    };
     restartRequiredAfterChange: boolean;
   } | null;
   registeredTaskHooks: {
@@ -1497,7 +1503,16 @@ export function App() {
   }, [settingsSummary]);
   const registeredTaskHooks = settingsSummary?.registeredTaskHooks ?? [];
   const memoExpansionTask = useMemo(
-    () => (settingsSummary?.aiTasks ?? []).find((task) => task.taskKey === "memo-expansion") ?? null,
+    () => {
+      const tasks = settingsSummary?.aiTasks ?? [];
+      const memoExpansionTasks = tasks.filter((task) => task.hookKey === "memo-expansion");
+      return (
+        memoExpansionTasks.find((task) => task.taskKey === "memo-expansion") ??
+        memoExpansionTasks.find((task) => task.routeEnabled) ??
+        memoExpansionTasks[0] ??
+        null
+      );
+    },
     [settingsSummary]
   );
   const aiExpansionUnavailableReason = useMemo(() => {
@@ -5498,8 +5513,10 @@ export function App() {
                         {settingsSummary.appLauncher?.nativeLaunchTarget ?? "unknown"}
                       </p>
                       <p>
-                        Provider/model/endpoint choices come from non-secret runtime options. Secrets use AppLauncher
-                        secret storage:{" "}
+                        LLM runtime {settingsSummary.appLauncher?.llmRuntime?.provider ?? "not configured"}; model{" "}
+                        {settingsSummary.appLauncher?.llmRuntime?.modelName ?? "not configured"}; endpoint{" "}
+                        {settingsSummary.appLauncher?.llmRuntime?.endpointConfigured ? "configured" : "not configured"}.
+                        Secrets use AppLauncher secret storage:{" "}
                         {(settingsSummary.appLauncher?.secretEnvironmentNames ?? []).length === 0
                           ? "none"
                           : settingsSummary.appLauncher?.secretEnvironmentNames.join(", ")}
@@ -5742,7 +5759,7 @@ export function App() {
                     <div>
                       <div className="batch-title">
                         <strong>Add task</strong>
-                        <span>Key: {deriveTaskKeyPreview(newAiTaskDraft.displayName)}</span>
+                        <span>Generated identity</span>
                       </div>
                       <div className="provider-route-controls">
                         <label>
@@ -5935,8 +5952,7 @@ export function App() {
                                 <span>{task.runtimeReady ? "Ready" : task.hookImplemented ? "Needs setup" : "Not implemented"}</span>
                               </div>
                               <p>
-                                Key {task.taskKey}; kind {task.taskKindDisplayName}; hook {task.hookKey}; route{" "}
-                                {task.routeEnabled ? "enabled" : "disabled"}
+                                {task.taskKindDisplayName}; hook {task.hookKey}; route {task.routeEnabled ? "enabled" : "disabled"}
                               </p>
                               <p>
                                 Runtime {task.runtimeProvider}; selected {task.selectedProviderName ?? "none"}; model{" "}

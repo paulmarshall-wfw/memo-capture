@@ -180,7 +180,7 @@ test("audit repository lists events with display context in real Postgres", asyn
   }
 });
 
-test("settings migration supports multiple provider instances and task-owned prompt preservation", async () => {
+test("settings schema supports multiple provider instances and task-owned prompt preservation", async () => {
   const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
   const providerId = "10000000-0000-4000-8000-000000000101";
 
@@ -221,27 +221,108 @@ test("settings migration supports multiple provider instances and task-owned pro
     );
     assert.ok(Number(providers.rows[0]?.provider_count ?? "0") >= 2);
 
+    await db.query(
+      `insert into prompt_definitions (id, name, purpose, active_version, retention_policy)
+       values (
+         '10000000-0000-4000-8000-000000000201',
+         'task_expand_memo',
+         'Prompt for Expand memo.',
+         1,
+         'retain_active_and_referenced'
+       )
+       on conflict (id) do nothing`
+    );
+    await db.query(
+      `insert into prompt_versions (id, prompt_definition_id, version, body, output_schema, context_config)
+       values (
+         '10000000-0000-4000-8000-000000000202',
+         '10000000-0000-4000-8000-000000000201',
+         1,
+         'Return strict JSON.',
+         '{}'::jsonb,
+         '{"freeformText":"Return strict JSON.","includeProjectSynopsis":true,"includeMemoMetadata":true,"includeMemoTranscriptText":true}'::jsonb
+       )
+       on conflict (prompt_definition_id, version) do nothing`
+    );
+    await db.query(
+      `insert into ai_task_definitions (
+         id,
+         task_key,
+         display_name,
+         description,
+         hook_key,
+         task_kind,
+         task_kind_id,
+         prompt_definition_id,
+         implemented,
+         default_provider_name,
+         default_model_name,
+         runtime_option_id,
+         runtime_option_purpose,
+         runtime_provider_env,
+         runtime_model_env,
+         runtime_endpoint_env
+       )
+       values (
+         '10000000-0000-4000-8000-000000000203',
+         'expand-memo',
+         'Expand memo',
+         'Expand one memo.',
+         'memo-expansion',
+         'llm',
+         (select id from task_kinds where kind_key = 'llm' limit 1),
+         '10000000-0000-4000-8000-000000000201',
+         true,
+         'local-dev',
+         'memo-capture-local-dev-expander-v1',
+         'llm-runtime',
+         'llm-runtime',
+         'LLM_PROVIDER',
+         'LLM_MODEL',
+         'LLM_ENDPOINT'
+       )
+       on conflict (task_key) do update
+       set
+         hook_key = excluded.hook_key,
+         prompt_definition_id = excluded.prompt_definition_id,
+         runtime_option_id = excluded.runtime_option_id,
+         runtime_provider_env = excluded.runtime_provider_env,
+         runtime_model_env = excluded.runtime_model_env,
+         runtime_endpoint_env = excluded.runtime_endpoint_env`
+    );
+
     const promptLink = await db.query<{
       task_key: string;
+      hook_key: string;
       prompt_name: string;
       active_version: number;
       version_count: string;
+      runtime_option_id: string;
+      runtime_provider_env: string;
     }>(
       `select
          ai_task_definitions.task_key,
+         ai_task_definitions.hook_key,
          prompt_definitions.name as prompt_name,
          prompt_definitions.active_version,
-         count(prompt_versions.id)::text as version_count
+         count(prompt_versions.id)::text as version_count,
+         ai_task_definitions.runtime_option_id,
+         ai_task_definitions.runtime_provider_env
        from ai_task_definitions
        join prompt_definitions on prompt_definitions.id = ai_task_definitions.prompt_definition_id
        join prompt_versions on prompt_versions.prompt_definition_id = prompt_definitions.id
-       where ai_task_definitions.task_key = 'memo-expansion'
-       group by ai_task_definitions.task_key, prompt_definitions.name, prompt_definitions.active_version`
+       where ai_task_definitions.task_key = 'expand-memo'
+       group by ai_task_definitions.task_key, ai_task_definitions.hook_key, prompt_definitions.name,
+                prompt_definitions.active_version, ai_task_definitions.runtime_option_id,
+                ai_task_definitions.runtime_provider_env`
     );
 
-    assert.equal(promptLink.rows[0]?.prompt_name, "work_item_expansion");
+    assert.equal(promptLink.rows[0]?.hook_key, "memo-expansion");
+    assert.equal(promptLink.rows[0]?.prompt_name, "task_expand_memo");
     assert.equal(promptLink.rows[0]?.active_version, 1);
     assert.ok(Number(promptLink.rows[0]?.version_count ?? "0") >= 1);
+    assert.equal(promptLink.rows[0]?.runtime_option_id, "llm-runtime");
+    assert.equal(promptLink.rows[0]?.runtime_provider_env, "LLM_PROVIDER");
   } finally {
     await db.close();
   }

@@ -84,7 +84,7 @@ export class SettingsService {
       providerCapabilities: providerCapabilities.map(serializeProviderCapability),
       taskKinds: taskKinds.map(serializeTaskKind),
       aiTasks: aiTasks.map((task) => serializeAiTaskRoute(task, this.config)),
-      appLauncher: serializeAppLauncherRuntimeOptions(aiTasks),
+      appLauncher: serializeAppLauncherRuntimeOptions(providers, this.config),
       registeredTaskHooks: serializeRegisteredTaskHooks(),
       prompts: prompts.map(serializePrompt),
       auth: {
@@ -1047,11 +1047,7 @@ function serializeProvider(
 }
 
 function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<string, unknown> {
-  const runtime = config.llmTasks[task.task_key] ?? {
-    provider: "disabled",
-    modelName: task.route_model_name ?? task.default_model_name ?? "",
-    endpoint: ""
-  };
+  const runtime = runtimeForTaskRoute(task, config);
   const providerName = task.provider_name ?? task.default_provider_name;
   const selectedModelName = task.route_model_name ?? task.provider_model_name ?? task.default_model_name;
   const providerEnabled = task.provider_enabled === true;
@@ -1084,9 +1080,9 @@ function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<s
           : !providerKindReady
             ? `Selected provider kind ${task.provider_kind ?? "unknown"} is not compatible with ${task.task_kind}.`
             : runtime.provider === "disabled"
-              ? "Runtime option is disabled in AppLauncher."
+              ? `${runtime.label} runtime is disabled in AppLauncher.`
               : runtime.provider !== providerName
-                ? `AppLauncher runtime selected ${runtime.provider}, but Settings route selects ${providerName}.`
+                ? `AppLauncher ${runtime.label} runtime selected ${runtime.provider}, but Settings route selects ${providerName}.`
                 : !secretReady
                   ? `Required secret ${requiredSecretEnv ?? "provider secret"} is not configured.`
                   : null;
@@ -1157,20 +1153,58 @@ function serializeTaskPrompt(prompt: PromptDefinitionRow): Record<string, unknow
   };
 }
 
-function serializeAppLauncherRuntimeOptions(tasks: AiTaskRouteRow[]): Record<string, unknown> {
+function serializeAppLauncherRuntimeOptions(providers: ProviderConfigRow[], config: ApiConfig): Record<string, unknown> {
   return {
     manifestVersion: "1.2.0",
     minLauncherVersion: "1.2.0",
-    runtimeOptionsPresent: tasks.length > 0,
+    runtimeOptionsPresent: true,
     nativeLaunchTarget: "executablePath",
     secretEnvironmentNames: Array.from(
       new Set(
-        tasks
-          .map((task) => task.required_secret_env)
+        providers
+          .map((provider) => provider.required_secret_env)
           .filter((value): value is string => value !== null && value.trim() !== "")
       )
     ),
+    llmRuntime: {
+      provider: config.llm.provider,
+      modelName: config.llm.modelName,
+      endpointConfigured: config.llm.endpoint.trim() !== "",
+      ready: config.llm.provider !== "disabled"
+    },
     restartRequiredAfterChange: true
+  };
+}
+
+function runtimeForTaskRoute(
+  task: Pick<
+    AiTaskRouteRow,
+    "task_kind" | "task_kind_provider_kind" | "route_model_name" | "default_model_name" | "endpoint"
+  >,
+  config: ApiConfig
+): { provider: string; modelName: string; endpoint: string; label: string } {
+  const requiredProviderKind = task.task_kind_provider_kind ?? task.task_kind;
+  if (requiredProviderKind === "llm") {
+    return {
+      provider: config.llm.provider,
+      modelName: config.llm.modelName,
+      endpoint: config.llm.endpoint,
+      label: "LLM"
+    };
+  }
+  if (requiredProviderKind === "transcription" || requiredProviderKind === "stt") {
+    return {
+      provider: config.transcription.provider,
+      modelName: config.transcription.modelName,
+      endpoint: "",
+      label: "transcription"
+    };
+  }
+  return {
+    provider: "disabled",
+    modelName: task.route_model_name ?? task.default_model_name ?? "",
+    endpoint: "",
+    label: requiredProviderKind
   };
 }
 
@@ -1318,16 +1352,12 @@ async function validateAiTaskRouteUpdate(
       requiredSecretEnv
     });
   }
-  const runtime = config.llmTasks[current.task_key] ?? {
-    provider: "disabled",
-    modelName: input.modelName ?? current.route_model_name ?? provider.model_name ?? "",
-    endpoint: ""
-  };
+  const runtime = runtimeForTaskRoute(current, config);
   if (runtime.provider === "disabled") {
-    throw new HttpError(409, "task_runtime_disabled", "Task route cannot be enabled while its runtime option is disabled.");
+    throw new HttpError(409, "task_runtime_disabled", `Task route cannot be enabled while the ${runtime.label} runtime is disabled.`);
   }
   if (runtime.provider !== provider.provider_name) {
-    throw new HttpError(409, "task_runtime_mismatch", "Task route cannot be enabled until runtime provider matches Settings.", {
+    throw new HttpError(409, "task_runtime_mismatch", `Task route cannot be enabled until the ${runtime.label} runtime provider matches Settings.`, {
       runtimeProvider: runtime.provider,
       selectedProvider: provider.provider_name
     });
@@ -1360,7 +1390,6 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     throw new HttpError(400, "invalid_request", "taskKind must reference an active configured task kind.");
   }
   const routeEnabled = parseOptionalBoolean(record.enabled, "enabled") ?? false;
-  const runtimeEnvPrefix = runtimeEnvPrefixForTaskKey(taskKey);
   return {
     taskKey,
     displayName,
@@ -1390,11 +1419,11 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
         includeMemoTranscriptText: parsePromptToggle(record.includeMemoTranscriptText, "includeMemoTranscriptText")
       }
     ),
-    runtimeOptionId: `${taskKey}-provider`,
-    runtimeOptionPurpose: taskKey,
-    runtimeProviderEnv: `${runtimeEnvPrefix}_PROVIDER`,
-    runtimeModelEnv: `${runtimeEnvPrefix}_MODEL`,
-    runtimeEndpointEnv: `${runtimeEnvPrefix}_ENDPOINT`
+    runtimeOptionId: "llm-runtime",
+    runtimeOptionPurpose: "llm-runtime",
+    runtimeProviderEnv: "LLM_PROVIDER",
+    runtimeModelEnv: "LLM_MODEL",
+    runtimeEndpointEnv: "LLM_ENDPOINT"
   };
 }
 
@@ -1472,14 +1501,6 @@ function humanizeKey(value: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-function runtimeEnvPrefixForTaskKey(taskKey: string): string {
-  return `AI_TASK_${taskKey
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/(^_+|_+$)/g, "")
-    .replace(/(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASS|CREDENTIAL|AUTH)(?=_|$)/g, "$1ITEM")}`;
 }
 
 function parseTranscriptionBody(body: unknown) {

@@ -46,8 +46,7 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev",
-    MEMO_EXPANSION_PROVIDER: "local-dev"
+    LLM_PROVIDER: "local-dev"
   });
   const db = new FakeDatabase();
   seedTaskSettings(db);
@@ -214,8 +213,7 @@ test("AI task route enablement blocks unimplemented hooks and incompatible provi
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev",
-    MEMO_EXPANSION_PROVIDER: "local-dev"
+    LLM_PROVIDER: "local-dev"
   });
   const db = new FakeDatabase();
   seedTaskSettings(db);
@@ -255,12 +253,114 @@ test("AI task route enablement blocks unimplemented hooks and incompatible provi
   );
 });
 
+test("AI task route enablement uses generic LLM runtime rather than task key", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    LLM_PROVIDER: "local-dev"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const created = (await services.settings.createAiTaskDefinition(
+    {
+      displayName: "Concise expansion",
+      hookKey: "memo-expansion",
+      providerConfigId: "provider-local-dev",
+      modelName: "memo-capture-local-dev-expander-v1",
+      enabled: true
+    },
+    session.user,
+    "request-create-concise-expansion"
+  )) as { aiTask: { taskKey: string; hookKey: string; routeEnabled: boolean; runtimeReady: boolean } };
+
+  assert.equal(created.aiTask.taskKey, "concise-expansion");
+  assert.equal(created.aiTask.hookKey, "memo-expansion");
+  assert.equal(created.aiTask.routeEnabled, true);
+  assert.equal(created.aiTask.runtimeReady, true);
+
+  const second = (await services.settings.createAiTaskDefinition(
+    {
+      displayName: "Detailed expansion",
+      hookKey: "memo-expansion",
+      providerConfigId: "provider-local-dev",
+      modelName: "memo-capture-local-dev-expander-v1",
+      enabled: true
+    },
+    session.user,
+    "request-create-detailed-expansion"
+  )) as { aiTask: { taskKey: string; hookKey: string; routeEnabled: boolean; runtimeReady: boolean } };
+
+  assert.equal(second.aiTask.taskKey, "detailed-expansion");
+  assert.equal(second.aiTask.hookKey, "memo-expansion");
+  assert.equal(second.aiTask.routeEnabled, true);
+  assert.equal(second.aiTask.runtimeReady, true);
+});
+
+test("disabled generic LLM runtime blocks LLM task enablement", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    LLM_PROVIDER: "disabled"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  await assert.rejects(
+    () =>
+      services.settings.createAiTaskDefinition(
+        {
+          displayName: "Disabled runtime expansion",
+          hookKey: "memo-expansion",
+          providerConfigId: "provider-local-dev",
+          enabled: true
+        },
+        session.user,
+        "request-create-disabled-runtime-expansion"
+      ),
+    (error: unknown) =>
+      error instanceof HttpError &&
+      error.statusCode === 409 &&
+      error.code === "task_runtime_disabled"
+  );
+});
+
+test("AI task display name updates do not change the derived task key", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    LLM_PROVIDER: "local-dev"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const updated = (await services.settings.updateAiTaskDefinition(
+    "task-memo-expansion",
+    {
+      displayName: "Renamed expansion",
+      hookKey: "memo-expansion",
+      providerConfigId: "provider-local-dev",
+      enabled: true
+    },
+    session.user,
+    "request-rename-expansion-task"
+  )) as { aiTask: { taskKey: string; displayName: string } };
+
+  assert.equal(updated.aiTask.displayName, "Renamed expansion");
+  assert.equal(updated.aiTask.taskKey, "memo-expansion");
+});
+
 test("AI task updates save prompt fields and task definitions can be deleted", async () => {
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev",
-    MEMO_EXPANSION_PROVIDER: "local-dev"
+    LLM_PROVIDER: "local-dev"
   });
   const db = new FakeDatabase();
   seedTaskSettings(db);
@@ -2347,11 +2447,11 @@ function captureRouteServices(): AppServices {
             taskKind: "llm",
             hookImplemented: true,
             routeEnabled: true,
-            runtimeOptionId: "memo-expansion-provider",
-            runtimeOptionPurpose: "memo-expansion",
-            runtimeProviderEnv: "MEMO_EXPANSION_PROVIDER",
-            runtimeModelEnv: "MEMO_EXPANSION_MODEL",
-            runtimeEndpointEnv: "MEMO_EXPANSION_ENDPOINT",
+            runtimeOptionId: "llm-runtime",
+            runtimeOptionPurpose: "llm-runtime",
+            runtimeProviderEnv: "LLM_PROVIDER",
+            runtimeModelEnv: "LLM_MODEL",
+            runtimeEndpointEnv: "LLM_ENDPOINT",
             selectedProviderId: "provider-1",
             selectedProviderName: "local-dev",
             selectedProviderDisplayName: "Local development",
@@ -2373,6 +2473,12 @@ function captureRouteServices(): AppServices {
           runtimeOptionsPresent: true,
           nativeLaunchTarget: "executablePath",
           secretEnvironmentNames: [],
+          llmRuntime: {
+            provider: "local-dev",
+            modelName: "memo-capture-local-dev-expander-v1",
+            endpointConfigured: false,
+            ready: true
+          },
           restartRequiredAfterChange: true
         },
         prompts: [
@@ -4234,11 +4340,11 @@ function seedTaskSettings(db: FakeDatabase): void {
       implemented: true,
       default_provider_name: "local-dev",
       default_model_name: "memo-capture-local-dev-expander-v1",
-      runtime_option_id: "memo-expansion-provider",
-      runtime_option_purpose: "memo-expansion",
-      runtime_provider_env: "MEMO_EXPANSION_PROVIDER",
-      runtime_model_env: "MEMO_EXPANSION_MODEL",
-      runtime_endpoint_env: "MEMO_EXPANSION_ENDPOINT",
+      runtime_option_id: "llm-runtime",
+      runtime_option_purpose: "llm-runtime",
+      runtime_provider_env: "LLM_PROVIDER",
+      runtime_model_env: "LLM_MODEL",
+      runtime_endpoint_env: "LLM_ENDPOINT",
       updated_at: "2026-05-29T00:00:00.000Z"
     },
     {
@@ -4253,11 +4359,11 @@ function seedTaskSettings(db: FakeDatabase): void {
       implemented: false,
       default_provider_name: "local-dev",
       default_model_name: "memo-capture-local-dev-expander-v1",
-      runtime_option_id: "custom-summary-provider",
-      runtime_option_purpose: "custom-summary",
-      runtime_provider_env: "AI_TASK_CUSTOM_SUMMARY_PROVIDER",
-      runtime_model_env: "AI_TASK_CUSTOM_SUMMARY_MODEL",
-      runtime_endpoint_env: "AI_TASK_CUSTOM_SUMMARY_ENDPOINT",
+      runtime_option_id: "llm-runtime",
+      runtime_option_purpose: "llm-runtime",
+      runtime_provider_env: "LLM_PROVIDER",
+      runtime_model_env: "LLM_MODEL",
+      runtime_endpoint_env: "LLM_ENDPOINT",
       updated_at: "2026-05-29T00:00:00.000Z"
     }
   );

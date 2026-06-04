@@ -269,23 +269,18 @@ Required columns:
 - `runtime_endpoint_env text`
 - timestamps and actor columns
 
-Seeded tasks:
-
-- `memo-expansion`
-- `revise-memo`
-- `suggest-new-memos`
-- `suggest-tags`
-- `ocr`
+Task definitions are user-managed Settings records. Registered hooks are app-owned compatibility metadata, but they do not seed task rows by themselves.
 
 Rules:
 
 - `implemented = true` only when app code has a registered handler for the hook.
 - User-created tasks are allowed, but start as `implemented = false`.
-- User-created `task_key` values are derived from `display_name`; callers do not provide manual task keys.
+- `task_key` values are generated once from `display_name` at creation time; callers do not provide manual task keys and renaming a task never recalculates identity.
 - App-owned hook registry entries are displayed in the Settings Hook Key dropdown. `memo-expansion` is implemented. `revise-memo`, `suggest-new-memos`, and `suggest-tags` are no-op configuration entries and must not call providers.
 - Unknown or unimplemented hooks must display `Not implemented`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
 - Tasks can be created while their hook is unimplemented, but cannot be enabled until that hook has real app logic.
-- Task Settings fields are task name, derived read-only task key, provider key, read-only provider kind, task description, hook key, prompts checkbox, and enabled checkbox.
+- Task Settings fields are task name, provider key, read-only provider kind, task description, hook key, prompts checkbox, enabled checkbox, model override, prompt editor, and readiness/error messages. Normal Settings UI must not foreground `task_key`.
+- Multiple enabled tasks may share the same `hook_key`; the hook dispatches to app-owned implementation logic while the task owns prompt/provider/model settings.
 - OCR is modeled as a task in V1, but remains no-op until OCR handler logic is implemented.
 
 ### ai_task_routes
@@ -302,8 +297,8 @@ Required columns:
 Rules:
 
 - Global task routes are the V1 routing model.
-- A task runs only when the route is enabled, the hook is implemented, the selected provider is enabled and compatible, required secrets are present, and AppLauncher/runtime env selects that same provider.
-- Enabling a route is rejected server-side if the hook is unimplemented, the provider is incompatible, the provider is disabled, a required secret is missing, or the runtime option does not match.
+- A task runs only when the route is enabled, the hook is implemented, the selected provider is enabled and compatible, required secrets are present, and the generic AppLauncher/runtime provider selects a compatible provider.
+- Enabling a route is rejected server-side if the hook is unimplemented, the provider is incompatible, the provider is disabled, a required secret is missing, the generic runtime provider is disabled, or the runtime provider does not match.
 - Model overrides are per route and affect only new processing attempts.
 
 ### prompt_definitions
@@ -676,7 +671,7 @@ Request:
 }
 ```
 
-Updates task display fields, hook selection, prompt attachment, and the global route for one AI task. The task can be enabled only when the selected hook is implemented with real app logic, the selected provider is compatible, the selected provider is enabled, the AppLauncher runtime option selects the same provider, and required secrets are configured.
+Updates task display fields, hook selection, prompt attachment, and the global route for one AI task. The task key remains stable. The task can be enabled only when the selected hook is implemented with real app logic, the selected provider is compatible, the selected provider is enabled, the generic AppLauncher runtime provider selects the same provider, and required secrets are configured.
 
 ### Update current task prompt
 
@@ -755,13 +750,13 @@ Settings must not expose a manual per-file import queue. Watched folders own sta
 
 Providers section:
 
-- AppLauncher status shows manifest/runtime option readiness, required secret env names, and relaunch guidance after runtime changes.
+- AppLauncher status shows generic LLM runtime readiness, required secret env names, and relaunch guidance after runtime changes.
 - Provider catalog shows enabled state, adapter, endpoint/model metadata, external-send posture, redacted secret status, and health.
 
 Tasks section:
 
-- Task creation accepts task name, hook key, provider key, description, prompt enablement, and enabled state; the task key is derived and previewed read-only.
-- Task rows show task name, task key, hook key, implementation status, provider key selection, read-only provider kind, optional model override, task enablement, and readiness reason.
+- Task creation accepts task name, hook key, provider key, description, prompt enablement, and enabled state; the task key is derived server-side and hidden from normal Settings UI.
+- Task rows show task name, hook key, implementation status, provider key selection, read-only provider kind, optional model override, task enablement, and readiness reason.
 - Prompt editing is attached to prompt-backed task rows and updates the current prompt configuration in place.
 - User-created task hooks can be added from Settings, but they show `Not implemented` until app logic exists and must not process work.
 
@@ -778,7 +773,7 @@ Operations section:
 - Updating backend settings writes audit events.
 - Provider config response redacts secret presence and never returns secret values.
 - Disabled providers never receive new jobs.
-- AppLauncher runtime options contain only non-secret provider/model/endpoint selectors; API keys use AppLauncher secrets or process environment.
+- AppLauncher runtime options contain only generic non-secret LLM provider/model/endpoint selectors; API keys use AppLauncher secrets or process environment.
 - User-created AI task hooks display `Not implemented` and no-op until app logic exists.
 - AI expansion with invalid structured JSON creates a failed diagnostics job and no suggestion records.
 - Accepting an AI suggestion creates a normal memo work item without changing the parent lifecycle state.

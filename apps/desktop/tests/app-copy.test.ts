@@ -49,7 +49,9 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /Task Description/);
   assert.match(appSource, /Add provider/);
   assert.match(appSource, /\/api\/settings\/providers/);
-  assert.match(appSource, /Key: \{deriveTaskKeyPreview\(newAiTaskDraft\.displayName\)\}/);
+  assert.match(appSource, /Generated identity/);
+  assert.doesNotMatch(appSource, /Key: \{deriveTaskKeyPreview\(newAiTaskDraft\.displayName\)\}/);
+  assert.doesNotMatch(appSource, /Key \{task\.taskKey\}/);
   assert.doesNotMatch(appSource, /firstRegisteredTaskHookKey/);
   assert.match(appSource, /newAiTaskDraft\.promptDraft\.freeformText/);
   assert.match(appSource, /includeProjectSynopsis: newAiTaskDraft\.promptDraft\.includeProjectSynopsis/);
@@ -61,7 +63,7 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /\/api\/settings\/ai-tasks\/\$\{encodeURIComponent\(task\.id\)\}/);
   assert.doesNotMatch(appSource, /\/api\/settings\/prompts\/\$\{encodeURIComponent\(prompt\.id\)\}\/current/);
   assert.match(appSource, /Model override/);
-  assert.match(appSource, /runtime option/);
+  assert.match(appSource, /LLM runtime/);
   assert.match(appSource, /task\.prompt/);
   assert.doesNotMatch(appSource, /Task kinds/);
   assert.doesNotMatch(appSource, /Add task kind/);
@@ -86,6 +88,26 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.doesNotMatch(appSource, />\s*Import\s*</);
   assert.doesNotMatch(appSource, />\s*Do not use\s*</i);
   assert.doesNotMatch(appSource, /manual per-file import/i);
+});
+
+test("AppLauncher manifests expose generic LLM runtime options", () => {
+  const webManifest = readFileSync(
+    new URL("../../../dist/applauncher-manifests/memo-capture/0.1.0/manifest.json", import.meta.url),
+    "utf8"
+  );
+  const nativeManifest = readFileSync(
+    new URL("../../../dist/applauncher-manifests/memo-capture-native/0.1.0/manifest.json", import.meta.url),
+    "utf8"
+  );
+  const combined = `${webManifest}\n${nativeManifest}`;
+
+  assert.match(combined, /"id": "llm-runtime"/);
+  assert.match(combined, /"LLM_PROVIDER": "local-dev"/);
+  assert.match(combined, /"LLM_PROVIDER": "openai-compatible"/);
+  assert.doesNotMatch(combined, /MEMO_EXPANSION_PROVIDER/);
+  assert.doesNotMatch(combined, /SUGGEST_TAGS_PROVIDER/);
+  assert.doesNotMatch(combined, /OCR_PROVIDER/);
+  assert.doesNotMatch(combined, /memo-expansion-provider/);
 });
 
 test("watched imports use filesystem creation time before modified time", () => {
