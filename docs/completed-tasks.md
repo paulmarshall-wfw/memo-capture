@@ -325,3 +325,15 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Added a persisted Processing Hooks registry seeded from existing hook keys, create/delete Settings APIs, derived hook implementation status, a new Settings page for hook status and deletion, Tasks dropdowns backed by the registry, launcher contract checks, and matching docs.
   Verification: `npm run typecheck`, focused API and desktop tests, `npm test` outside the sandbox after route-test `listen EPERM`, `npm run test:postgres` outside the sandbox after Docker socket denial, `npm run build`, `npm run verify`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed.
   Traceability: branch `main`, base HEAD `035bc3f`; changed files include `apps/api/db/migrations/0027_processing_hooks_registry.sql`, API settings repository/service/routes/tests, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `apps/desktop/tests/app-copy.test.ts`, launcher scripts, `docs/design/memo-capture-design-learnings.md`, `docs/specs/settings-and-audit.md`, and `docs/completed-tasks.md`.
+
+## 2026-06-05
+
+- Task: Add task-rendered work item detail buttons
+  Outcome: Added task render-location and display-order metadata, a task-id work item invocation endpoint, explicit task dispatch for memo expansion, task-rendered detail-panel buttons, Tasks Settings placement controls, and matching docs/tests.
+  Verification: `npm run typecheck`, `npm test` outside the sandbox after route-test `listen EPERM`, `npm run verify`, `npm run test:postgres` outside the sandbox after Docker socket denial, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed.
+  Traceability: branch `main`, HEAD `5648cd9`; changed files include `apps/api/db/migrations/0028_task_render_locations.sql`, API settings/AI-expansion/server/service files and tests, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `apps/desktop/tests/app-copy.test.ts`, `docs/specs/index.md`, `docs/specs/settings-and-audit.md`, and `docs/completed-tasks.md`.
+
+- Task: Refresh AppLauncher native LLM runtime setup
+  Outcome: Updated and installed the Memo Capture AppLauncher web/native manifests with the generic `llm-runtime` selector, repaired the stale native saved setup to use `LLM_PROVIDER=local-dev`, and patched AppLauncher so saved setup drafts prune obsolete runtime option IDs after manifest changes.
+  Verification: AppLauncher manifest validation passed for installed Memo Capture web and native manifests with zero errors/warnings; native launch-target readiness validation passed; the native `.app` bundle exists; the saved AppLauncher profile now stores `llm-runtime -> local-dev`; and `npm run build` passed in the AppLauncher repo.
+  Traceability: branch `main`, HEAD `5648cd9`; changed files/artifacts include generated Memo Capture manifests under `dist/applauncher-manifests`, AppLauncher install-source/registry manifests under `~/Library/Application Support/AppLauncher`, AppLauncher profile SQLite state, AppLauncher `src/features/launcher/ProfileEditorPanel.tsx`, and `docs/completed-tasks.md`.
