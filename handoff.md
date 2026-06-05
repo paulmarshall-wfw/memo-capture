@@ -4,15 +4,15 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-04T22:31:39Z
+- Created timestamp UTC: 2026-06-05T10:42:23Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: refresh hot continuity state after the Settings task/runtime/hook registry implementation work.
+- Session scope: refresh hot continuity state after the task-rendered work-item buttons, AppLauncher native LLM setup, and task prompt system-message work.
 
 ### Checkpoint Status
 
-- Git HEAD: `2f78e9c`
+- Git HEAD: `0e204be`
 - Working tree: dirty
 - Dirty files intentionally in scope:
   - `handoff.md`
@@ -27,11 +27,13 @@
   - `docs/completed-tasks.md`
   - `docs/design/memo-capture-design-learnings.md`
   - `docs/specs/settings-and-audit.md`
-  - `apps/api/db/migrations/0026_generic_llm_runtime_options.sql`
+  - `docs/specs/index.md`
   - `apps/api/db/migrations/0027_processing_hooks_registry.sql`
+  - `apps/api/db/migrations/0028_task_render_locations.sql`
+  - `apps/api/db/migrations/0029_prompt_system_message.sql`
   - `apps/api/src/services/settings.ts`
   - `apps/api/src/services/ai-expansion.ts`
-  - `apps/api/src/repositories/settings.ts`
+  - `apps/api/src/services/llm.ts`
   - `apps/api/src/server.ts`
   - `apps/desktop/src/App.tsx`
   - `scripts/applauncher-dev.mjs`
@@ -41,35 +43,36 @@
   - result: not run
   - timestamp UTC: unknown
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD` is recorded, the completed-task ledger already contains the latest Processing Hooks registry entry, and the only intentional working-tree change is this refreshed handoff.
+- Safe-to-continue basis: current `HEAD` is recorded, the working tree was clean before this refresh, and the only intentional dirty file is this refreshed handoff.
 - Next checkpoint action: review `git diff -- handoff.md`; commit only if explicitly requested.
 
 ## 2. Executive Summary
 
-The repo is now on `main` at `2f78e9c` after the Settings/runtime cleanup around generic LLM runtime options and configurable Processing Hooks.
+The repo is on `main` at `0e204be Expose task prompt system messages`.
 
 Complete now:
 
-- Task routing is separate from AppLauncher LLM runtime selection. AppLauncher exposes generic non-secret LLM runtime selectors rather than task-specific runtime options.
-- Tasks dispatch by app-owned `hookKey`; multiple task definitions can share one hook.
-- Tasks Settings hook controls use registered hook selections, while preserving existing custom hook values.
-- Processing Hooks are persisted as Settings-managed registry records with create/delete APIs, status display, and task dropdown backing.
-- The latest completed-task ledger entry for `Add configurable Processing Hooks registry` is present.
+- Processing Hooks are persisted Settings-managed registry records used by Tasks hook selection.
+- Tasks can render work-item detail buttons by task metadata, and work-item task execution can dispatch memo expansion by task ID.
+- AppLauncher web/native manifests use the generic `llm-runtime` selector; the native saved setup was repaired to use `LLM_PROVIDER=local-dev`.
+- Task-owned prompts now expose editable System message fields, persist the value in prompt context config, and use it for OpenAI-compatible requests.
+- Migration `0029_prompt_system_message` backfills prompt system-message config.
 
 Incomplete now:
 
-- No new product work is in progress in the working tree.
-- `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are absent, so handoff freshness is checked manually from Git state.
+- No product implementation work is currently dirty in this checkout.
+- Broad `npm test` was not cleanly rerun for the latest prompt-system-message slice because sandboxed protected-route tests still hit unrelated `listen EPERM 127.0.0.1`; focused changed tests passed.
+- `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are absent, so freshness is grounded manually from Git state.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: leave a fresh session with an accurate current checkpoint after the latest Settings/hooks work.
+Immediate goal: leave a fresh session with an accurate current checkpoint for the latest Settings/task prompt work.
 
 Intended finished state:
 
-- `handoff.md` describes `HEAD` `2f78e9c`.
+- `handoff.md` describes `HEAD` `0e204be`.
 - The current clean-code checkpoint and this handoff-only dirty tree are explicitly accounted for.
 - The completed-task ledger remains the source for completed work history.
 
@@ -89,18 +92,18 @@ Definition of done: update this handoff and verify the resulting dirty tree cont
   - `npm run typecheck`
   - `npm run build`
   - `npm run verify`
-- Latest implementation checkpoint is `2f78e9c Add configurable processing hooks registry`.
-- Migration `0026_generic_llm_runtime_options` normalizes AI task runtime metadata around generic LLM runtime options.
-- Migration `0027_processing_hooks_registry` adds the persisted Processing Hooks registry.
-- Settings now exposes Providers, Processing Hooks, and Tasks as separate surfaces.
-- Processing Hooks can be created and deleted through Settings APIs/UI, with delete blocked while tasks reference the hook.
-- Hook implementation status is derived from backend app code; unimplemented hooks remain default no-ops and must not call providers.
-- Launcher scripts include current Settings contract checks to avoid reusing stale APIs.
+- Latest implementation checkpoint is `0e204be Expose task prompt system messages`.
+- `0028_task_render_locations` adds task placement/display-order metadata for detail-panel actions.
+- `0029_prompt_system_message` adds task prompt system-message persistence/backfill.
+- Tasks Settings owns routing, render placement, prompt text, and prompt System message.
+- Providers remain catalog/configuration records, not the place for task routing or prompts.
+- Processing Hooks remain app-owned registry entries; unimplemented custom hooks are no-op until backend app code implements them.
+- AppLauncher runtime options remain generic non-secret selectors, with runtime values/secrets supplied outside the app repo.
 
 ### Partially Working
 
-- Configurable hooks are registry-backed, but only hooks with backend handlers are implemented behavior. Custom hooks remain no-op until app code registers real logic.
-- The local development database status was not rechecked during this handoff-only pass. The last handoff described migrations applied through `0025`; the completed ledger records verification for `0026` and `0027`.
+- Latest AppLauncher setup work includes local artifacts outside this repo: installed manifests/profile state under AppLauncher storage and an AppLauncher code patch. Recheck that repo if the next task depends on launcher behavior.
+- Local shared development database state was not rechecked during this handoff-only refresh. `npm run test:postgres` verified isolated Postgres behavior for the latest prompt work.
 
 ### Not Working Yet
 
@@ -110,8 +113,8 @@ Definition of done: update this handoff and verify the resulting dirty tree cont
 
 ### Not Yet Verified
 
-- No fresh `npm run verify`, `npm run test:postgres`, browser smoke, or native launch was run during this handoff-only refresh.
-- The latest ledger entry records that `npm run verify`, `npm run test:postgres`, `npm run build`, and native `.app` rebuild passed for the Processing Hooks registry work.
+- No fresh `npm run verify`, browser smoke, native launch, or local shared-database migration run was performed during this handoff-only refresh.
+- Latest ledger entry records changed prompt tests, `npm run typecheck`, `npm run test:postgres`, native `.app` rebuild, and `git diff --check` passed; broad sandboxed `npm test` still hit unrelated protected-route bind failures.
 
 ## 5. Active Constraints
 
@@ -119,27 +122,26 @@ Definition of done: update this handoff and verify the resulting dirty tree cont
 - Do not commit, tag, release, publish, delete files, install dependencies, or mutate app/browser state unless explicitly requested.
 - Never use `latest`; always use numbered versions.
 - Read `docs/design/memo-capture-design-learnings.md` before architecture, schema, workflow, ingestion, AI, or export work.
-- Providers are catalog/configuration records. Routing, prompt, readiness, and hook choices belong under Tasks/Processing Hooks, not Providers.
+- Providers are catalog/configuration records. Routing, prompt, readiness, hook choices, and render placement belong under Tasks/Processing Hooks, not Providers.
+- Task `taskKey` is derived from display name and should not be foregrounded as editable Settings UI.
 - AppLauncher runtime options are non-secret selectors only. API keys stay in AppLauncher secrets or process environment values.
-- Task keys are derived from display names and should not be foregrounded as editable Settings UI.
+- AI output consumed by code must be structured JSON and validated before storage.
 - Use `npm run test:postgres` for database-sensitive automated checks; it resets `memo_capture_test`, not shared local dev database `memo_capture`.
 - For native-testable changes, rebuild the runnable `.app` bundle before handoff; do not create a DMG unless explicitly requested.
 
 ## 6. Commands and Verification
 
-Most recent implementation verification recorded in `docs/completed-tasks.md` for `2f78e9c`:
+Most recent implementation verification recorded in `docs/completed-tasks.md` for `0e204be`:
 
 ```bash
+node --test --import tsx apps/api/tests/llm-prompt.test.ts
 npm run typecheck
-npm test
 npm run test:postgres
-npm run build
-npm run verify
 npm run tauri:build -w @memo-capture/desktop -- --bundles app
 git diff --check
 ```
 
-Verification not rerun in this session because this was a handoff-only documentation refresh.
+Additional focused API task prompt tests and focused desktop Settings copy tests passed for the latest slice. Broad sandboxed `npm test` still hit unrelated protected-route `listen EPERM 127.0.0.1` failures while changed tests passed.
 
 Useful next commands:
 
@@ -159,15 +161,17 @@ Notes:
 ## 7. Files to Open First
 
 - `handoff.md`: hot current-state context.
-- `docs/completed-tasks.md`: completed work ledger; newest entries cover generic LLM runtime options, hook dropdown rationalization, and Processing Hooks registry.
+- `docs/completed-tasks.md`: completed work ledger; newest entries cover task-rendered buttons, AppLauncher native LLM setup, and prompt System messages.
 - `docs/design/memo-capture-design-learnings.md`: active product/design rules for workflow, AI tasks, providers, tags, and ingestion.
 - `docs/specs/settings-and-audit.md`: Settings contract documentation for providers, tasks, hooks, prompts, and audit.
-- `apps/api/db/migrations/0026_generic_llm_runtime_options.sql`: task/runtime normalization checkpoint.
-- `apps/api/db/migrations/0027_processing_hooks_registry.sql`: Processing Hooks registry schema.
-- `apps/api/src/services/settings.ts`: Settings business rules, task readiness, hook registry behavior.
-- `apps/api/src/repositories/settings.ts`: Settings persistence for providers, tasks, processing hooks, and prompts.
-- `apps/api/src/services/ai-expansion.ts`: AI task dispatch and generic runtime readiness checks.
-- `apps/desktop/src/App.tsx`: Settings UI for Providers, Processing Hooks, Tasks, and runtime status.
+- `docs/specs/index.md`: spec index updated by the task-rendered button work.
+- `apps/api/db/migrations/0028_task_render_locations.sql`: task render metadata schema.
+- `apps/api/db/migrations/0029_prompt_system_message.sql`: prompt System message schema/backfill.
+- `apps/api/src/services/settings.ts`: Settings business rules for tasks, hooks, prompts, render placement, and readiness.
+- `apps/api/src/services/ai-expansion.ts`: task dispatch and memo-expansion routing.
+- `apps/api/src/services/llm.ts`: prompt/system-message request construction for LLM providers.
+- `apps/api/src/server.ts`: task execution and Settings API routes.
+- `apps/desktop/src/App.tsx`: Settings UI and work-item detail task button rendering.
 - `scripts/applauncher-dev.mjs`: web AppLauncher/dev API reuse contract checks.
 - `scripts/applauncher-native-dev.mjs`: native AppLauncher/dev API reuse contract checks.
 
@@ -176,12 +180,13 @@ Notes:
 Next:
 
 - Review `git diff -- handoff.md`.
-- If doing more Settings/hooks work, start by opening the files listed above and keep Providers catalog-only.
+- If continuing Settings/task work, start with the files listed above and keep Providers catalog-only.
+- If validating the latest prompt work more broadly, rerun broad tests outside sandbox constraints.
 
 Later:
 
 - Run `npm run verify` before any code commit after additional implementation work.
-- Run `npm run test:postgres` for any migration, SQL, locking, Settings persistence, or route-readiness change.
+- Run `npm run test:postgres` for any migration, SQL, locking, Settings persistence, prompt persistence, or route-readiness change.
 - Rebuild `Memo Capture.app` after user-facing or native-testable changes.
 
 Blocked:
@@ -190,4 +195,4 @@ Blocked:
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `2f78e9c`, with only `handoff.md` intentionally dirty unless Git says otherwise. Check `docs/completed-tasks.md` only for completed work history; do not duplicate it. Open `docs/design/memo-capture-design-learnings.md`, `docs/specs/settings-and-audit.md`, `apps/api/src/services/settings.ts`, `apps/api/src/repositories/settings.ts`, `apps/api/src/services/ai-expansion.ts`, `apps/desktop/src/App.tsx`, and the latest Settings migrations first. Preserve active constraints: Providers stay catalog-only, Tasks own routing/prompt/readiness, Processing Hooks are app-owned registry entries, AppLauncher runtime options are generic non-secret selectors, and custom hooks are no-op until backend app code implements them. Execute next actions in order, distinguish confirmed state from new recommendations, and do not commit unless explicitly asked.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `0e204be`, with only `handoff.md` intentionally dirty unless Git says otherwise. Check `docs/completed-tasks.md` only for completed work history; do not duplicate it. Open `docs/design/memo-capture-design-learnings.md`, `docs/specs/settings-and-audit.md`, `apps/api/src/services/settings.ts`, `apps/api/src/services/ai-expansion.ts`, `apps/api/src/services/llm.ts`, `apps/api/src/server.ts`, `apps/desktop/src/App.tsx`, and the latest Settings/task migrations first. Preserve active constraints: Providers stay catalog-only, Tasks own routing/prompt/readiness/render placement, Processing Hooks are app-owned registry entries, AppLauncher runtime options are generic non-secret selectors, and custom hooks are no-op until backend app code implements them. Execute next actions in order, distinguish confirmed state from new recommendations, and do not commit unless explicitly asked.
