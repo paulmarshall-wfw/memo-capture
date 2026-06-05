@@ -13,7 +13,7 @@ import {
   type ProviderConfigRow
 } from "../repositories/settings.js";
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
-import { normalizePromptContextConfig } from "./llm.js";
+import { DEFAULT_LLM_SYSTEM_MESSAGE, normalizePromptContextConfig } from "./llm.js";
 
 const IMPLEMENTED_AI_TASK_HOOKS: ReadonlySet<string> = new Set(["memo-expansion"]);
 const PROVIDER_KIND_OPTIONS = new Set(["llm", "transcription", "stt", "tts", "ocr", "script"]);
@@ -370,7 +370,9 @@ export class SettingsService {
                 purpose: `Prompt for ${input.displayName ?? current.display_name}.`,
                 body: promptText,
                 outputSchema: input.promptUpdate?.outputSchema ?? {},
-                contextConfig: input.promptUpdate?.contextConfig ?? defaultPromptContextConfig(promptText),
+                contextConfig:
+                  input.promptUpdate?.contextConfig ??
+                  defaultPromptContextConfig(promptText, input.initialSystemMessage),
                 actorUserId: actor.id
               })
             ).id
@@ -1523,6 +1525,9 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
       record.initialPromptText === undefined
         ? `Return strict JSON for ${displayName}. Do not include prose outside JSON.`
         : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
+      record.initialSystemMessage === undefined
+        ? undefined
+        : assertString(record.initialSystemMessage, "initialSystemMessage"),
       {
         includeProjectSynopsis: parsePromptToggle(record.includeProjectSynopsis, "includeProjectSynopsis"),
         includeMemoMetadata: parsePromptToggle(record.includeMemoMetadata, "includeMemoMetadata"),
@@ -1559,6 +1564,7 @@ function parseUpdateAiTaskBody(body: unknown) {
   const promptFieldsPresent =
     record.freeformText !== undefined ||
     record.body !== undefined ||
+    record.systemMessage !== undefined ||
     record.outputSchema !== undefined ||
     record.includeProjectSynopsis !== undefined ||
     record.includeMemoMetadata !== undefined ||
@@ -1576,6 +1582,10 @@ function parseUpdateAiTaskBody(body: unknown) {
     promptsEnabled: parseOptionalBoolean(record.promptsEnabled ?? record.promptFieldsEnabled, "promptsEnabled"),
     initialPromptText:
       record.initialPromptText === undefined ? undefined : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
+    initialSystemMessage:
+      record.initialSystemMessage === undefined
+        ? undefined
+        : assertString(record.initialSystemMessage, "initialSystemMessage"),
     promptUpdate: promptFieldsPresent ? parsePromptVersionBody(record) : undefined,
     ...route
   };
@@ -1612,6 +1622,7 @@ function promptNameForTaskKey(taskKey: string): string {
 
 function defaultPromptContextConfig(
   freeformText: string,
+  systemMessage?: string,
   toggles: {
     includeProjectSynopsis?: boolean;
     includeMemoMetadata?: boolean;
@@ -1620,6 +1631,7 @@ function defaultPromptContextConfig(
 ): Record<string, unknown> {
   return {
     freeformText,
+    systemMessage: systemMessage ?? DEFAULT_LLM_SYSTEM_MESSAGE,
     includeProjectSynopsis: toggles.includeProjectSynopsis ?? true,
     includeMemoMetadata: toggles.includeMemoMetadata ?? true,
     includeMemoTranscriptText: toggles.includeMemoTranscriptText ?? true
@@ -1841,8 +1853,13 @@ function parsePromptVersionBody(body: unknown) {
     record.freeformText === undefined
       ? assertNonEmptyString(record.body, "body")
       : assertNonEmptyString(record.freeformText, "freeformText");
+  const systemMessage =
+    record.systemMessage === undefined
+      ? DEFAULT_LLM_SYSTEM_MESSAGE
+      : assertString(record.systemMessage, "systemMessage");
   const contextConfig = {
     freeformText,
+    systemMessage,
     includeProjectSynopsis: parsePromptToggle(record.includeProjectSynopsis, "includeProjectSynopsis"),
     includeMemoMetadata: parsePromptToggle(record.includeMemoMetadata, "includeMemoMetadata"),
     includeMemoTranscriptText: parsePromptToggle(record.includeMemoTranscriptText, "includeMemoTranscriptText")
@@ -1860,6 +1877,13 @@ function parsePromptToggle(value: unknown, field: string): boolean {
   }
   if (typeof value !== "boolean") {
     throw new HttpError(400, "invalid_request", `${field} must be a boolean.`);
+  }
+  return value;
+}
+
+function assertString(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw new HttpError(400, "invalid_request", `${field} must be a string.`);
   }
   return value;
 }

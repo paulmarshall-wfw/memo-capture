@@ -10,6 +10,7 @@ test("work item expansion prompt starts with freeform text and uses text-only co
       body: "Lead with this operator guidance.",
       contextConfig: {
         freeformText: "Lead with this operator guidance.",
+        systemMessage: "Use strict JSON.",
         includeProjectSynopsis: true,
         includeMemoMetadata: true,
         includeMemoTranscriptText: true
@@ -58,4 +59,118 @@ test("disabled LLM runtime reports the Settings/runtime mismatch", () => {
       ),
     /enabled in Settings, but this API runtime is disabled/
   );
+});
+
+test("OpenAI-compatible provider sends configured system message", async () => {
+  const context: WorkItemExpansionContext = {
+    prompt: {
+      name: "work_item_expansion",
+      version: 2,
+      body: "Lead with this operator guidance.",
+      contextConfig: {
+        freeformText: "Lead with this operator guidance.",
+        systemMessage: "Return only reviewed JSON.",
+        includeProjectSynopsis: false,
+        includeMemoMetadata: false,
+        includeMemoTranscriptText: true
+      }
+    },
+    project: {
+      id: null,
+      name: null,
+      description: null
+    },
+    workItem: {
+      id: "work-item-1",
+      title: "Voice memo follow-up",
+      body: "Existing work item text.",
+      tags: [],
+      contributorText: null
+    },
+    sourceMemo: null
+  };
+  let capturedBody: unknown = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                expanded_work_item: { title: "Expanded", body: "Body", tags: [] },
+                related_suggestions: []
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  }) as typeof fetch;
+
+  try {
+    const provider = createLlmProvider(
+      {
+        provider: "openai-compatible",
+        modelName: "model-a",
+        endpoint: "https://llm.example.test/v1",
+        openAiCompatibleApiKey: "test-key"
+      },
+      "openai-compatible",
+      "model-a"
+    );
+
+    await provider.generateWorkItemExpansion(context);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.deepEqual((capturedBody as { messages: unknown[] }).messages, [
+    { role: "system", content: "Return only reviewed JSON." },
+    { role: "user", content: "Lead with this operator guidance.\n\nMemo text:\nExisting work item text." }
+  ]);
+});
+
+test("local-dev provider output does not echo prompt focus into memo body", async () => {
+  const provider = createLlmProvider(
+    {
+      provider: "local-dev",
+      modelName: "memo-capture-local-dev-expander-v1",
+      endpoint: "",
+      openAiCompatibleApiKey: ""
+    },
+    "local-dev",
+    "memo-capture-local-dev-expander-v1"
+  );
+  const output = await provider.generateWorkItemExpansion({
+    prompt: {
+      name: "work_item_expansion",
+      version: 2,
+      body: "Lead with this operator guidance.",
+      contextConfig: {
+        freeformText: "Lead with this operator guidance.",
+        systemMessage: "Use strict JSON.",
+        includeProjectSynopsis: true,
+        includeMemoMetadata: true,
+        includeMemoTranscriptText: true
+      }
+    },
+    project: {
+      id: "project-1",
+      name: "Memo Capture",
+      description: "Capture project synopsis."
+    },
+    workItem: {
+      id: "work-item-1",
+      title: "Voice memo follow-up",
+      body: "Existing work item text.",
+      tags: ["capture"],
+      contributorText: "Paul"
+    },
+    sourceMemo: null
+  });
+
+  assert.doesNotMatch(output.rawText, /Prompt focus:/);
 });

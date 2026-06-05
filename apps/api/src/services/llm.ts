@@ -29,13 +29,18 @@ export interface WorkItemExpansionContext {
 
 export interface PromptContextConfig {
   freeformText: string;
+  systemMessage: string;
   includeProjectSynopsis: boolean;
   includeMemoMetadata: boolean;
   includeMemoTranscriptText: boolean;
 }
 
+export const DEFAULT_LLM_SYSTEM_MESSAGE =
+  "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.";
+
 export const DEFAULT_PROMPT_CONTEXT_CONFIG: PromptContextConfig = {
   freeformText: "",
+  systemMessage: DEFAULT_LLM_SYSTEM_MESSAGE,
   includeProjectSynopsis: true,
   includeMemoMetadata: true,
   includeMemoTranscriptText: true
@@ -103,6 +108,8 @@ export function normalizePromptContextConfig(value: unknown, fallbackFreeformTex
   return {
     freeformText:
       typeof record.freeformText === "string" ? record.freeformText : fallbackFreeformText,
+    systemMessage:
+      typeof record.systemMessage === "string" ? record.systemMessage : DEFAULT_PROMPT_CONTEXT_CONFIG.systemMessage,
     includeProjectSynopsis:
       typeof record.includeProjectSynopsis === "boolean"
         ? record.includeProjectSynopsis
@@ -156,7 +163,6 @@ class LocalDevLlmProvider implements LlmProvider {
 
   async generateWorkItemExpansion(context: WorkItemExpansionContext): Promise<LlmStructuredOutput> {
     const startedAt = Date.now();
-    const composedPrompt = buildWorkItemExpansionPrompt(context);
     const title = context.workItem.title.trim();
     const projectPrefix = context.project.name === null ? "Memo" : context.project.name;
     const expanded = {
@@ -165,7 +171,6 @@ class LocalDevLlmProvider implements LlmProvider {
         body: [
           context.workItem.body.trim(),
           "",
-          composedPrompt === "" ? "" : `Prompt focus: ${composedPrompt.slice(0, 180)}`,
           `Expansion focus: clarify the user value, evidence, edge cases, and next review questions for ${projectPrefix}.`
         ]
           .filter((part) => part !== "")
@@ -211,6 +216,14 @@ class OpenAiCompatibleLlmProvider implements LlmProvider {
 
     const startedAt = Date.now();
     const prompt = buildWorkItemExpansionPrompt(context);
+    const systemMessage = context.prompt.contextConfig.systemMessage.trim();
+    const messages: Array<{ role: "system" | "user"; content: string }> = [
+      ...(systemMessage === "" ? [] : [{ role: "system" as const, content: systemMessage }]),
+      {
+        role: "user",
+        content: prompt
+      }
+    ];
     const url = endpoint.endsWith("/chat/completions") ? endpoint : `${endpoint.replace(/\/+$/, "")}/chat/completions`;
     const response = await fetch(url, {
       method: "POST",
@@ -221,16 +234,7 @@ class OpenAiCompatibleLlmProvider implements LlmProvider {
       body: JSON.stringify({
         model: this.options.modelName,
         response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ]
+        messages
       })
     });
 

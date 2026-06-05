@@ -193,6 +193,7 @@ The work-item detail panel can offer AI expansion for appropriate states, likely
 AI expansion sends structured context to the configured LLM service:
 
 - base prompt
+- task-owned system message
 - prompt version
 - project synopsis
 - current work-item fields

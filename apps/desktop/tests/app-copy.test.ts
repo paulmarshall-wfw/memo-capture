@@ -12,6 +12,7 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
 
   assert.doesNotMatch(appSource, /Save prompt/);
   assert.match(appSource, /Project synopsis/);
+  assert.match(appSource, /System message/);
   assert.match(appSource, /Memo text\/transcript/);
   assert.match(appSource, /toggleFileType/);
   assert.match(appSource, /Media types/);
@@ -70,6 +71,7 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.doesNotMatch(appSource, /Key \{task\.taskKey\}/);
   assert.doesNotMatch(appSource, /firstRegisteredTaskHookKey/);
   assert.match(appSource, /newAiTaskDraft\.promptDraft\.freeformText/);
+  assert.match(appSource, /newAiTaskDraft\.promptDraft\.systemMessage/);
   assert.match(appSource, /includeProjectSynopsis: newAiTaskDraft\.promptDraft\.includeProjectSynopsis/);
   assert.match(appSource, /Select hook/);
   assert.doesNotMatch(appSource, /list="task-hook-options"/);

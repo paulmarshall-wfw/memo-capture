@@ -577,6 +577,7 @@ interface SettingsSummary {
 
 interface PromptContextConfig {
   freeformText: string;
+  systemMessage: string;
   includeProjectSynopsis: boolean;
   includeMemoMetadata: boolean;
   includeMemoTranscriptText: boolean;
@@ -584,13 +585,18 @@ interface PromptContextConfig {
 
 interface PromptDraft {
   freeformText: string;
+  systemMessage: string;
   includeProjectSynopsis: boolean;
   includeMemoMetadata: boolean;
   includeMemoTranscriptText: boolean;
 }
 
+const defaultSystemMessage =
+  "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.";
+
 const defaultPromptContextConfig: PromptContextConfig = {
   freeformText: "",
+  systemMessage: defaultSystemMessage,
   includeProjectSynopsis: true,
   includeMemoMetadata: true,
   includeMemoTranscriptText: true
@@ -693,6 +699,7 @@ const defaultNewAiTaskDraft: NewAiTaskDraft = {
   promptsEnabled: false,
   promptDraft: {
     freeformText: "",
+    systemMessage: defaultSystemMessage,
     includeProjectSynopsis: true,
     includeMemoMetadata: true,
     includeMemoTranscriptText: true
@@ -1918,6 +1925,7 @@ export function App() {
             prompt.id,
             {
               freeformText: prompt.contextConfig.freeformText || prompt.body || "",
+              systemMessage: prompt.contextConfig.systemMessage,
               includeProjectSynopsis: prompt.contextConfig.includeProjectSynopsis,
               includeMemoMetadata: prompt.contextConfig.includeMemoMetadata,
               includeMemoTranscriptText: prompt.contextConfig.includeMemoTranscriptText
@@ -3258,6 +3266,9 @@ export function App() {
           initialPromptText: newAiTaskDraft.promptsEnabled
             ? newAiTaskDraft.promptDraft.freeformText
             : undefined,
+          initialSystemMessage: newAiTaskDraft.promptsEnabled
+            ? newAiTaskDraft.promptDraft.systemMessage
+            : undefined,
           includeProjectSynopsis: newAiTaskDraft.promptDraft.includeProjectSynopsis,
           includeMemoMetadata: newAiTaskDraft.promptDraft.includeMemoMetadata,
           includeMemoTranscriptText: newAiTaskDraft.promptDraft.includeMemoTranscriptText,
@@ -3307,6 +3318,7 @@ export function App() {
             ? {
                 body: promptDraft.freeformText,
                 freeformText: promptDraft.freeformText,
+                systemMessage: promptDraft.systemMessage,
                 includeProjectSynopsis: promptDraft.includeProjectSynopsis,
                 includeMemoMetadata: promptDraft.includeMemoMetadata,
                 includeMemoTranscriptText: promptDraft.includeMemoTranscriptText,
@@ -3643,6 +3655,7 @@ export function App() {
       [promptId]: {
         ...(current[promptId] ?? {
           freeformText: "",
+          systemMessage: defaultSystemMessage,
           includeProjectSynopsis: true,
           includeMemoMetadata: true,
           includeMemoTranscriptText: true
@@ -6072,6 +6085,18 @@ export function App() {
                               }
                             />
                           </div>
+                          <div className="field-group">
+                            <label htmlFor="new-task-prompt-system">System message</label>
+                            <textarea
+                              id="new-task-prompt-system"
+                              value={newAiTaskDraft.promptDraft.systemMessage}
+                              rows={3}
+                              disabled={aiTaskCreateInFlight}
+                              onChange={(event) =>
+                                updateNewAiTaskPromptDraft("systemMessage", event.currentTarget.value)
+                              }
+                            />
+                          </div>
                           <div className="prompt-toggle-grid">
                             <label>
                               <input
@@ -6139,6 +6164,7 @@ export function App() {
                           ? null
                           : promptDrafts[prompt.id] ?? {
                               freeformText: prompt.body ?? "",
+                              systemMessage: defaultSystemMessage,
                               includeProjectSynopsis: true,
                               includeMemoMetadata: true,
                               includeMemoTranscriptText: true
@@ -6303,6 +6329,17 @@ export function App() {
                                     rows={6}
                                     onChange={(event) =>
                                       updatePromptDraft(prompt.id, "freeformText", event.currentTarget.value)
+                                    }
+                                  />
+                                </div>
+                                <div className="field-group">
+                                  <label htmlFor={`prompt-${prompt.id}-system`}>System message</label>
+                                  <textarea
+                                    id={`prompt-${prompt.id}-system`}
+                                    value={promptDraft.systemMessage}
+                                    rows={3}
+                                    onChange={(event) =>
+                                      updatePromptDraft(prompt.id, "systemMessage", event.currentTarget.value)
                                     }
                                   />
                                 </div>

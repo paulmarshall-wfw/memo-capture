@@ -142,6 +142,7 @@ test("AI task creation derives task key and reports duplicate derived key confli
   );
   assert.deepEqual(createdPromptVersion?.context_config, {
     freeformText: "Summarize this memo as strict JSON.",
+    systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
     includeProjectSynopsis: false,
     includeMemoMetadata: true,
     includeMemoTranscriptText: false
@@ -470,6 +471,7 @@ test("AI task updates save prompt fields and task definitions can be deleted", a
       modelName: "memo-capture-local-dev-expander-v1",
       promptsEnabled: true,
       freeformText: "Return strict JSON with a stronger memo body.",
+      systemMessage: "Use the task-owned system message.",
       includeProjectSynopsis: false,
       includeMemoMetadata: true,
       includeMemoTranscriptText: true,
@@ -485,6 +487,7 @@ test("AI task updates save prompt fields and task definitions can be deleted", a
   assert.equal(promptVersion?.body, "Return strict JSON with a stronger memo body.");
   assert.deepEqual(promptVersion?.context_config, {
     freeformText: "Return strict JSON with a stronger memo body.",
+    systemMessage: "Use the task-owned system message.",
     includeProjectSynopsis: false,
     includeMemoMetadata: true,
     includeMemoTranscriptText: true
@@ -1835,6 +1838,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
       method: "PATCH",
       body: JSON.stringify({
         freeformText: "Expand with implementation detail.",
+        systemMessage: "Use the visible system message.",
         includeProjectSynopsis: true,
         includeMemoMetadata: false,
         includeMemoTranscriptText: true,
@@ -2236,6 +2240,7 @@ function captureRouteServices(): AppServices {
   let promptActiveVersion = 1;
   let promptContextConfig = {
     freeformText: "Return strict JSON.",
+    systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
     includeProjectSynopsis: true,
     includeMemoMetadata: true,
     includeMemoTranscriptText: true
@@ -2809,6 +2814,7 @@ function captureRouteServices(): AppServices {
         promptActiveVersion = 2;
         promptContextConfig = {
           freeformText: record.freeformText,
+          systemMessage: record.systemMessage,
           includeProjectSynopsis: record.includeProjectSynopsis,
           includeMemoMetadata: record.includeMemoMetadata,
           includeMemoTranscriptText: record.includeMemoTranscriptText
@@ -2828,6 +2834,7 @@ function captureRouteServices(): AppServices {
         const record = body as typeof promptContextConfig;
         promptContextConfig = {
           freeformText: record.freeformText,
+          systemMessage: record.systemMessage,
           includeProjectSynopsis: record.includeProjectSynopsis,
           includeMemoMetadata: record.includeMemoMetadata,
           includeMemoTranscriptText: record.includeMemoTranscriptText
@@ -4556,6 +4563,7 @@ function seedTaskSettings(db: FakeDatabase): void {
     output_schema: {},
     context_config: {
       freeformText: "Return strict JSON.",
+      systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
       includeProjectSynopsis: true,
       includeMemoMetadata: true,
       includeMemoTranscriptText: true

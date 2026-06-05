@@ -137,11 +137,12 @@ Prompt versions include editable freeform prompt text plus structured context co
 Context controls:
 
 - `freeformText`
+- `systemMessage`
 - `includeProjectSynopsis`
 - `includeMemoMetadata`
 - `includeMemoTranscriptText`
 
-The backend composes the model prompt with freeform text first. Raw audio or video content is never eligible LLM context; audio/video sources may contribute only stored transcripts or extracted text.
+The backend composes the user prompt with freeform text first. OpenAI-compatible LLM routes send the configured `systemMessage` as the chat system message when it is not blank. Raw audio or video content is never eligible LLM context; audio/video sources may contribute only stored transcripts or extracted text.
 
 ### extraction_settings
 
@@ -724,6 +725,7 @@ Request:
 ```json
 {
   "freeformText": "Return strict JSON.",
+  "systemMessage": "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
   "includeProjectSynopsis": true,
   "includeMemoMetadata": true,
   "includeMemoTranscriptText": true,
