@@ -53,6 +53,18 @@ export interface AiOperations {
     modelName: string;
     validation: Record<string, unknown>;
   }>;
+  runWorkItemTask(
+    workItemId: string,
+    taskDefinitionId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<{
+    expandedWorkItem: { title: string; body: string; tags: string[] };
+    suggestions: AiSuggestionRecord[];
+    providerName: string;
+    modelName: string;
+    validation: Record<string, unknown>;
+  }>;
   acceptSuggestion(
     suggestionId: string,
     actor: AppUserRecord,

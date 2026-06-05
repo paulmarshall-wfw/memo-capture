@@ -45,17 +45,56 @@ export class AiExpansionService {
     modelName: string;
     validation: Record<string, unknown>;
   }> {
-    const settings = new SettingsRepository(this.db);
-    const [taskRoutes, workItem, sourceMemo, projects] = await Promise.all([
-      settings.listAiTaskRoutes(),
-      new WorkItemRepository(this.db).findById(workItemId),
-      this.findSourceMemoForWorkItem(workItemId),
-      new ProjectRepository(this.db).list()
-    ]);
+    const taskRoutes = await new SettingsRepository(this.db).listAiTaskRoutes();
     const taskRoute = selectMemoExpansionTask(taskRoutes);
     if (taskRoute === null) {
       throw new HttpError(409, "ai_task_missing", "Memo expansion task route is not configured.");
     }
+    return this.expandWorkItemWithTaskRoute(workItemId, taskRoute, actor, requestId);
+  }
+
+  async runWorkItemTask(
+    workItemId: string,
+    taskDefinitionId: string,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<{
+    expandedWorkItem: ValidExpandedWorkItem;
+    suggestions: AiSuggestionRecord[];
+    providerName: string;
+    modelName: string;
+    validation: Record<string, unknown>;
+  }> {
+    const settings = new SettingsRepository(this.db);
+    const taskRoute = await settings.findAiTaskRouteById(taskDefinitionId);
+    if (taskRoute === null) {
+      throw new HttpError(404, "not_found", "ai_task_definition was not found.");
+    }
+    validateWorkItemDetailTaskRoute(taskRoute);
+    if (taskRoute.hook_key !== MEMO_EXPANSION_HOOK_KEY) {
+      throw new HttpError(409, "work_item_task_not_implemented", "No work item detail handler is registered for this task.");
+    }
+    return this.expandWorkItemWithTaskRoute(workItemId, taskRoute, actor, requestId);
+  }
+
+  private async expandWorkItemWithTaskRoute(
+    workItemId: string,
+    taskRoute: AiTaskRouteRow,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<{
+    expandedWorkItem: ValidExpandedWorkItem;
+    suggestions: AiSuggestionRecord[];
+    providerName: string;
+    modelName: string;
+    validation: Record<string, unknown>;
+  }> {
+    const settings = new SettingsRepository(this.db);
+    const [workItem, sourceMemo, projects] = await Promise.all([
+      new WorkItemRepository(this.db).findById(workItemId),
+      this.findSourceMemoForWorkItem(workItemId),
+      new ProjectRepository(this.db).list()
+    ]);
     const promptDefinitionName = taskRoute.prompt_name ?? "work_item_expansion";
     const prompt = await settings.getActivePrompt(promptDefinitionName);
     await validateMemoExpansionTaskRoute(taskRoute, this.config);
@@ -386,6 +425,15 @@ function selectMemoExpansionTask(tasks: AiTaskRouteRow[]): AiTaskRouteRow | null
     memoExpansionTasks[0] ??
     null
   );
+}
+
+function validateWorkItemDetailTaskRoute(task: AiTaskRouteRow): void {
+  if (task.render_location !== "work_item_detail") {
+    throw new HttpError(409, "work_item_task_location_mismatch", "Task is not assigned to the work item detail panel.");
+  }
+  if (!task.route_enabled) {
+    throw new HttpError(409, "ai_task_route_disabled", "Task route is disabled.");
+  }
 }
 
 function validateMemoExpansionTaskRoute(task: AiTaskRouteRow, config: ApiConfig): void {

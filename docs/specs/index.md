@@ -98,7 +98,7 @@ The first screen is the work queue, not a dashboard.
 
 - Work queue: three-pane layout with workflow buckets, filtered item list, and detail panel.
 - Ingestion review bucket: required-field recovery for low-confidence imports.
-- Detail panel: edit/save, provenance, diagnostics, audio playback when applicable, workflow actions, and AI expansion controls.
+- Detail panel: edit/save, provenance, diagnostics, audio playback when applicable, workflow actions, and task-rendered processing buttons such as memo expansion.
 - Export view: accepted snapshots, filters, selection, batch creation, and download links.
 - Settings: projects, tags/keyword grouping, contributors, file type support, confidence thresholds, provider status, prompts, export templates, and desktop-local watched/archive paths.
 - Operations: workflow import, validation, staging, explicit activation, active workflow status.

@@ -1257,6 +1257,179 @@ button:disabled {
   letter-spacing: 0;
 }
 
+.task-route-controls {
+  grid-template-columns:
+    minmax(180px, 1fr) minmax(180px, 1fr) minmax(130px, 0.7fr) minmax(120px, 0.6fr)
+    minmax(150px, 0.8fr) minmax(90px, 0.45fr) minmax(180px, 1fr) minmax(160px, 0.9fr) minmax(88px, auto) minmax(88px, auto)
+    minmax(220px, auto);
+  gap: 6px;
+}
+
+.task-route-controls label:not(.toggle-row),
+.task-route-controls .toggle-row,
+.task-route-actions {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.task-route-controls label:not(.toggle-row) > span,
+.task-route-controls .toggle-row {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.task-route-controls input[type="text"],
+.task-route-controls input[type="number"],
+.task-route-controls select {
+  min-height: 30px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 35%, var(--border));
+  border-radius: 7px;
+  outline: none;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.task-route-controls input[type="text"]:focus,
+.task-route-controls input[type="number"]:focus,
+.task-route-controls select:focus,
+.task-prompt-editor textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.task-route-controls input[type="text"]:read-only {
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-muted) 55%, var(--surface));
+}
+
+.task-route-controls .toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.task-route-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.task-route-actions button {
+  min-height: 34px;
+}
+
+.task-create-route-controls {
+  grid-template-columns:
+    minmax(180px, 1.2fr) minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(90px, 0.45fr) minmax(130px, 0.7fr) minmax(120px, 0.6fr)
+    minmax(180px, 1fr) minmax(88px, auto) minmax(88px, auto) minmax(130px, auto);
+}
+
+.task-existing-route-controls {
+  grid-template-columns: minmax(220px, 1.2fr) minmax(220px, 1.1fr) minmax(150px, 0.8fr) minmax(90px, 0.45fr) minmax(150px, 0.7fr) minmax(140px, 0.7fr);
+  align-items: end;
+  gap: 10px;
+}
+
+.task-existing-route-controls label:not(.toggle-row),
+.task-existing-route-controls .toggle-row {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.task-existing-route-controls label:not(.toggle-row) {
+  gap: 4px;
+}
+
+.task-existing-route-controls input[type="text"],
+.task-existing-route-controls input[type="number"],
+.task-existing-route-controls select {
+  min-height: 32px;
+  padding-right: 8px;
+  padding-left: 8px;
+  font-size: 12px;
+}
+
+.task-configured-card {
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.task-card-list {
+  gap: 12px;
+}
+
+.task-card-title {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.task-card-footer-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-subsection-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 2px;
+  padding: 10px 2px 4px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.settings-subsection-divider strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+  font-size: 12px;
+  text-transform: none;
+}
+
+.task-create-card {
+  margin-bottom: 10px;
+}
+
+.work-item-task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 8px;
+}
+
+.work-item-task-actions button {
+  min-height: 34px;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -2428,6 +2601,7 @@ button:disabled {
 
   .task-kind-controls,
   .processing-hook-create-row,
+  .task-route-controls,
   .task-kind-table .settings-table-header,
   .task-kind-table .settings-table-row {
     grid-template-columns: 1fr;

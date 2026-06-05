@@ -63,6 +63,7 @@ type SettingsSectionId =
   | "operations"
   | "diagnostics";
 type FileTypeCapabilityState = "active" | "inactive" | "not_supported_yet";
+type TaskRenderLocation = "work_item_detail" | "work_item_list" | "export_page";
 
 interface SessionResponse {
   accessToken?: string;
@@ -384,6 +385,8 @@ interface AiTaskRouteDraft {
   displayName: string;
   description: string;
   hookKey: string;
+  renderLocation: TaskRenderLocation;
+  displayOrder: number;
   providerConfigId: string;
   modelName: string;
   promptsEnabled: boolean;
@@ -407,6 +410,8 @@ interface NewAiTaskDraft {
   displayName: string;
   description: string;
   hookKey: string;
+  renderLocation: TaskRenderLocation;
+  displayOrder: number;
   providerConfigId: string;
   modelName: string;
   promptsEnabled: boolean;
@@ -507,6 +512,8 @@ interface SettingsSummary {
     displayName: string;
     description: string | null;
     hookKey: string;
+    renderLocation: TaskRenderLocation;
+    displayOrder: number;
     taskKind: string;
     taskKindId: string | null;
     taskKindDisplayName: string;
@@ -646,6 +653,11 @@ const settingsSections: readonly { id: SettingsSectionId; label: string }[] = [
   { id: "diagnostics", label: "Diagnostics" }
 ];
 const providerKindSelectOptions = ["llm", "stt", "tts", "ocr", "script"] as const;
+const taskRenderLocationOptions: { value: TaskRenderLocation; label: string }[] = [
+  { value: "work_item_detail", label: "Work item detail" },
+  { value: "work_item_list", label: "Work item list" },
+  { value: "export_page", label: "Export page" }
+];
 
 class ApiError extends Error {
   constructor(
@@ -674,6 +686,8 @@ const defaultNewAiTaskDraft: NewAiTaskDraft = {
   displayName: "",
   description: "",
   hookKey: "",
+  renderLocation: "work_item_detail",
+  displayOrder: 0,
   providerConfigId: "",
   modelName: "",
   promptsEnabled: false,
@@ -1432,7 +1446,7 @@ export function App() {
   const [suppressedTags, setSuppressedTags] = useState<SuppressedTag[]>([]);
   const [suppressedTagsLoading, setSuppressedTagsLoading] = useState(false);
   const [suppressedTagInFlight, setSuppressedTagInFlight] = useState<string | null>(null);
-  const [aiExpanding, setAiExpanding] = useState(false);
+  const [workItemTaskIdInFlight, setWorkItemTaskIdInFlight] = useState<string | null>(null);
   const [suggestionIdInFlight, setSuggestionIdInFlight] = useState<string | null>(null);
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
@@ -1514,31 +1528,18 @@ export function App() {
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
   const registeredTaskHooks = settingsSummary?.registeredTaskHooks ?? [];
-  const memoExpansionTask = useMemo(
-    () => {
-      const tasks = settingsSummary?.aiTasks ?? [];
-      const memoExpansionTasks = tasks.filter((task) => task.hookKey === "memo-expansion");
-      return (
-        memoExpansionTasks.find((task) => task.taskKey === "memo-expansion") ??
-        memoExpansionTasks.find((task) => task.routeEnabled) ??
-        memoExpansionTasks[0] ??
-        null
-      );
-    },
+  const workItemDetailTasks = useMemo(
+    () =>
+      [...(settingsSummary?.aiTasks ?? [])]
+        .filter((task) => task.renderLocation === "work_item_detail")
+        .sort(
+          (left, right) =>
+            left.displayOrder - right.displayOrder ||
+            left.displayName.localeCompare(right.displayName) ||
+            left.taskKey.localeCompare(right.taskKey)
+        ),
     [settingsSummary]
   );
-  const aiExpansionUnavailableReason = useMemo(() => {
-    if (settingsSummary === null) {
-      return null;
-    }
-    if (memoExpansionTask === null) {
-      return "Memo expansion task routing is not configured.";
-    }
-    if (!memoExpansionTask.runtimeReady) {
-      return memoExpansionTask.unavailableReason ?? "Memo expansion is not ready.";
-    }
-    return null;
-  }, [memoExpansionTask, settingsSummary]);
   const watchableFolders = useMemo(
     () =>
       watchedFolders.filter(
@@ -2158,6 +2159,8 @@ export function App() {
               displayName: task.displayName,
               description: task.description ?? "",
               hookKey: task.hookKey,
+              renderLocation: task.renderLocation,
+              displayOrder: task.displayOrder,
               providerConfigId: task.selectedProviderId ?? "",
               modelName: task.selectedModelName ?? "",
               promptsEnabled: task.prompt !== null,
@@ -2945,15 +2948,19 @@ export function App() {
     }
   }
 
-  async function requestAiExpansion() {
+  async function runWorkItemTask(task: SettingsSummary["aiTasks"][number]) {
     if (accessToken === null || selectedItem === null) {
       return;
     }
-    if (aiExpansionUnavailableReason !== null) {
-      setStatusMessage(aiExpansionUnavailableReason);
+    if (hasDraftChanges) {
+      setStatusMessage("Save or reset edits before running a work item task.");
       return;
     }
-    setAiExpanding(true);
+    if (!task.runtimeReady) {
+      setStatusMessage(task.unavailableReason ?? `${task.displayName} is not ready.`);
+      return;
+    }
+    setWorkItemTaskIdInFlight(task.id);
     setStatusMessage(null);
     try {
       const response = await authedJson<{
@@ -2961,7 +2968,7 @@ export function App() {
         suggestions: AiSuggestion[];
         providerName: string;
         modelName: string;
-      }>(accessToken, `/api/work-items/${encodeURIComponent(selectedItem.id)}/ai-expansions`, {
+      }>(accessToken, `/api/work-items/${encodeURIComponent(selectedItem.id)}/tasks/${encodeURIComponent(task.id)}/run`, {
         method: "POST",
         body: JSON.stringify({})
       });
@@ -2975,11 +2982,11 @@ export function App() {
             }
       );
       setAiSuggestions((current) => [...response.suggestions, ...current]);
-      setStatusMessage(`AI expansion generated with ${response.providerName}/${response.modelName}. Save applies the expanded draft.`);
+      setStatusMessage(`${task.displayName} completed with ${response.providerName}/${response.modelName}. Save applies the updated draft.`);
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to generate AI expansion.");
+      setStatusMessage(error instanceof Error ? error.message : `Unable to run ${task.displayName}.`);
     } finally {
-      setAiExpanding(false);
+      setWorkItemTaskIdInFlight(null);
     }
   }
 
@@ -3152,6 +3159,8 @@ export function App() {
           displayName: "",
           description: "",
           hookKey: "",
+          renderLocation: "work_item_detail",
+          displayOrder: 0,
           providerConfigId: "",
           modelName: "",
           promptsEnabled: false,
@@ -3241,6 +3250,8 @@ export function App() {
           displayName: newAiTaskDraft.displayName,
           description: newAiTaskDraft.description,
           hookKey: newAiTaskDraft.hookKey,
+          renderLocation: newAiTaskDraft.renderLocation,
+          displayOrder: newAiTaskDraft.displayOrder,
           providerConfigId: newAiTaskDraft.providerConfigId === "" ? null : newAiTaskDraft.providerConfigId,
           modelName: newAiTaskDraft.modelName,
           promptsEnabled: newAiTaskDraft.promptsEnabled,
@@ -3287,6 +3298,8 @@ export function App() {
           displayName: draft.displayName,
           description: draft.description,
           hookKey: draft.hookKey,
+          renderLocation: draft.renderLocation,
+          displayOrder: draft.displayOrder,
           providerConfigId: draft.providerConfigId === "" ? null : draft.providerConfigId,
           modelName: draft.modelName,
           promptsEnabled: draft.promptsEnabled,
@@ -4388,30 +4401,37 @@ export function App() {
                   </div>
                 ) : null}
 
-                <section className="detail-section" aria-label="AI expansion">
-                  <div className="section-title with-actions">
-                    <div className="section-title-main">
-                      <Settings size={18} />
-                      <h3>AI expansion</h3>
-                    </div>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={aiExpanding || hasDraftChanges || aiExpansionUnavailableReason !== null}
-                      title={aiExpansionUnavailableReason ?? "Generate AI expansion"}
-                      onClick={() => void requestAiExpansion()}
-                    >
-                      {aiExpanding ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
-                      Generate
-                    </button>
+                {workItemDetailTasks.length === 0 ? null : (
+                  <div className="work-item-task-actions" aria-label="Work item detail tasks">
+                    {workItemDetailTasks.map((task) => {
+                      const inFlight = workItemTaskIdInFlight === task.id;
+                      const disabled = workItemTaskIdInFlight !== null || hasDraftChanges || !task.runtimeReady;
+                      const title = hasDraftChanges
+                        ? "Save or reset edits before running this task."
+                        : task.runtimeReady
+                          ? `Run ${task.displayName}`
+                          : task.unavailableReason ?? `${task.displayName} is not ready.`;
+                      return (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          key={task.id}
+                          disabled={disabled}
+                          title={title}
+                          onClick={() => void runWorkItemTask(task)}
+                        >
+                          {inFlight ? <RefreshCcw className="spin" size={18} /> : <Settings size={18} />}
+                          {task.displayName}
+                        </button>
+                      );
+                    })}
                   </div>
-                  {hasDraftChanges ? <span className="muted-text">Save or reset edits before generating</span> : null}
-                  {aiExpansionUnavailableReason === null ? null : (
-                    <span className="muted-text">{aiExpansionUnavailableReason}</span>
-                  )}
-                  <div className="suggestion-list ai-suggestion-list" aria-label="Suggested new work items">
-                    {aiSuggestions.length === 0 ? <span className="muted-text">No pending suggested work items</span> : null}
-                    {aiSuggestions.map((suggestion) => (
+                )}
+
+                {aiSuggestions.length === 0 ? null : (
+                  <section className="detail-section" aria-label="Suggested new work items">
+                    <div className="suggestion-list ai-suggestion-list" aria-label="Suggested new work items">
+                      {aiSuggestions.map((suggestion) => (
                       <article className="suggestion-row ai-suggestion-row" key={suggestion.id}>
                         <div>
                           <div className="suggestion-kicker">
@@ -4458,9 +4478,10 @@ export function App() {
                           </button>
                         </div>
                       </article>
-                    ))}
-                  </div>
-                </section>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
                 {audioArtifact !== null ? (
                   <section className="detail-section" aria-label="Audio and transcription recovery">
@@ -5894,13 +5915,12 @@ export function App() {
                     </div>
                     <span className="detail-count">{settingsSummary.aiTasks.length} configured</span>
                   </div>
-                  <article className="settings-row provider-task-row">
+                  <article className="settings-row provider-task-row task-create-card">
                     <div>
                       <div className="batch-title">
                         <strong>Add task</strong>
-                        <span>Generated identity</span>
                       </div>
-                      <div className="provider-route-controls">
+                      <div className="provider-route-controls task-route-controls task-create-route-controls">
                         <label>
                           <span>Task Name</span>
                           <input
@@ -5924,6 +5944,33 @@ export function App() {
                               </option>
                             ))}
                           </select>
+                        </label>
+                        <label>
+                          <span>Render Location</span>
+                          <select
+                            value={newAiTaskDraft.renderLocation}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) =>
+                              updateNewAiTaskDraft("renderLocation", event.currentTarget.value as TaskRenderLocation)
+                            }
+                          >
+                            {taskRenderLocationOptions.map((option) => (
+                              <option value={option.value} key={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Order</span>
+                          <input
+                            type="number"
+                            value={newAiTaskDraft.displayOrder}
+                            disabled={aiTaskCreateInFlight}
+                            onChange={(event) =>
+                              updateNewAiTaskDraft("displayOrder", Number.parseInt(event.currentTarget.value, 10) || 0)
+                            }
+                          />
                         </label>
                         <label>
                           <span>Provider Key</span>
@@ -5990,15 +6037,17 @@ export function App() {
                           />
                           Enabled
                         </label>
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          disabled={aiTaskCreateInFlight}
-                          onClick={() => void createAiTaskDefinition()}
-                        >
-                          {aiTaskCreateInFlight ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
-                          Add task
-                        </button>
+                        <div className="task-route-actions">
+                          <button
+                            className="secondary-button"
+                            type="button"
+                            disabled={aiTaskCreateInFlight}
+                            onClick={() => void createAiTaskDefinition()}
+                          >
+                            {aiTaskCreateInFlight ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
+                            Add task
+                          </button>
+                        </div>
                       </div>
                       {!newAiTaskDraft.promptsEnabled ? null : (
                         <div className="prompt-editor-row task-prompt-editor">
@@ -6063,12 +6112,19 @@ export function App() {
                     </div>
                   </article>
 
-                  <div className="settings-list">
+                  <div className="settings-subsection-divider">
+                    <span>Configured tasks</span>
+                    <strong>{settingsSummary.aiTasks.length}</strong>
+                  </div>
+
+                  <div className="settings-list task-card-list">
                     {settingsSummary.aiTasks.map((task) => {
                       const draft = aiTaskRouteDrafts[task.id] ?? {
                         displayName: task.displayName,
                         description: task.description ?? "",
                         hookKey: task.hookKey,
+                        renderLocation: task.renderLocation,
+                        displayOrder: task.displayOrder,
                         providerConfigId: task.selectedProviderId ?? "",
                         modelName: task.selectedModelName ?? "",
                         promptsEnabled: task.prompt !== null,
@@ -6077,7 +6133,6 @@ export function App() {
                       const selectedProvider = settingsSummary.providers.find(
                         (provider) => provider.id === draft.providerConfigId
                       );
-                      const selectedHook = registeredTaskHooks.find((hook) => hook.hookKey === task.hookKey);
                       const prompt = task.prompt;
                       const promptDraft =
                         prompt === null
@@ -6089,51 +6144,12 @@ export function App() {
                               includeMemoTranscriptText: true
                             };
                       return (
-                        <article className="settings-row provider-task-row" key={task.id}>
-                          <div className="settings-row-header task-card-header">
-                            <div>
-                              <div className="batch-title">
-                                <strong>{task.displayName}</strong>
-                                <span>
-                                  {task.runtimeReady
-                                    ? "Ready"
-                                    : task.hookImplemented
-                                      ? "Needs setup"
-                                      : selectedHook?.statusLabel ?? "Default no-op"}
-                                </span>
-                              </div>
-                              <p>
-                                {task.taskKindDisplayName}; hook {task.hookKey}; route {task.routeEnabled ? "enabled" : "disabled"}
-                              </p>
-                              <p>
-                                Runtime {task.runtimeProvider}; selected {task.selectedProviderName ?? "none"}; model{" "}
-                                {task.selectedModelName ?? "default"}
-                              </p>
-                              {task.unavailableReason === null ? null : <p>{task.unavailableReason}</p>}
-                            </div>
-                            <div className="task-card-actions">
-                              <button
-                                className="row-action-button danger"
-                                type="button"
-                                disabled={aiTaskIdInFlight === task.id}
-                                onClick={() => void deleteAiTaskDefinition(task)}
-                              >
-                                <Trash2 size={18} />
-                                Delete task
-                              </button>
-                              <button
-                                className="primary-button"
-                                type="button"
-                                disabled={aiTaskIdInFlight === task.id}
-                                onClick={() => void saveAiTaskRoute(task.id)}
-                              >
-                                {aiTaskIdInFlight === task.id ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
-                                Save task
-                              </button>
-                            </div>
+                        <article className="settings-row provider-task-row task-configured-card" key={task.id}>
+                          <div className="task-card-title">
+                            <strong>{draft.displayName || task.displayName}</strong>
                           </div>
                           <div>
-                            <div className="provider-route-controls">
+                            <div className="provider-route-controls task-route-controls task-existing-route-controls">
                               <label>
                                 <span>Task Name</span>
                                 <input
@@ -6164,6 +6180,41 @@ export function App() {
                                     </option>
                                   ))}
                                 </select>
+                              </label>
+                              <label>
+                                <span>Render Location</span>
+                                <select
+                                  value={draft.renderLocation}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(
+                                      task.id,
+                                      "renderLocation",
+                                      event.currentTarget.value as TaskRenderLocation
+                                    )
+                                  }
+                                >
+                                  {taskRenderLocationOptions.map((option) => (
+                                    <option value={option.value} key={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                <span>Order</span>
+                                <input
+                                  type="number"
+                                  value={draft.displayOrder}
+                                  disabled={aiTaskIdInFlight === task.id}
+                                  onChange={(event) =>
+                                    updateAiTaskRouteDraft(
+                                      task.id,
+                                      "displayOrder",
+                                      Number.parseInt(event.currentTarget.value, 10) || 0
+                                    )
+                                  }
+                                />
                               </label>
                               <label>
                                 <span>Provider Key</span>
@@ -6244,15 +6295,6 @@ export function App() {
                             </div>
                             {!draft.promptsEnabled || prompt === null || promptDraft === null ? null : (
                               <div className="prompt-editor-row task-prompt-editor">
-                                <div className="prompt-editor-header">
-                                  <div>
-                                    <div className="batch-title">
-                                      <strong>{prompt.name}</strong>
-                                      <span>v{prompt.activeVersion}</span>
-                                    </div>
-                                    <p>{prompt.purpose}</p>
-                                  </div>
-                                </div>
                                 <div className="field-group">
                                   <label htmlFor={`prompt-${prompt.id}-freeform`}>Prompt text</label>
                                   <textarea
@@ -6298,6 +6340,30 @@ export function App() {
                                 </div>
                               </div>
                             )}
+                            <div className="task-card-actions task-card-footer-actions">
+                              <button
+                                className="row-action-button danger"
+                                type="button"
+                                disabled={aiTaskIdInFlight === task.id}
+                                onClick={() => void deleteAiTaskDefinition(task)}
+                              >
+                                <Trash2 size={18} />
+                                Delete task
+                              </button>
+                              <button
+                                className="primary-button"
+                                type="button"
+                                disabled={aiTaskIdInFlight === task.id}
+                                onClick={() => void saveAiTaskRoute(task.id)}
+                              >
+                                {aiTaskIdInFlight === task.id ? (
+                                  <RefreshCcw className="spin" size={18} />
+                                ) : (
+                                  <Save size={18} />
+                                )}
+                                Save task
+                              </button>
+                            </div>
                           </div>
                         </article>
                       );
@@ -6739,6 +6805,8 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
     aiTasks: Array.isArray(summary.aiTasks)
       ? summary.aiTasks.map((task) => ({
           ...task,
+          renderLocation: normalizeTaskRenderLocation(task.renderLocation),
+          displayOrder: typeof task.displayOrder === "number" ? task.displayOrder : 0,
           prompt: task.prompt == null ? null : normalizePromptSummary(task.prompt)
         }))
       : [],
@@ -6792,6 +6860,10 @@ function normalizePromptSummary(prompt: PromptSummary): PromptSummary {
     },
     outputSchema: prompt.outputSchema ?? {}
   };
+}
+
+function normalizeTaskRenderLocation(value: unknown): TaskRenderLocation {
+  return value === "work_item_list" || value === "export_page" ? value : "work_item_detail";
 }
 
 function deriveTaskKeyPreview(displayName: string): string {

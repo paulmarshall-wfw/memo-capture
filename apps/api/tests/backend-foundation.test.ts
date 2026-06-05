@@ -55,7 +55,13 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   const summary = (await services.settings.getSummary()) as {
     providers: Array<{ providerName: string; capabilities: Array<{ capabilityKey: string }> }>;
     taskKinds: Array<{ kindKey: string; capabilityKey: string; promptFieldsEnabled: boolean }>;
-    aiTasks: Array<{ taskKey: string; prompt: { name: string } | null; runtimeReady: boolean }>;
+    aiTasks: Array<{
+      taskKey: string;
+      prompt: { name: string } | null;
+      runtimeReady: boolean;
+      renderLocation: string;
+      displayOrder: number;
+    }>;
     registeredTaskHooks: Array<{ hookKey: string; implemented: boolean; status: string; taskUsageCount: number }>;
   };
 
@@ -66,6 +72,8 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   assert.equal(summary.taskKinds.find((kind) => kind.kindKey === "llm")?.promptFieldsEnabled, true);
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.prompt?.name, "work_item_expansion");
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.runtimeReady, true);
+  assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.renderLocation, "work_item_detail");
+  assert.equal(summary.aiTasks.find((task) => task.taskKey === "custom-summary")?.displayOrder, 10);
   assert.deepEqual(summary.registeredTaskHooks.map((hook) => hook.hookKey), [
     "custom-summary",
     "memo-expansion",
@@ -102,6 +110,8 @@ test("AI task creation derives task key and reports duplicate derived key confli
       displayName: "Custom Digest",
       hookKey: "custom-digest",
       taskKind: "llm",
+      renderLocation: "work_item_list",
+      displayOrder: 20,
       promptsEnabled: true,
       initialPromptText: "Summarize this memo as strict JSON.",
       includeProjectSynopsis: false,
@@ -110,11 +120,22 @@ test("AI task creation derives task key and reports duplicate derived key confli
     },
     session.user,
     "request-create-task"
-  )) as { aiTask: { taskKey: string; hookImplemented: boolean; routeEnabled: boolean; prompt: { id: string } } };
+  )) as {
+    aiTask: {
+      taskKey: string;
+      hookImplemented: boolean;
+      routeEnabled: boolean;
+      renderLocation: string;
+      displayOrder: number;
+      prompt: { id: string };
+    };
+  };
 
   assert.equal(created.aiTask.taskKey, "custom-digest");
   assert.equal(created.aiTask.hookImplemented, false);
   assert.equal(created.aiTask.routeEnabled, false);
+  assert.equal(created.aiTask.renderLocation, "work_item_list");
+  assert.equal(created.aiTask.displayOrder, 20);
   assert.equal(typeof created.aiTask.prompt.id, "string");
   const createdPromptVersion = db.promptVersions.find(
     (row) => row.prompt_definition_id === created.aiTask.prompt.id
@@ -414,15 +435,19 @@ test("AI task display name updates do not change the derived task key", async ()
     {
       displayName: "Renamed expansion",
       hookKey: "memo-expansion",
+      renderLocation: "export_page",
+      displayOrder: 30,
       providerConfigId: "provider-local-dev",
       enabled: true
     },
     session.user,
     "request-rename-expansion-task"
-  )) as { aiTask: { taskKey: string; displayName: string } };
+  )) as { aiTask: { taskKey: string; displayName: string; renderLocation: string; displayOrder: number } };
 
   assert.equal(updated.aiTask.displayName, "Renamed expansion");
   assert.equal(updated.aiTask.taskKey, "memo-expansion");
+  assert.equal(updated.aiTask.renderLocation, "export_page");
+  assert.equal(updated.aiTask.displayOrder, 30);
 });
 
 test("AI task updates save prompt fields and task definitions can be deleted", async () => {
@@ -1828,6 +1853,22 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(itemDiagnostics.response.status, 200);
     assert.equal(itemDiagnostics.body.workItemId, "work-item-1");
 
+    const detailExpansionTask = await authedJson(baseUrl, "/api/settings/ai-tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        displayName: "Detail expansion",
+        hookKey: "memo-expansion",
+        renderLocation: "work_item_detail",
+        displayOrder: 5,
+        providerConfigId: "provider-local-dev",
+        modelName: "memo-capture-detail-expander-v2",
+        enabled: true
+      })
+    });
+    assert.equal(detailExpansionTask.response.status, 200);
+    assert.equal(detailExpansionTask.body.aiTask.renderLocation, "work_item_detail");
+    assert.equal(detailExpansionTask.body.aiTask.displayOrder, 5);
+
     const artifactDownload = await fetch(`${baseUrl}/api/artifacts/artifact-audio/download`, {
       headers: { authorization: "Bearer test-token" }
     });
@@ -1844,6 +1885,18 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     });
     assert.equal(manualTranscript.response.status, 200);
     assert.equal(manualTranscript.body.workItem.body, "Recovered from audio playback.");
+
+    const taskRunExpansion = await authedJson(
+      baseUrl,
+      `/api/work-items/work-item-1/tasks/${detailExpansionTask.body.aiTask.id}/run`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    );
+    assert.equal(taskRunExpansion.response.status, 200);
+    assert.equal(taskRunExpansion.body.modelName, "memo-capture-detail-expander-v2");
+    assert.equal(taskRunExpansion.body.expandedWorkItem.title, "Captured memo updated expanded");
 
     const aiExpansion = await authedJson(baseUrl, "/api/work-items/work-item-1/ai-expansions", {
       method: "POST",
@@ -2201,6 +2254,20 @@ function captureRouteServices(): AppServices {
         suggestions: [suggestionOne],
         providerName: "local-dev",
         modelName: "memo-capture-local-dev-expander-v1",
+        validation: { ok: true, strictJson: true }
+      }),
+      runWorkItemTask: async (_workItemId: string, taskDefinitionId: string) => ({
+        expandedWorkItem: {
+          title: `${workItem.title} expanded`,
+          body: `${workItem.body}\n\nExpansion focus: clarify value.`,
+          tags: ["ai-expanded"]
+        },
+        suggestions: [suggestionOne],
+        providerName: "local-dev",
+        modelName:
+          taskDefinitionId === "task-detail-expansion"
+            ? "memo-capture-detail-expander-v2"
+            : "memo-capture-local-dev-expander-v1",
         validation: { ok: true, strictJson: true }
       }),
       acceptSuggestion: async () => {
@@ -2718,16 +2785,23 @@ function captureRouteServices(): AppServices {
           runtimeReady: true
         }
       }),
-      createAiTaskDefinition: async () => ({
+      createAiTaskDefinition: async (body: unknown) => ({
         aiTask: {
-          id: "task-custom-summary",
-          taskKey: "custom-summary",
-          displayName: "Custom summary",
-          hookKey: "custom-summary",
-          hookImplemented: false,
-          routeEnabled: false,
-          runtimeReady: false,
-          unavailableReason: "No app logic is registered for this hook."
+          id: (body as { hookKey?: string }).hookKey === "memo-expansion" ? "task-detail-expansion" : "task-custom-summary",
+          taskKey: (body as { hookKey?: string }).hookKey === "memo-expansion" ? "detail-expansion" : "custom-summary",
+          displayName:
+            (body as { displayName?: string }).displayName ??
+            ((body as { hookKey?: string }).hookKey === "memo-expansion" ? "Detail expansion" : "Custom summary"),
+          hookKey: (body as { hookKey?: string }).hookKey ?? "custom-summary",
+          renderLocation: (body as { renderLocation?: string }).renderLocation ?? "work_item_detail",
+          displayOrder: (body as { displayOrder?: number }).displayOrder ?? 0,
+          hookImplemented: (body as { hookKey?: string }).hookKey === "memo-expansion",
+          routeEnabled: (body as { enabled?: boolean }).enabled ?? false,
+          runtimeReady: (body as { enabled?: boolean }).enabled === true,
+          unavailableReason:
+            (body as { hookKey?: string }).hookKey === "memo-expansion"
+              ? null
+              : "No app logic is registered for this hook."
         }
       }),
       createPromptVersion: async (_promptDefinitionId: string, body: unknown) => {
@@ -3328,7 +3402,15 @@ class FakeDatabase implements Database {
       if (text.includes("where ai_task_definitions.id =")) {
         return rows(taskRows.filter((row) => row.id === values[0]) as Row[]);
       }
-      return rows(taskRows as Row[]);
+      return rows(
+        taskRows.sort(
+          (left, right) =>
+            String(left.render_location).localeCompare(String(right.render_location)) ||
+            Number(left.display_order ?? 0) - Number(right.display_order ?? 0) ||
+            String(left.display_name).localeCompare(String(right.display_name)) ||
+            String(left.task_key).localeCompare(String(right.task_key))
+        ) as Row[]
+      );
     }
 
     if (text.includes("insert into prompt_definitions")) {
@@ -3393,17 +3475,19 @@ class FakeDatabase implements Database {
         display_name: values[2],
         description: values[3],
         hook_key: values[4],
-        task_kind: values[5],
-        implemented: values[6],
-        task_kind_id: values[7],
-        prompt_definition_id: values[8],
-        runtime_option_id: values[9],
-        runtime_option_purpose: values[10],
-        runtime_provider_env: values[11],
-        runtime_model_env: values[12],
-        runtime_endpoint_env: values[13],
-        created_by: values[14],
-        updated_by: values[14],
+        render_location: values[5],
+        display_order: values[6],
+        task_kind: values[7],
+        implemented: values[8],
+        task_kind_id: values[9],
+        prompt_definition_id: values[10],
+        runtime_option_id: values[11],
+        runtime_option_purpose: values[12],
+        runtime_provider_env: values[13],
+        runtime_model_env: values[14],
+        runtime_endpoint_env: values[15],
+        created_by: values[16],
+        updated_by: values[16],
         updated_at: "2026-05-29T00:00:00.000Z"
       });
       return rows([]);
@@ -3424,18 +3508,24 @@ class FakeDatabase implements Database {
         definition.hook_key = values[6];
       }
       if (values[7] === true) {
-        definition.task_kind = values[8];
+        definition.render_location = values[8];
       }
       if (values[9] === true) {
-        definition.task_kind_id = values[10];
+        definition.display_order = values[10];
       }
       if (values[11] === true) {
-        definition.implemented = values[12];
+        definition.task_kind = values[12];
       }
       if (values[13] === true) {
-        definition.prompt_definition_id = values[14];
+        definition.task_kind_id = values[14];
       }
-      definition.updated_by = values[15];
+      if (values[15] === true) {
+        definition.implemented = values[16];
+      }
+      if (values[17] === true) {
+        definition.prompt_definition_id = values[18];
+      }
+      definition.updated_by = values[19];
       definition.updated_at = "2026-05-29T00:01:00.000Z";
       return rows([]);
     }
@@ -4273,6 +4363,8 @@ function buildFakeAiTaskRouteRow(
     display_name: definition.display_name,
     description: definition.description ?? null,
     hook_key: definition.hook_key,
+    render_location: definition.render_location ?? "work_item_detail",
+    display_order: definition.display_order ?? 0,
     task_kind: definition.task_kind,
     task_kind_id: definition.task_kind_id ?? null,
     task_kind_display_name: taskKind?.display_name ?? null,
@@ -4514,6 +4606,8 @@ function seedTaskSettings(db: FakeDatabase): void {
       display_name: "Memo expansion",
       description: "Expand one memo.",
       hook_key: "memo-expansion",
+      render_location: "work_item_detail",
+      display_order: 0,
       task_kind: "llm",
       task_kind_id: "task-kind-llm",
       prompt_definition_id: "prompt-work-item-expansion",
@@ -4533,6 +4627,8 @@ function seedTaskSettings(db: FakeDatabase): void {
       display_name: "Custom summary",
       description: "Unimplemented task.",
       hook_key: "custom-summary",
+      render_location: "work_item_detail",
+      display_order: 10,
       task_kind: "llm",
       task_kind_id: "task-kind-llm",
       prompt_definition_id: null,

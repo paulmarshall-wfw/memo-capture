@@ -662,6 +662,17 @@ function matchProtectedRoute(
       );
   }
 
+  const workItemTaskRunMatch = /^\/api\/work-items\/([^/]+)\/tasks\/([^/]+)\/run$/.exec(pathname);
+  if (method === "POST" && workItemTaskRunMatch !== null) {
+    return async (context, session) =>
+      services.ai.runWorkItemTask(
+        decodeURIComponent(workItemTaskRunMatch[1] ?? ""),
+        decodeURIComponent(workItemTaskRunMatch[2] ?? ""),
+        session.user,
+        context.requestId
+      );
+  }
+
   const aiSuggestionAcceptMatch = /^\/api\/ai-suggestions\/([^/]+)\/accept$/.exec(pathname);
   if (method === "POST" && aiSuggestionAcceptMatch !== null) {
     return async (context, session) =>

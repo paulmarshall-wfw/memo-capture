@@ -256,6 +256,8 @@ Required columns:
 - `display_name text not null`
 - `description text`
 - `hook_key text not null`
+- `render_location text not null default 'work_item_detail'`
+- `display_order integer not null default 0`
 - `task_kind text not null default 'llm'`
 - `task_kind_id uuid references task_kinds(id)`
 - `prompt_definition_id uuid references prompt_definitions(id)`
@@ -283,6 +285,10 @@ Rules:
 - Task Settings fields are task name, provider key, read-only provider kind, task description, hook key, prompts checkbox, enabled checkbox, model override, prompt editor, and readiness/error messages. Normal Settings UI must not foreground `task_key`.
 - Multiple enabled tasks may share the same `hook_key`; the hook dispatches to app-owned implementation logic while the task owns prompt/provider/model settings.
 - OCR is modeled as a task in V1, but remains no-op until OCR handler logic is implemented.
+- Task display names are used as user-facing button labels when a task is rendered in an app surface.
+- Supported task render locations are `work_item_detail`, `work_item_list`, and `export_page`; only `work_item_detail` renders buttons in the first task-button implementation.
+- Work item detail task buttons invoke a specific task definition by id against the selected work item, then dispatch through that task's `hook_key`.
+- `display_order` controls task button order within a render location; ties fall back to task display name and task key.
 
 ### processing_hooks
 
@@ -747,6 +753,10 @@ Filters:
 `POST /api/work-items/{workItemId}/ai-expansions`
 
 Creates an AI expansion run for a work item using the active prompt and an enabled LLM provider config. The provider response must be strict JSON matching the configured output schema shape. Invalid output creates a failed `expand_work_item` processing job and an `ai_expansion.validation_failed` audit event, and does not create suggestions.
+
+`POST /api/work-items/{workItemId}/tasks/{taskDefinitionId}/run`
+
+Runs a configured task against the selected work item. V1 accepts only tasks with `render_location = work_item_detail`, an enabled and runtime-ready route, and implemented app hook logic. The first implemented hook is `memo-expansion`, which returns the same validated expansion/suggestion shape as the legacy AI expansion endpoint while selecting provider, model, and prompt from the explicit task id.
 
 `GET /api/work-items/{workItemId}/ai-suggestions`
 

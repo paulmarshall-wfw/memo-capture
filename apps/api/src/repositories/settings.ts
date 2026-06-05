@@ -97,6 +97,8 @@ export interface AiTaskRouteRow extends Record<string, unknown> {
   display_name: string;
   description: string | null;
   hook_key: string;
+  render_location: string;
+  display_order: number;
   task_kind: string;
   task_kind_id: string | null;
   task_kind_display_name: string | null;
@@ -158,6 +160,8 @@ const aiTaskRouteSelectSql = `
     ai_task_definitions.display_name,
     ai_task_definitions.description,
     ai_task_definitions.hook_key,
+    ai_task_definitions.render_location,
+    ai_task_definitions.display_order,
     ai_task_definitions.task_kind,
     ai_task_definitions.task_kind_id,
     task_kinds.display_name as task_kind_display_name,
@@ -970,7 +974,10 @@ export class SettingsRepository {
   async listAiTaskRoutes(): Promise<AiTaskRouteRow[]> {
     const result = await this.db.query<AiTaskRouteRow>(
       `${aiTaskRouteSelectSql}
-       order by ai_task_definitions.display_name asc, ai_task_definitions.task_key asc`
+       order by ai_task_definitions.render_location asc,
+                ai_task_definitions.display_order asc,
+                ai_task_definitions.display_name asc,
+                ai_task_definitions.task_key asc`
     );
     return result.rows;
   }
@@ -980,6 +987,8 @@ export class SettingsRepository {
     displayName: string;
     description: string | null;
     hookKey: string;
+    renderLocation: string;
+    displayOrder: number;
     taskKind: string;
     taskKindId: string;
     implemented: boolean;
@@ -997,18 +1006,20 @@ export class SettingsRepository {
     const taskId = randomUUID();
     await this.db.query(
       `insert into ai_task_definitions (
-         id, task_key, display_name, description, hook_key, task_kind, implemented,
+         id, task_key, display_name, description, hook_key, render_location, display_order, task_kind, implemented,
          task_kind_id, prompt_definition_id,
          runtime_option_id, runtime_option_purpose, runtime_provider_env, runtime_model_env,
          runtime_endpoint_env, created_by, updated_by, created_at, updated_at
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15, now(), now())`,
+       values ($1, $2, $3, $4, $5, $6, $7::integer, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $17, now(), now())`,
       [
         taskId,
         input.taskKey,
         input.displayName,
         input.description,
         input.hookKey,
+        input.renderLocation,
+        input.displayOrder,
         input.taskKind,
         input.implemented,
         input.taskKindId,
@@ -1068,6 +1079,8 @@ export class SettingsRepository {
     displayName?: string | undefined;
     description?: string | null | undefined;
     hookKey?: string | undefined;
+    renderLocation?: string | undefined;
+    displayOrder?: number | undefined;
     taskKind?: string | undefined;
     taskKindId?: string | undefined;
     implemented?: boolean | undefined;
@@ -1080,11 +1093,13 @@ export class SettingsRepository {
          display_name = case when $2::boolean then $3::text else display_name end,
          description = case when $4::boolean then $5::text else description end,
          hook_key = case when $6::boolean then $7::text else hook_key end,
-         task_kind = case when $8::boolean then $9::text else task_kind end,
-         task_kind_id = case when $10::boolean then $11::uuid else task_kind_id end,
-         implemented = case when $12::boolean then $13::boolean else implemented end,
-         prompt_definition_id = case when $14::boolean then $15::uuid else prompt_definition_id end,
-         updated_by = $16,
+         render_location = case when $8::boolean then $9::text else render_location end,
+         display_order = case when $10::boolean then $11::integer else display_order end,
+         task_kind = case when $12::boolean then $13::text else task_kind end,
+         task_kind_id = case when $14::boolean then $15::uuid else task_kind_id end,
+         implemented = case when $16::boolean then $17::boolean else implemented end,
+         prompt_definition_id = case when $18::boolean then $19::uuid else prompt_definition_id end,
+         updated_by = $20,
          updated_at = now()
        where id = $1`,
       [
@@ -1095,6 +1110,10 @@ export class SettingsRepository {
         input.description ?? null,
         input.hookKey !== undefined,
         input.hookKey ?? null,
+        input.renderLocation !== undefined,
+        input.renderLocation ?? null,
+        input.displayOrder !== undefined,
+        input.displayOrder ?? null,
         input.taskKind !== undefined,
         input.taskKind ?? null,
         input.taskKindId !== undefined,

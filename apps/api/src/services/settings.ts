@@ -17,6 +17,7 @@ import { normalizePromptContextConfig } from "./llm.js";
 
 const IMPLEMENTED_AI_TASK_HOOKS: ReadonlySet<string> = new Set(["memo-expansion"]);
 const PROVIDER_KIND_OPTIONS = new Set(["llm", "transcription", "stt", "tts", "ocr", "script"]);
+const TASK_RENDER_LOCATIONS = new Set(["work_item_detail", "work_item_list", "export_page"]);
 
 export class SettingsService {
   constructor(
@@ -308,6 +309,8 @@ export class SettingsService {
         metadata: {
           taskKey: task.task_key,
           hookKey: task.hook_key,
+          renderLocation: task.render_location,
+          displayOrder: task.display_order,
           providerName: task.provider_name,
           enabled: task.route_enabled,
           modelName: task.route_model_name
@@ -388,6 +391,8 @@ export class SettingsService {
         displayName: input.displayName,
         description: input.description,
         hookKey: input.hookKey,
+        renderLocation: input.renderLocation,
+        displayOrder: input.displayOrder,
         taskKind: taskKindRow.kind_key,
         taskKindId: taskKindRow.id,
         implemented: isHookImplemented(hookKey),
@@ -412,6 +417,8 @@ export class SettingsService {
         metadata: {
           taskKey: task.task_key,
           hookKey: task.hook_key,
+          renderLocation: task.render_location,
+          displayOrder: task.display_order,
           providerName: task.provider_name,
           enabled: task.route_enabled,
           promptsEnabled: task.prompt_definition_id !== null
@@ -501,6 +508,8 @@ export class SettingsService {
         metadata: {
           taskKey: task.task_key,
           hookKey: task.hook_key,
+          renderLocation: task.render_location,
+          displayOrder: task.display_order,
           taskKind: task.task_kind,
           providerName: task.provider_name,
           implemented: isHookImplemented(task.hook_key),
@@ -1172,6 +1181,8 @@ function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<s
     displayName: task.display_name,
     description: task.description,
     hookKey: task.hook_key,
+    renderLocation: task.render_location,
+    displayOrder: task.display_order,
     taskKind: task.task_kind,
     taskKindId: task.task_kind_id,
     taskKindDisplayName: task.task_kind_display_name ?? humanizeKey(task.task_kind),
@@ -1363,6 +1374,20 @@ function parseOptionalBoolean(value: unknown, field: string): boolean | undefine
   return value;
 }
 
+function parseTaskRenderLocation(value: unknown, field: string): string {
+  if (typeof value !== "string" || !TASK_RENDER_LOCATIONS.has(value)) {
+    throw new HttpError(400, "invalid_request", `${field} must be work_item_detail, work_item_list, or export_page.`);
+  }
+  return value;
+}
+
+function parseDisplayOrder(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new HttpError(400, "invalid_request", `${field} must be an integer.`);
+  }
+  return value;
+}
+
 async function validateTaskKindEnablement(
   settings: SettingsRepository,
   kindKey: string,
@@ -1475,6 +1500,11 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     displayName,
     description: record.description === undefined ? null : optionalString(record.description, "description"),
     hookKey,
+    renderLocation:
+      record.renderLocation === undefined
+        ? "work_item_detail"
+        : parseTaskRenderLocation(record.renderLocation, "renderLocation"),
+    displayOrder: record.displayOrder === undefined ? 0 : parseDisplayOrder(record.displayOrder, "displayOrder"),
     taskKind,
     taskKindId: taskKindRow.id,
     implemented: isHookImplemented(hookKey),
@@ -1538,6 +1568,11 @@ function parseUpdateAiTaskBody(body: unknown) {
       record.displayName === undefined ? undefined : assertNonEmptyString(record.displayName, "displayName"),
     description: record.description === undefined ? undefined : optionalString(record.description, "description"),
     hookKey: record.hookKey === undefined ? undefined : parseConfigKey(record.hookKey, "hookKey"),
+    renderLocation:
+      record.renderLocation === undefined
+        ? undefined
+        : parseTaskRenderLocation(record.renderLocation, "renderLocation"),
+    displayOrder: record.displayOrder === undefined ? undefined : parseDisplayOrder(record.displayOrder, "displayOrder"),
     promptsEnabled: parseOptionalBoolean(record.promptsEnabled ?? record.promptFieldsEnabled, "promptsEnabled"),
     initialPromptText:
       record.initialPromptText === undefined ? undefined : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
