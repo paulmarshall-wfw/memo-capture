@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { WorkflowDebuggerService } from "../src/services/workflow-debugger.js";
 import { WorkflowRuntimeAdapter } from "../src/services/workflow-runtime.js";
@@ -115,6 +116,48 @@ test("workflow runtime executes only actions allowed from the current state", ()
   assert.equal(adapter.executeAction(bundle, "accepted", "memo.accepted"), null);
 });
 
+test("workflow runtime excludes hidden and automatic actions from public execution", () => {
+  const adapter = new WorkflowRuntimeAdapter();
+  const bundle = createBundle();
+  (bundle.actions as Array<Record<string, unknown>>).push(
+    {
+      id: "memo.hidden",
+      label: "Hidden",
+      from: "memo",
+      to: "parked",
+      trigger: "user",
+      visible: false
+    },
+    {
+      id: "memo.automatic",
+      label: "Automatic",
+      from: "memo",
+      to: "parked",
+      trigger: "automatic",
+      visible: false
+    }
+  );
+  bundle.embeddedStateMachineDefinition.transitions.push(
+    {
+      from: "memo",
+      to: "parked",
+      actionId: "memo.hidden"
+    },
+    {
+      from: "memo",
+      to: "parked",
+      actionId: "memo.automatic"
+    }
+  );
+
+  assert.deepEqual(
+    adapter.getAllowedActions(bundle, "memo").map((action) => action.id),
+    ["memo.accepted", "memo.parked"]
+  );
+  assert.equal(adapter.executeAction(bundle, "memo", "memo.hidden"), null);
+  assert.equal(adapter.executeAction(bundle, "memo", "memo.automatic"), null);
+});
+
 test("workflow runtime validates and projects scheduled nominate_tags hooks", () => {
   const adapter = new WorkflowRuntimeAdapter();
   const bundle = createBundle();
@@ -143,6 +186,125 @@ test("workflow runtime validates and projects scheduled nominate_tags hooks", ()
   assert.equal(hooks[0]?.handlerKey, "nominate_tags");
   assert.equal(hooks[0]?.targetState, "memo");
   assert.deepEqual(hooks[0]?.schedule, { trigger: "every_interval", intervalMs: 123456 });
+});
+
+test("workflow runtime rejects supported hooks in unsupported phases", () => {
+  const adapter = new WorkflowRuntimeAdapter();
+
+  const onEntryNominate = createBundle();
+  (onEntryNominate.hooks as Array<Record<string, unknown>>).push({
+    id: "on_state_entry_memo",
+    phase: "on_state_entry",
+    targetType: "state",
+    targetId: "memo",
+    handlerKey: "nominate_tags"
+  });
+
+  const whileClassify = createBundle();
+  (whileClassify.hooks as Array<Record<string, unknown>>).push({
+    id: "while_in_state_needs_review",
+    phase: "while_in_state",
+    targetType: "state",
+    targetId: "needs_review",
+    schedule: {
+      trigger: "every_interval",
+      intervalMs: 1000
+    },
+    handlerKey: "classify_item"
+  });
+
+  const whileAcceptedSnapshot = createBundle();
+  (whileAcceptedSnapshot.hooks as Array<Record<string, unknown>>).push({
+    id: "while_in_state_accepted",
+    phase: "while_in_state",
+    targetType: "state",
+    targetId: "accepted",
+    schedule: {
+      trigger: "every_interval",
+      intervalMs: 1000
+    },
+    handlerKey: "create_accepted_snapshot"
+  });
+
+  for (const bundle of [onEntryNominate, whileClassify, whileAcceptedSnapshot]) {
+    const validation = adapter.validateBundle(bundle);
+    assert.equal(validation.ok, false);
+    assert.equal(validation.errors.some((error) => error.code === "unsupported_hook_phase"), true);
+  }
+});
+
+test("workflow runtime rejects nominate_tags resident hooks without a valid schedule", () => {
+  const adapter = new WorkflowRuntimeAdapter();
+  const bundle = createBundle();
+  (bundle.hooks as Array<Record<string, unknown>>).push({
+    id: "while_in_state_memo",
+    phase: "while_in_state",
+    targetType: "state",
+    targetId: "memo",
+    schedule: {
+      trigger: "every_interval",
+      intervalMs: 0
+    },
+    handlerKey: "nominate_tags"
+  });
+
+  const validation = adapter.validateBundle(bundle);
+
+  assert.equal(validation.ok, false);
+  assert.equal(
+    validation.errors.some((error) => error.code === "invalid_hook_schedule" || error.code === "invalid_definition_bundle"),
+    true
+  );
+});
+
+test("workflow runtime rejects input-requiring actions in V1", () => {
+  const adapter = new WorkflowRuntimeAdapter();
+  const bundle = createBundle();
+  (bundle.actions as Array<Record<string, unknown>>).push({
+    id: "memo.input",
+    label: "Input",
+    from: "memo",
+    to: "parked",
+    trigger: "user",
+    visible: true,
+    requiresInput: true
+  });
+  bundle.embeddedStateMachineDefinition.transitions.push({
+    from: "memo",
+    to: "parked",
+    actionId: "memo.input"
+  });
+
+  const validation = adapter.validateBundle(bundle);
+
+  assert.equal(validation.ok, false);
+  assert.equal(validation.errors.some((error) => error.code === "unsupported_action_input"), true);
+});
+
+test("workflow runtime validates the current bundled workflow and projects executable V1 actions", () => {
+  const adapter = new WorkflowRuntimeAdapter();
+  const bundle = JSON.parse(
+    readFileSync(
+      new URL("../../../docs/design/memo-capture-0.2.5-workflow-definition-bundled.json", import.meta.url),
+      "utf8"
+    )
+  ) as unknown;
+
+  const validation = adapter.validateBundle(bundle);
+
+  assert.equal(validation.ok, true);
+  assert.deepEqual(
+    adapter.getAllowedActions(bundle, "failed").map((action) => action.id),
+    ["failed.review"]
+  );
+  assert.deepEqual(
+    adapter.getAllowedActions(bundle, "needs_review").map((action) => action.id),
+    ["review.failed", "review.ignored", "review.memo"]
+  );
+  assert.equal(adapter.executeAction(bundle, "failed", "failed.review")?.newState, "needs_review");
+  assert.equal(adapter.executeAction(bundle, "needs_review", "review.memo")?.newState, "memo");
+  assert.equal(adapter.executeAction(bundle, "memo", "memo.accepted")?.newState, "accepted");
+  assert.equal(adapter.getStateResidentHooks(bundle, "memo")[0]?.handlerKey, "nominate_tags");
 });
 
 test("workflow debugger step mode blocks runtime steps until commanded", async () => {

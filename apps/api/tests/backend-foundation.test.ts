@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { readApiConfig } from "../src/config.js";
 import type { Database, Queryable, QueryParams, QueryResult } from "../src/db/types.js";
@@ -1212,6 +1213,187 @@ test("manual workflow action into memo schedules nominate_tags", async () => {
   assert.equal(db.workItems[0]?.workflow_state, "memo");
   assert.equal(db.processingJobs.length, 1);
   assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
+});
+
+test("public workflow action surface rejects hidden user actions posted directly", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  const bundle = db.activeWorkflow?.bundle as {
+    actions: Array<Record<string, unknown>>;
+    embeddedStateMachineDefinition: { transitions: Array<Record<string, unknown>> };
+  };
+  bundle.actions.push({
+    id: "memo.hidden",
+    label: "Hidden",
+    from: "memo",
+    to: "parked",
+    trigger: "user",
+    visible: false
+  });
+  bundle.embeddedStateMachineDefinition.transitions.push({
+    from: "memo",
+    to: "parked",
+    actionId: "memo.hidden"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  seedWorkItemRow({ db, workflowState: "memo" });
+
+  const allowed = await services.workflows.getAllowedActions("00000000-0000-4000-8000-000000000201");
+  await assert.rejects(
+    services.workflows.executeAction(
+      "00000000-0000-4000-8000-000000000201",
+      "memo.hidden",
+      {},
+      session.user,
+      "request-hidden"
+    ),
+    (error: unknown) =>
+      error instanceof HttpError && error.statusCode === 409 && error.code === "workflow_action_not_allowed"
+  );
+
+  assert.equal(allowed.actions.some((action) => action.id === "memo.hidden"), false);
+  assert.equal(db.workItems[0]?.workflow_state, "memo");
+});
+
+test("public workflow action surface rejects automatic actions posted directly", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  const bundle = db.activeWorkflow?.bundle as {
+    actions: Array<Record<string, unknown>>;
+    embeddedStateMachineDefinition: { transitions: Array<Record<string, unknown>> };
+  };
+  bundle.actions.push({
+    id: "memo.automatic",
+    label: "Automatic",
+    from: "memo",
+    to: "parked",
+    trigger: "automatic",
+    visible: false
+  });
+  bundle.embeddedStateMachineDefinition.transitions.push({
+    from: "memo",
+    to: "parked",
+    actionId: "memo.automatic"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  seedWorkItemRow({ db, workflowState: "memo" });
+
+  const allowed = await services.workflows.getAllowedActions("00000000-0000-4000-8000-000000000201");
+  await assert.rejects(
+    services.workflows.executeAction(
+      "00000000-0000-4000-8000-000000000201",
+      "memo.automatic",
+      {},
+      session.user,
+      "request-automatic"
+    ),
+    (error: unknown) =>
+      error instanceof HttpError && error.statusCode === 409 && error.code === "workflow_action_not_allowed"
+  );
+
+  assert.equal(allowed.actions.some((action) => action.id === "memo.automatic"), false);
+  assert.equal(db.workItems[0]?.workflow_state, "memo");
+});
+
+test("current bundled workflow stages, activates, and executes supported V1 paths", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  db.projects.push(projectRow("00000000-0000-4000-8000-000000000301", "Memo Capture"));
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  const bundle = JSON.parse(
+    readFileSync(
+      new URL("../../../docs/design/memo-capture-0.2.5-workflow-definition-bundled.json", import.meta.url),
+      "utf8"
+    )
+  ) as unknown;
+
+  const staged = await services.workflows.importBundle(
+    { bundle, notes: "Current bundled workflow smoke" },
+    session.user,
+    "request-import"
+  );
+  const activated = await services.workflows.activateStagedImport(
+    staged.stagedImportId,
+    { confirmActivation: true, activationNotes: "Current bundled workflow smoke" },
+    session.user,
+    "request-activate"
+  );
+
+  seedWorkItemRow({
+    db,
+    sourceMemoId: "00000000-0000-4000-8000-000000000111",
+    workItemId: "00000000-0000-4000-8000-000000000211",
+    workflowState: "failed",
+    title: "Failed memo",
+    body: "Manual recovery text.",
+    sourceText: "Manual recovery text."
+  });
+  const failedReview = await services.workflows.executeAction(
+    "00000000-0000-4000-8000-000000000211",
+    "failed.review",
+    {},
+    session.user,
+    "request-failed-review"
+  );
+
+  seedWorkItemRow({
+    db,
+    sourceMemoId: "00000000-0000-4000-8000-000000000112",
+    workItemId: "00000000-0000-4000-8000-000000000212",
+    workflowState: "needs_review"
+  });
+  const reviewMemo = await services.workflows.executeAction(
+    "00000000-0000-4000-8000-000000000212",
+    "review.memo",
+    {},
+    session.user,
+    "request-review-memo"
+  );
+
+  seedWorkItemRow({
+    db,
+    sourceMemoId: "00000000-0000-4000-8000-000000000113",
+    workItemId: "00000000-0000-4000-8000-000000000213",
+    workflowState: "memo"
+  });
+  const memoAccepted = await services.workflows.executeAction(
+    "00000000-0000-4000-8000-000000000213",
+    "memo.accepted",
+    {},
+    session.user,
+    "request-memo-accepted"
+  );
+
+  assert.equal(staged.status, "staged");
+  assert.equal(activated.activeWorkflowVersion, "0.2.5");
+  assert.equal(failedReview.newState, "needs_review");
+  assert.equal(reviewMemo.newState, "memo");
+  assert.equal(
+    db.processingJobs.some(
+      (job) => job.job_kind === "nominate_tags" && job.work_item_id === "00000000-0000-4000-8000-000000000212"
+    ),
+    true
+  );
+  assert.equal(memoAccepted.newState, "accepted");
+  assert.equal(memoAccepted.createdSnapshotId !== null, true);
+  assert.equal(db.acceptedSnapshots.length, 1);
 });
 
 test("manual workflow action from failed to review runs classify_item entry hook", async () => {
@@ -3321,11 +3503,14 @@ class FakeDatabase implements Database {
   readonly importEvents: Record<string, unknown>[] = [];
   readonly processingJobs: Record<string, unknown>[] = [];
   readonly auditEvents: Record<string, unknown>[] = [];
+  readonly acceptedSnapshots: Record<string, unknown>[] = [];
   readonly tags: Record<string, unknown>[] = [];
   readonly workItemTags: Record<string, unknown>[] = [];
   readonly projectTags: Record<string, unknown>[] = [];
   readonly suppressedTags: Record<string, unknown>[] = [];
   readonly aiSuggestions: Record<string, unknown>[] = [];
+  readonly stagedWorkflowImports: Record<string, unknown>[] = [];
+  readonly workflowActivationHistory: Record<string, unknown>[] = [];
   activeWorkflow: Record<string, unknown> | null = null;
   extractionSettings: Record<string, unknown> | null = {
     project_confidence_threshold: 0.65,
@@ -3373,6 +3558,81 @@ class FakeDatabase implements Database {
 
     if (text.includes("from workflow_active_definition")) {
       return rows(this.activeWorkflow === null ? [] : [this.activeWorkflow as Row]);
+    }
+
+    if (text.includes("from workflow_staged_imports") && text.includes("where id =")) {
+      const staged = this.stagedWorkflowImports.find((row) => row.id === values[0]);
+      return rows(staged === undefined ? [] : [staged as Row]);
+    }
+
+    if (text.includes("from workflow_activation_history")) {
+      const workflowId = values[0];
+      const workflowVersion = values[1];
+      const matches = this.workflowActivationHistory.filter(
+        (row) => row.workflow_id === workflowId && row.new_workflow_version === workflowVersion
+      );
+      return rows(matches.slice(-1).map((row) => ({ new_content_hash: row.new_content_hash })) as unknown as Row[]);
+    }
+
+    if (text.includes("insert into workflow_staged_imports")) {
+      const row = {
+        id: values[0],
+        workflow_id: values[1],
+        workflow_version: values[2],
+        state_machine_version: values[3],
+        content_hash: values[4],
+        bundle: JSON.parse(String(values[5])),
+        validation_result: JSON.parse(String(values[6])),
+        status: values[7],
+        imported_by: values[8],
+        created_at: "2026-05-29T00:00:00.000Z",
+        activated_at: null
+      };
+      this.stagedWorkflowImports.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("insert into workflow_active_definition")) {
+      const row = {
+        singleton_id: true,
+        workflow_id: values[0],
+        workflow_version: values[1],
+        state_machine_version: values[2],
+        required_app_capabilities: JSON.parse(String(values[3])),
+        content_hash: values[4],
+        bundle: JSON.parse(String(values[5])),
+        activated_by: values[6],
+        activated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.activeWorkflow = row;
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("insert into workflow_activation_history")) {
+      this.workflowActivationHistory.push({
+        id: values[0],
+        workflow_id: values[1],
+        previous_workflow_version: values[2],
+        previous_state_machine_version: values[3],
+        previous_content_hash: values[4],
+        new_workflow_version: values[5],
+        new_state_machine_version: values[6],
+        new_content_hash: values[7],
+        activation_notes: values[8],
+        compatibility_result: JSON.parse(String(values[9])),
+        activated_by: values[10],
+        activated_at: "2026-05-29T00:00:00.000Z"
+      });
+      return rows([]);
+    }
+
+    if (text.includes("update workflow_staged_imports")) {
+      const staged = this.stagedWorkflowImports.find((row) => row.id === values[0]);
+      if (staged !== undefined) {
+        staged.status = "activated";
+        staged.activated_at = "2026-05-29T00:00:00.000Z";
+      }
+      return rows([]);
     }
 
     if (text.includes("from extraction_settings")) {
@@ -4216,9 +4476,48 @@ class FakeDatabase implements Database {
       );
     }
 
+    if (text.includes("insert into accepted_snapshots")) {
+      const workItem = this.workItems.find((row) => row.id === values[0]);
+      const project = this.projects.find((row) => row.id === workItem?.project_id);
+      const sourceMemo = this.sourceMemos.find((row) => row.id === workItem?.source_memo_id);
+      if (workItem === undefined || project === undefined || sourceMemo === undefined) {
+        return rows([]);
+      }
+      const snapshot = {
+        id: values[1],
+        work_item_id: workItem.id,
+        snapshot_number:
+          this.acceptedSnapshots.filter((row) => row.work_item_id === workItem.id).length + 1,
+        title: workItem.title,
+        body: workItem.body,
+        body_format: workItem.body_format,
+        project_id: project.id,
+        project_slug: project.slug,
+        project_name: project.name,
+        contributor_text: workItem.contributor_text,
+        contributor_id: workItem.contributor_id,
+        source_memo_id: workItem.source_memo_id,
+        source_content_hash: sourceMemo.content_hash,
+        created_by: values[2],
+        created_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.acceptedSnapshots.push(snapshot);
+      return rows([{ id: snapshot.id }] as unknown as Row[]);
+    }
+
     if (text.includes("from work_items") && text.includes("where work_items.id =")) {
       const item = this.workItems.find((row) => row.id === values[0]);
       return rows(item === undefined ? [] : [withTagAvailability(item) as Row]);
+    }
+
+    if (text.includes("update work_items") && text.includes("accepted_snapshot_id = $2")) {
+      const item = this.workItems.find((row) => row.id === values[0]);
+      if (item === undefined) {
+        return rows([]);
+      }
+      item.accepted_snapshot_id = values[1];
+      item.accepted_unexported_changes = false;
+      return rows([item as Row]);
     }
 
     if (text.includes("update work_items") && text.includes("project_id = coalesce")) {

@@ -88,7 +88,18 @@ interface WorkflowRuntimeAdapter {
 
 ## Generic Action Rendering
 
-The frontend renders visible no-input actions generically from `getAllowedActions`.
+The public action surface is backend-enforced. `getAllowedActions` returns only actions that are executable through the
+generic V1 route:
+
+- `trigger: "user"`
+- `visible: true`
+- no input requirement or input schema
+- source state matches the work item's current workflow state
+
+`POST /api/work-items/:id/actions/:actionId` uses the same predicate. Hidden actions, automatic actions, input-required
+actions, and actions from another state are rejected even when a caller knows the action ID.
+
+The frontend renders these visible no-input actions generically from `getAllowedActions`.
 
 Custom UI is allowed only when an action requires:
 
@@ -96,6 +107,9 @@ Custom UI is allowed only when an action requires:
 - confirmation
 - app-owned side effects
 - specialized preview or validation
+
+V1 does not activate workflow bundles that expose input-required actions. A future input action contract must define the
+form schema, backend handler path, validation, and audit behavior before those actions become importable.
 
 The frontend must not hardcode:
 
@@ -220,10 +234,20 @@ V1 blocks activation if:
 - app-code migrations are required
 - required guards or handlers are missing
 - initial state semantics are incompatible
+- supported hook handlers are used in unsupported phases
+- `while_in_state` hooks do not define a valid positive schedule
+- workflow actions require input
 - active processing jobs depend on workflow actions or states that the activation would invalidate
 - normal mode sees a previously activated workflow version with different content
 
 Local-dev mode may allow workflow version reuse with different content.
+
+V1 executable hook matrix:
+
+- `on_state_entry`: `create_accepted_snapshot`, `classify_item`
+- `while_in_state`: `nominate_tags` with a valid schedule
+
+Other handler/phase combinations fail validation at import or activation time.
 
 ## Processing Job Compatibility
 

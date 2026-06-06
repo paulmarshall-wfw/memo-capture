@@ -148,7 +148,7 @@ export class WorkflowRuntimeAdapter {
         }
       }
 
-      if (projection.actions.length === 0) {
+      if (!projection.actions.some((action) => isPublicExecutableAction(action, action.from, projection.states))) {
         warnings.push(issue("no_user_actions", "Workflow bundle has no valid user-triggered actions.", "actions"));
       }
 
@@ -159,6 +159,40 @@ export class WorkflowRuntimeAdapter {
       for (const hook of projection.hooks) {
         if (!(SUPPORTED_WORKFLOW_HOOK_HANDLERS as readonly string[]).includes(hook.handlerKey)) {
           errors.push(issue("unsupported_hook_handler", `Unsupported workflow hook handler ${hook.handlerKey}.`, "hooks"));
+          continue;
+        }
+
+        if (!isSupportedHookPhase(hook)) {
+          errors.push(
+            issue(
+              "unsupported_hook_phase",
+              `Workflow hook handler ${hook.handlerKey} is not supported in phase ${hook.phase}.`,
+              "hooks"
+            )
+          );
+          continue;
+        }
+
+        if (hook.phase === "while_in_state" && hook.handlerKey === "nominate_tags" && hook.schedule === null) {
+          errors.push(
+            issue(
+              "invalid_hook_schedule",
+              "while_in_state nominate_tags hooks must define a valid positive schedule.",
+              "hooks"
+            )
+          );
+        }
+      }
+
+      for (const action of projection.actions) {
+        if (action.requiresInput) {
+          errors.push(
+            issue(
+              "unsupported_action_input",
+              `Workflow action ${action.id} requires input, which is not supported by the V1 action surface.`,
+              "actions"
+            )
+          );
         }
       }
 
@@ -206,8 +240,13 @@ export class WorkflowRuntimeAdapter {
   }
 
   getAllowedActions(bundle: unknown, workflowState: string): AllowedWorkflowAction[] {
-    return (projectWorkflowBundle(bundle)?.actions ?? [])
-      .filter((action) => action.trigger === "user" && action.from === workflowState)
+    const projection = projectWorkflowBundle(bundle);
+    if (projection === null) {
+      return [];
+    }
+
+    return projection.actions
+      .filter((action) => isPublicExecutableAction(action, workflowState, projection.states))
       .map(({ id, label, visible, trigger, requiresInput, confirmationRequired }) => ({
         id,
         label,
@@ -225,7 +264,7 @@ export class WorkflowRuntimeAdapter {
     }
 
     const action = projection.actions.find(
-      (candidate) => candidate.id === actionId && candidate.trigger === "user" && candidate.from === workflowState
+      (candidate) => candidate.id === actionId && isPublicExecutableAction(candidate, workflowState, projection.states)
     );
     if (action === undefined) {
       return null;
@@ -377,6 +416,30 @@ function projectWorkflowHooks(workflow: WorkflowDefinition): WorkflowHook[] {
       schedule: readWorkflowHookSchedule(hook)
     }];
   });
+}
+
+function isPublicExecutableAction(
+  action: WorkflowActionDefinition,
+  workflowState: string,
+  states: ReadonlySet<string>
+): boolean {
+  return (
+    action.trigger === "user" &&
+    action.visible &&
+    !action.requiresInput &&
+    action.from === workflowState &&
+    states.has(action.from)
+  );
+}
+
+function isSupportedHookPhase(hook: WorkflowHook): boolean {
+  if (hook.phase === "on_state_entry") {
+    return hook.handlerKey === "create_accepted_snapshot" || hook.handlerKey === "classify_item";
+  }
+  if (hook.phase === "while_in_state") {
+    return hook.handlerKey === "nominate_tags";
+  }
+  return false;
 }
 
 function readWorkflowHookSchedule(hook: unknown): WorkflowHookSchedule | null {
