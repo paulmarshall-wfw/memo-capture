@@ -131,6 +131,9 @@ test("AppLauncher manifests expose generic LLM runtime options", () => {
   assert.match(combined, /"id": "llm-runtime"/);
   assert.match(combined, /"LLM_PROVIDER": "local-dev"/);
   assert.match(combined, /"LLM_PROVIDER": "openai-compatible"/);
+  assert.match(combined, /"id": "lm-studio"/);
+  assert.match(combined, /"LLM_ENDPOINT": "http:\/\/127\.0\.0\.1:1234\/v1"/);
+  assert.match(combined, /"LLM_MODEL": "qwen\/qwen3-coder-next"/);
   assert.doesNotMatch(combined, /MEMO_EXPANSION_PROVIDER/);
   assert.doesNotMatch(combined, /SUGGEST_TAGS_PROVIDER/);
   assert.doesNotMatch(combined, /OCR_PROVIDER/);

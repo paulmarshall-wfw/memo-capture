@@ -46,6 +46,7 @@ See `.env.example` for the current non-secret template.
 - `LLM_PROVIDER`: generic LLM runtime provider selected by AppLauncher. Supported values are `disabled`, `local-dev`, and `openai-compatible`.
 - `LLM_MODEL`: generic LLM runtime model label. Defaults to `memo-capture-local-dev-expander-v1`.
 - `LLM_ENDPOINT`: generic LLM runtime endpoint for OpenAI-compatible providers.
+- Local LM Studio uses the OpenAI-compatible adapter with `LLM_PROVIDER=openai-compatible`, `LLM_ENDPOINT=http://127.0.0.1:1234/v1`, a chat model ID reported by `GET /v1/models`, and a non-empty local dummy `OPENAI_COMPATIBLE_API_KEY` such as `lm-studio`.
 - Memo expansion, revision, suggestion, tag, and OCR task routing is configured inside Memo Capture Settings. AppLauncher does not emit task-specific LLM env names.
 - `OPENAI_COMPATIBLE_API_KEY`: AppLauncher secret/env value for the OpenAI-compatible adapter. Do not put API keys in manifest `runtimeOptions`.
 - `TRANSCRIPTION_PROVIDER`: configured transcription provider. Supported values are `disabled`, `local-dev`, and `whisper-cpp`. Use `whisper-cpp` for local V1 transcription once the binary and model are configured.

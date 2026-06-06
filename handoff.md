@@ -4,182 +4,186 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-06T10:39:29Z
+- Created timestamp UTC: 2026-06-06T22:50:15Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: refresh hot continuity state after workflow definition enforcement hardening and native `.app` rebuild.
+- Session scope: wire local LM Studio into Memo Capture through the existing OpenAI-compatible LLM runtime path.
 
 ### Checkpoint Status
 
-- Git HEAD: `1f574e1`
+- Git HEAD: `b9c94c3`
 - Working tree: dirty
-- Dirty files intentionally in scope:
+- Dirty tracked files intentionally in scope:
+  - `.env.example`
+  - `apps/desktop/tests/app-copy.test.ts`
+  - `docs/env.md`
   - `docs/completed-tasks.md`
   - `handoff.md`
-- Dirty files intentionally out of scope:
-  - None
-- Untracked files intentionally in scope:
-  - None
-- Untracked files intentionally out of scope:
-  - None
-- Canonical files described:
-  - `handoff.md`
-  - `docs/completed-tasks.md`
-  - `docs/design/memo-capture-design-learnings.md`
-  - `docs/specs/workflow-runtime-integration.md`
-  - `apps/api/src/services/workflow-runtime.ts`
-  - `apps/api/tests/workflow-runtime.test.ts`
-  - `apps/api/tests/backend-foundation.test.ts`
-  - `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`
-- Last verification:
-  - command: `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
-  - result: passed
-  - timestamp UTC: 2026-06-06T10:39:29Z
+- Generated/ignored artifacts intentionally updated:
+  - `dist/applauncher-manifests/memo-capture/0.1.0/manifest.json`
+  - `dist/applauncher-manifests/memo-capture-native/0.1.0/manifest.json`
+  - `~/Library/Application Support/AppLauncher/manifest-install/memo-capture/0.1.0/manifest.json`
+  - `~/Library/Application Support/AppLauncher/manifest-install/memo-capture-native/0.1.0/manifest.json`
+  - `~/Library/Application Support/AppLauncher/manifests/memo-capture/0.1.0/manifest.json`
+  - `~/Library/Application Support/AppLauncher/manifests/memo-capture-native/0.1.0/manifest.json`
+- Local database state intentionally updated:
+  - `provider_configs` row `llm/openai-compatible` is enabled, displayed as `LM Studio`, points at `http://127.0.0.1:1234/v1`, uses model `qwen/qwen3-coder-next`, requires `OPENAI_COMPATIBLE_API_KEY`, and has `external_send_enabled=false`.
+  - `ai_task_routes` for `memo-expansion` and `suggest-new-memos` route to that provider and model.
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: current `HEAD` is recorded, workflow hardening is committed at `1f574e1`, the native `.app` bundle was rebuilt after that checkpoint, and only continuity docs are intentionally dirty.
-- Next checkpoint action: review `git diff -- docs/completed-tasks.md handoff.md`; commit only if explicitly requested.
+- Safe-to-continue basis: app-side wiring, manifests, docs, local DB routing, and runtime readiness have been verified; end-to-end generation is blocked by LM Studio model loading, not by Memo Capture routing.
 
 ## 2. Executive Summary
 
-The repo is on `main` at `1f574e1 Harden workflow action visibility and hook validation`.
+Memo Capture already had the required OpenAI-compatible LLM adapter. This slice made LM Studio selectable and usable as the local OpenAI-compatible runtime without adding a new provider SDK or a new `lm-studio` provider key.
 
 Complete now:
 
-- Backend workflow action projection and execution share one public-executable predicate.
-- Public work-item action execution accepts only actions that are `trigger: "user"`, `visible: true`, no-input, and valid from the current workflow state.
-- Hidden user actions and automatic actions are not listed and are rejected even if posted directly by action ID.
-- Workflow bundle validation is phase-aware for the V1 executable hook matrix.
-- V1 rejects workflow bundles that expose input-required actions until a real input form and handler contract exists.
-- The current bundled workflow `0.2.5` validates, stages, activates, executes `failed.review`, `review.memo`, and `memo.accepted`, and supports scheduled `nominate_tags`.
-- The macOS Tauri `.app` bundle was rebuilt after the hardening slice.
+- AppLauncher web and native manifests include a new explicit `LM Studio` option under existing `llm-runtime`.
+- The option injects:
+  - `LLM_PROVIDER=openai-compatible`
+  - `LLM_MODEL=qwen/qwen3-coder-next`
+  - `LLM_ENDPOINT=http://127.0.0.1:1234/v1`
+- Secrets remain outside manifests. Runtime launch used `OPENAI_COMPATIBLE_API_KEY=lm-studio` as the local dummy value.
+- The live local `memo_capture` database routes `expand memo` and `suggest memos` to the OpenAI-compatible provider row configured for LM Studio.
+- The native dev stack was relaunched with LM Studio env values, and `/api/settings` reports both implemented AI tasks as `runtimeReady: true`.
 
-Incomplete now:
+Blocked outside the app:
 
-- Only continuity docs are dirty after this refresh.
-- Handoff helper scripts referenced by the handoff skill are absent in this repo, so freshness is grounded manually from Git state and file inspection.
-
-Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
+- LM Studio currently exposes models at `/v1/models`, but none of the listed chat models loaded successfully during smoke testing.
+- `qwen/qwen3-coder-next` failed on LM Studio resource guardrails.
+- `nvidia/nemotron-3-nano` and `qwen/qwen3-vl-30b` failed because LM Studio's local MLX backend could not find `libpython3.11.dylib`.
+- A work-item task API smoke reached the provider path and failed with `OpenAI-compatible provider returned HTTP 400`, matching LM Studio's model-load failure.
 
 ## 3. Current Objective
 
-Immediate goal: leave the next session with an accurate checkpoint for workflow definition enforcement hardening.
+Immediate goal: finish validating LM Studio once a chat model can load.
 
-Intended finished state:
+Definition of done for the app-side work:
 
-- `handoff.md` describes `HEAD` `1f574e1`.
-- `docs/completed-tasks.md` has one concise append-only entry for the hardening work.
-- The dirty tree is limited to the two continuity docs.
+- The app has an explicit LM Studio runtime option.
+- Provider/task settings route to the existing OpenAI-compatible adapter.
+- Runtime readiness is green when launched with LM Studio env.
+- Provider invocation reaches LM Studio.
 
-Definition of done: update the ledger and handoff, keep both mechanically clean, and report verification performed.
+Remaining acceptance item:
+
+- Load a working chat/completions model in LM Studio and rerun the work-item task smoke until it returns valid structured JSON.
 
 ## 4. Current State
 
 ### Working
 
-- Root scripts remain:
-  - `npm install`
-  - `npm run dev:desktop`
-  - `npm run dev:api`
-  - `npm run dev:worker`
-  - `npm test`
-  - `npm run test:postgres`
-  - `npm run typecheck`
-  - `npm run build`
-  - `npm run verify`
-- Workflow runtime hardening is committed at `1f574e1`.
-- `apps/api/src/services/workflow-runtime.ts` now validates supported hook handlers by phase and schedule:
-  - `on_state_entry`: `create_accepted_snapshot`, `classify_item`
-  - `while_in_state`: `nominate_tags` with a valid positive schedule
-- The public action surface rejects hidden, automatic, input-required, and wrong-state actions through the same predicate used for action listing.
-- `docs/specs/workflow-runtime-integration.md` documents the backend-enforced public action predicate and V1 hook matrix.
-- Native bundle exists at:
+- `GET http://127.0.0.1:1234/v1/models` reaches LM Studio and returns:
+  - `qwen/qwen3-coder-next`
+  - `qwen/qwen3-vl-30b`
+  - `nvidia/nemotron-3-nano`
+  - `text-embedding-nomic-embed-text-v1.5`
+- Memo Capture API runtime after relaunch:
+  - provider: `openai-compatible`
+  - model: `qwen/qwen3-coder-next`
+  - endpoint configured: `true`
+- Both implemented work-item AI tasks are runtime-ready:
+  - `expand memo`
+  - `suggest memos`
+- Installed AppLauncher manifests validate with zero errors and warnings.
+- Native Memo Capture app is currently running from:
   - `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`
-
-### Partially Working
-
-- Workflow input-required actions are intentionally unsupported in V1. A future implementation must add form schema rendering, backend handler validation, audit behavior, and tests before import/activation can allow them.
-- Automatic workflow actions remain rejected from the public endpoint. A dedicated internal automatic-action runner would be a separate future feature.
 
 ### Not Working Yet
 
-- Handoff helper scripts referenced by the handoff skill are not present in this repo:
-  - `scripts/handoff_status.py`
-  - `scripts/verify_handoff_freshness.py`
+- End-to-end AI generation cannot complete until LM Studio can load a chat model.
+- The currently selected `qwen/qwen3-coder-next` model is exposed by LM Studio but failed to load due resource guardrails.
 
-### Not Yet Verified
+### Not Yet Done
 
-- No browser or live local API smoke was run for this backend/runtime-focused slice.
-- No `npm run test:postgres` was run for this slice because no schema or real Postgres behavior changed.
+- No tracked migration was added, intentionally. This is local runtime/provider configuration, not a universal schema or seed change.
+- No Git commit was made.
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
-- Do not commit, tag, release, publish, delete files, install dependencies, or mutate app/browser state unless explicitly requested.
+- Do not commit, tag, release, publish, delete files, install dependencies, or mutate unrelated app/browser state unless explicitly requested.
 - Never use `latest`; always use numbered versions.
 - Read `docs/design/memo-capture-design-learnings.md` before architecture, schema, workflow, ingestion, AI, or export work.
-- The backend is authoritative for durable workflow state and action execution.
-- The frontend must render workflow lifecycle actions from backend/runtime allowed actions, not hardcoded action availability.
-- Workflow bundles should fail fast at import/activation when they require unsupported app behavior.
-- Keep workflow definition JSON user-owned unless explicitly asked to edit it.
-- For native-testable changes, rebuild the runnable `.app` bundle before handoff; do not create a DMG unless explicitly requested.
+- Keep provider secrets out of manifests and source control.
+- Keep AppLauncher provider/runtime options generic; do not add app-specific task wiring to AppLauncher.
+- For native-testable Memo Capture changes, rebuild the runnable `.app` bundle before final handoff unless the change is manifest/runtime-only and the existing app bundle is sufficient for smoke testing.
 
 ## 6. Commands and Verification
 
-Verification passed for the hardening slice:
+Passed:
 
 ```bash
-npm run verify
+node --test --import tsx apps/api/tests/llm-prompt.test.ts
+node --test apps/desktop/tests/app-copy.test.ts
 npm run typecheck
-node --test --import tsx apps/api/tests/workflow-runtime.test.ts
-node --test --import tsx --test-name-pattern "public workflow action surface|current bundled workflow|manual workflow action from failed to review|manual workflow action into memo" apps/api/tests/backend-foundation.test.ts
-git diff --check
-npm run tauri:build -w @memo-capture/desktop -- --bundles app
+node "/Users/paulmarshall/.codex/skills/applauncher-manifest/scripts/validate_manifest.mjs" --manifest "/Users/paulmarshall/Library/Application Support/AppLauncher/manifest-install/memo-capture/0.1.0/manifest.json"
+node "/Users/paulmarshall/.codex/skills/applauncher-manifest/scripts/validate_manifest.mjs" --manifest "/Users/paulmarshall/Library/Application Support/AppLauncher/manifest-install/memo-capture-native/0.1.0/manifest.json" --verify-native-launch-targets
 ```
 
-Useful next commands:
+Runtime checks performed:
 
 ```bash
-git status --short --branch
-git diff -- docs/completed-tasks.md handoff.md
-git diff --check
-npm run verify
-npm run test:postgres
+curl -sS --max-time 5 http://127.0.0.1:1234/v1/models
+LLM_PROVIDER=openai-compatible LLM_MODEL="qwen/qwen3-coder-next" LLM_ENDPOINT="http://127.0.0.1:1234/v1" OPENAI_COMPATIBLE_API_KEY=lm-studio node scripts/applauncher-native-dev.mjs
 ```
 
-Notes:
+Live API readiness after relaunch:
 
-- `npm run verify` passed in the current environment.
-- The app-only Tauri build produced `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
-- `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are absent, so handoff freshness must be checked manually.
+- `/api/settings` showed `llmRuntime.provider = "openai-compatible"`.
+- `/api/settings` showed both implemented AI tasks with `runtimeReady: true`.
+
+Expected failing smoke until LM Studio is fixed:
+
+```bash
+POST /api/work-items/{workItemId}/tasks/{memoExpansionTaskId}/run
+```
+
+Observed result:
+
+- HTTP `502` from Memo Capture.
+- Error: `llm_provider_failed`, `OpenAI-compatible provider returned HTTP 400`.
+- Direct LM Studio probes showed model-load failures.
 
 ## 7. Files to Open First
 
-- `handoff.md`: hot current-state context.
-- `docs/completed-tasks.md`: append-only completed work ledger.
-- `docs/design/memo-capture-design-learnings.md`: active workflow/product design constraints.
-- `docs/specs/workflow-runtime-integration.md`: current workflow runtime contract and V1 enforcement rules.
-- `apps/api/src/services/workflow-runtime.ts`: validation, action projection, execution predicate, and hook projection.
-- `apps/api/tests/workflow-runtime.test.ts`: focused runtime validation/projection regressions.
-- `apps/api/tests/backend-foundation.test.ts`: service-level public action rejection and current bundle import/activation smoke.
+- `docs/env.md`: runtime env contract and LM Studio notes.
+- `.env.example`: non-secret env template and local LM Studio example.
+- `dist/applauncher-manifests/memo-capture/0.1.0/manifest.json`: generated web manifest artifact.
+- `dist/applauncher-manifests/memo-capture-native/0.1.0/manifest.json`: generated native manifest artifact.
+- `apps/api/src/services/llm.ts`: OpenAI-compatible adapter and JSON response handling.
+- `apps/api/src/services/ai-expansion.ts`: task/provider readiness and invocation path.
+- `apps/desktop/tests/app-copy.test.ts`: manifest/runtime option assertions.
 
 ## 8. Next Actions
 
 Next:
 
-- Review `git diff -- docs/completed-tasks.md handoff.md`.
-- If continuing workflow runtime work, start with the files listed above and preserve the backend-enforced action predicate.
+- Fix LM Studio so at least one chat/completions model loads successfully.
+- If using a different model, update the local provider row, AI task route model, and AppLauncher `lm-studio` runtime option model from `qwen/qwen3-coder-next` to that model ID.
+- Relaunch Memo Capture with:
 
-Later:
+```bash
+LLM_PROVIDER=openai-compatible \
+LLM_MODEL="<working-lm-studio-model-id>" \
+LLM_ENDPOINT="http://127.0.0.1:1234/v1" \
+OPENAI_COMPATIBLE_API_KEY=lm-studio \
+node scripts/applauncher-native-dev.mjs
+```
 
-- Run `npm run verify` before any code commit after additional implementation work.
-- Run `npm run test:postgres` for any migration, SQL, accepted-snapshot persistence, workflow activation storage, or database-sensitive behavior.
-- Rebuild `Memo Capture.app` after user-facing or native-testable changes.
+- Rerun the work-item task smoke and confirm it returns valid structured JSON.
 
-Blocked:
+Before committing:
 
-- None.
+```bash
+git status --short
+git diff --check
+npm run typecheck
+node --test --import tsx apps/api/tests/llm-prompt.test.ts
+node --test apps/desktop/tests/app-copy.test.ts
+```
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `1f574e1`, with only `docs/completed-tasks.md` and `handoff.md` intentionally dirty unless Git says otherwise. Check `docs/completed-tasks.md` only for completed work history; do not duplicate it. Open `docs/design/memo-capture-design-learnings.md`, `docs/specs/workflow-runtime-integration.md`, `apps/api/src/services/workflow-runtime.ts`, `apps/api/tests/workflow-runtime.test.ts`, and `apps/api/tests/backend-foundation.test.ts` first. Preserve active constraints: backend owns workflow action enforcement, public lifecycle actions must be visible no-input user actions from the current state, unsupported workflow shapes should fail import/activation, and workflow JSON should not be edited unless explicitly requested. Execute next actions in order, distinguish confirmed state from new recommendations, and do not commit unless explicitly asked.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `b9c94c3` with tracked dirty files `.env.example`, `apps/desktop/tests/app-copy.test.ts`, `docs/env.md`, `docs/completed-tasks.md`, and `handoff.md`, plus generated/installed AppLauncher manifest artifacts for Memo Capture updated outside Git tracking. The app-side LM Studio wiring is complete through the existing `openai-compatible` provider: AppLauncher has an explicit `lm-studio` runtime option, the local DB routes `memo-expansion` and `suggest-new-memos` to the LM Studio-backed provider row, and `/api/settings` reports both tasks `runtimeReady: true` when launched with the LM Studio env. The remaining blocker is external to Memo Capture: LM Studio exposes models but no tested chat model currently loads. Fix or select a working LM Studio chat model, update the configured model ID if needed, relaunch, then rerun the work-item task smoke.
