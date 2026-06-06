@@ -144,3 +144,13 @@ test("watched imports use filesystem creation time before modified time", () => 
   assert.match(appSource, /originalFileModifiedAt: normalizeWatchedFileTimestamp\(candidate\.createdAt, candidate\.modifiedAt\)/);
   assert.doesNotMatch(appSource, /parseTimestampPrefixedFilename/);
 });
+
+test("workflow row actions surface confirmation and draft-blocked state in app UI", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+
+  assert.match(appSource, /pendingWorkflowAction/);
+  assert.match(appSource, /Save or reset the selected item before running workflow actions/);
+  assert.match(appSource, /workflow-action-confirm-title/);
+  assert.match(appSource, /executeWorkflowAction\(pending\.action, pending\.targetItem, true\)/);
+  assert.doesNotMatch(appSource, /window\.confirm\(`Run "\$\{action\.label\}"/);
+});

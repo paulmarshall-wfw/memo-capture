@@ -94,7 +94,7 @@ export class ClassificationService {
     });
   }
 
-  private async runClassifyItemHook(input: {
+  async runClassifyItemHook(input: {
     hook: WorkflowHook;
     workItemId: string;
     actor: AppUserRecord | null;

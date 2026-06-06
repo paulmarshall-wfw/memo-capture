@@ -385,6 +385,10 @@ button:disabled {
   background: var(--danger-soft);
 }
 
+.row-action-button.blocked {
+  opacity: 0.72;
+}
+
 .status-banner {
   display: flex;
   align-items: center;
@@ -1848,6 +1852,39 @@ button:disabled {
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.workflow-action-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.workflow-action-summary.warning {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.workflow-action-summary.danger {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.workflow-action-summary strong {
+  color: var(--text);
+}
+
+.workflow-action-summary p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .audit-event-row {

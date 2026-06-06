@@ -65,6 +65,7 @@ type SettingsSectionId =
   | "diagnostics";
 type FileTypeCapabilityState = "active" | "inactive" | "not_supported_yet";
 type TaskRenderLocation = "work_item_detail" | "work_item_list" | "export_page";
+type WorkflowActionIntent = "primary" | "secondary" | "warning" | "danger";
 
 interface SessionResponse {
   accessToken?: string;
@@ -204,6 +205,12 @@ interface AllowedWorkflowAction {
   visible: boolean;
   requiresInput: boolean;
   confirmationRequired: boolean;
+}
+
+interface PendingWorkflowAction {
+  action: AllowedWorkflowAction;
+  targetItem: WorkItem;
+  intent: WorkflowActionIntent;
 }
 
 interface DraftState {
@@ -1473,6 +1480,7 @@ export function App() {
   const [suppressedTagInFlight, setSuppressedTagInFlight] = useState<string | null>(null);
   const [workItemTaskIdInFlight, setWorkItemTaskIdInFlight] = useState<string | null>(null);
   const [suggestionIdInFlight, setSuggestionIdInFlight] = useState<string | null>(null);
+  const [pendingWorkflowAction, setPendingWorkflowAction] = useState<PendingWorkflowAction | null>(null);
   const [expandedMemoReview, setExpandedMemoReview] = useState<ExpandedMemoCandidate | null>(null);
   const [suggestedWorkItemReview, setSuggestedWorkItemReview] = useState<{
     parentWorkItemId: string;
@@ -2495,16 +2503,27 @@ export function App() {
     }
   }
 
-  async function runAction(action: AllowedWorkflowAction, targetItem: WorkItem) {
+  function runAction(action: AllowedWorkflowAction, targetItem: WorkItem) {
     if (accessToken === null) {
       return;
     }
 
     const intent = workflowActionIntent(action);
-    if (
-      (action.confirmationRequired || intent === "danger" || intent === "warning") &&
-      !window.confirm(`Run "${action.label}" on "${targetItem.title}"?`)
-    ) {
+    if (hasDraftChanges) {
+      setStatusMessage("Save or reset the selected item before running workflow actions.");
+      return;
+    }
+
+    if (action.confirmationRequired || intent === "danger" || intent === "warning") {
+      setPendingWorkflowAction({ action, targetItem, intent });
+      return;
+    }
+
+    void executeWorkflowAction(action, targetItem, false);
+  }
+
+  async function executeWorkflowAction(action: AllowedWorkflowAction, targetItem: WorkItem, confirmed: boolean) {
+    if (accessToken === null) {
       return;
     }
 
@@ -2518,7 +2537,7 @@ export function App() {
           method: "POST",
           body: JSON.stringify({
             expectedVersion: targetItem.workflowItemVersion,
-            confirmation: action.confirmationRequired
+            confirmation: confirmed || action.confirmationRequired
           })
         }
       );
@@ -4269,12 +4288,17 @@ export function App() {
                       const actionInFlightKey = `${item.id}:${action.id}`;
                       return (
                         <button
-                          className={`row-action-button ${intent}`}
+                          className={`row-action-button ${intent}${hasDraftChanges ? " blocked" : ""}`}
                           type="button"
                           key={action.id}
-                          title={workflowActionTitle(action)}
-                          disabled={actionIdInFlight !== null || hasDraftChanges}
-                          onClick={() => void runAction(action, item)}
+                          title={
+                            hasDraftChanges
+                              ? "Save or reset the selected item before running workflow actions"
+                              : workflowActionTitle(action)
+                          }
+                          aria-disabled={hasDraftChanges}
+                          disabled={actionIdInFlight !== null}
+                          onClick={() => runAction(action, item)}
                         >
                           {actionInFlightKey === actionIdInFlight ? (
                             <RefreshCcw className="spin" size={16} />
@@ -6825,6 +6849,74 @@ export function App() {
             </section>
           </div>
         ) : null}
+
+        {pendingWorkflowAction === null ? null : (
+          <div className="modal-backdrop" role="presentation">
+            <section
+              className="review-modal workflow-action-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="workflow-action-confirm-title"
+            >
+              <header className="review-modal-header">
+                <div>
+                  <p className="eyebrow">Workflow action</p>
+                  <h2 id="workflow-action-confirm-title">Run {pendingWorkflowAction.action.label}?</h2>
+                </div>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Close"
+                  aria-label="Close workflow action confirmation"
+                  disabled={actionIdInFlight !== null}
+                  onClick={() => setPendingWorkflowAction(null)}
+                >
+                  <X size={18} />
+                </button>
+              </header>
+              <div className="review-modal-body">
+                <article className={`workflow-action-summary ${pendingWorkflowAction.intent}`}>
+                  <AlertTriangle size={20} />
+                  <div>
+                    <strong>{pendingWorkflowAction.targetItem.title}</strong>
+                    <p>
+                      This will move the memo from {stateLabel(pendingWorkflowAction.targetItem.workflowState)} using the
+                      workflow action {pendingWorkflowAction.action.label}.
+                    </p>
+                  </div>
+                </article>
+              </div>
+              <footer className="review-modal-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={actionIdInFlight !== null}
+                  onClick={() => setPendingWorkflowAction(null)}
+                >
+                  <CircleSlash size={18} />
+                  Cancel
+                </button>
+                <button
+                  className={`row-action-button ${pendingWorkflowAction.intent}`}
+                  type="button"
+                  disabled={actionIdInFlight !== null}
+                  onClick={() => {
+                    const pending = pendingWorkflowAction;
+                    setPendingWorkflowAction(null);
+                    void executeWorkflowAction(pending.action, pending.targetItem, true);
+                  }}
+                >
+                  {actionIdInFlight === `${pendingWorkflowAction.targetItem.id}:${pendingWorkflowAction.action.id}` ? (
+                    <RefreshCcw className="spin" size={18} />
+                  ) : (
+                    <AlertTriangle size={18} />
+                  )}
+                  Run {pendingWorkflowAction.action.label}
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
 
         {expandedMemoReview === null ? null : (
           <div className="modal-backdrop" role="presentation">

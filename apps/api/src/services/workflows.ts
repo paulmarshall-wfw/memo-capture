@@ -1,6 +1,6 @@
 import { SUPPORTED_WORKFLOW_HOOK_HANDLERS, type AllowedWorkflowAction } from "@memo-capture/domain";
 import type { AuthMode } from "../config.js";
-import type { Database } from "../db/types.js";
+import type { Database, Queryable } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
@@ -18,6 +18,7 @@ import {
   type WorkflowValidationResult
 } from "./workflow-runtime.js";
 import { WorkflowDebuggerService, type WorkflowDebuggerItemRef, type WorkflowDebuggerSnapshot } from "./workflow-debugger.js";
+import { ClassificationService } from "./classification.js";
 
 export interface WorkflowStatusResult {
   active: WorkflowActiveSummary | null;
@@ -417,20 +418,24 @@ export class WorkflowService {
           newVersion: updated.workflowItemVersion
         }
       });
-      const createdSnapshotId = await runEntryHooks({
+      const hookResult = await runEntryHooks({
         actionResult: action,
         workItem: updated,
+        client,
+        activeWorkflow: active,
         snapshots,
-        actorUserId: actor.id,
+        actor,
+        requestId,
         debuggerService: this.debuggerService,
         operationId,
         itemRef
       });
+      const createdSnapshotId = hookResult.createdSnapshotId;
       const finalWorkItem =
         createdSnapshotId === null
-          ? updated
+          ? hookResult.workItem
           : await workItems.setAcceptedSnapshot({
-              workItemId: updated.id,
+              workItemId: hookResult.workItem.id,
               acceptedSnapshotId: createdSnapshotId,
               actorUserId: actor.id
             });
@@ -438,7 +443,8 @@ export class WorkflowService {
       if (current.workflowState === "memo" && finalWorkItem.workflowState !== "memo") {
         await hookScheduler.cancelPendingNominationJobs(finalWorkItem.id);
       }
-      if (current.workflowState !== "memo" && finalWorkItem.workflowState === "memo") {
+      const classifyItemEntryHookRan = action.entryHooks.some((hook) => hook.handlerKey === "classify_item");
+      if (current.workflowState !== "memo" && finalWorkItem.workflowState === "memo" && !classifyItemEntryHookRan) {
         await hookScheduler.scheduleStateResidentHooksForWorkItem({
           workItem: finalWorkItem,
           actorUserId: actor.id
@@ -519,15 +525,19 @@ export class WorkflowService {
 async function runEntryHooks(input: {
   actionResult: WorkflowActionResult;
   workItem: WorkItemRecord;
+  client: Queryable;
+  activeWorkflow: ActiveWorkflowRow;
   snapshots: AcceptedSnapshotRepository;
-  actorUserId: string;
+  actor: AppUserRecord;
+  requestId: string;
   debuggerService: WorkflowDebuggerService;
   operationId: string;
   itemRef: WorkflowDebuggerItemRef;
-}): Promise<string | null> {
+}): Promise<{ createdSnapshotId: string | null; workItem: WorkItemRecord }> {
   let createdSnapshotId: string | null = null;
+  let workItem = input.workItem;
   for (const hook of input.actionResult.entryHooks) {
-    if (hook.handlerKey !== "create_accepted_snapshot") {
+    if (hook.handlerKey !== "create_accepted_snapshot" && hook.handlerKey !== "classify_item") {
       throw new HttpError(422, "unsupported_workflow_hook", `Unsupported workflow hook ${hook.handlerKey}.`);
     }
 
@@ -537,7 +547,7 @@ async function runEntryHooks(input: {
       message: `Running state-entry hook ${hook.handlerKey}.`,
       itemRef: input.itemRef,
       operationId: input.operationId,
-      actorId: input.actorUserId,
+      actorId: input.actor.id,
       actionId: input.actionResult.actionId,
       metadata: {
         hookId: hook.id,
@@ -553,41 +563,58 @@ async function runEntryHooks(input: {
       message: `State-entry hook ${hook.handlerKey} started.`,
       itemRef: input.itemRef,
       operationId: input.operationId,
-      actorId: input.actorUserId,
+      actorId: input.actor.id,
       actionId: input.actionResult.actionId,
       metadata: {
         hookId: hook.id,
         handlerKey: hook.handlerKey
       }
     });
-    const snapshot = await input.snapshots.createFromWorkItem({
-      workItemId: input.workItem.id,
-      actorUserId: input.actorUserId
-    });
-    if (snapshot === null) {
-      throw new HttpError(
-        422,
-        "accepted_snapshot_requires_project",
-        "Accepted workflow transition requires a project-backed work item."
-      );
+
+    if (hook.handlerKey === "create_accepted_snapshot") {
+      const snapshot = await input.snapshots.createFromWorkItem({
+        workItemId: workItem.id,
+        actorUserId: input.actor.id
+      });
+      if (snapshot === null) {
+        throw new HttpError(
+          422,
+          "accepted_snapshot_requires_project",
+          "Accepted workflow transition requires a project-backed work item."
+        );
+      }
+      createdSnapshotId = snapshot.id;
+    } else {
+      const result = await new ClassificationService(input.client).runClassifyItemHook({
+        hook,
+        workItemId: workItem.id,
+        actor: input.actor,
+        requestId: input.requestId,
+        activeWorkflowBundle: input.activeWorkflow.bundle,
+        workflowId: input.activeWorkflow.workflow_id,
+        workflowVersion: input.activeWorkflow.workflow_version
+      });
+      workItem = result.workItem;
     }
-    createdSnapshotId = snapshot.id;
+
     input.debuggerService.recordEvent({
       eventType: "handler_completed",
       severity: "debug",
       message: `State-entry hook ${hook.handlerKey} completed.`,
       itemRef: input.itemRef,
       operationId: input.operationId,
-      actorId: input.actorUserId,
+      actorId: input.actor.id,
       actionId: input.actionResult.actionId,
       metadata: {
         hookId: hook.id,
         handlerKey: hook.handlerKey,
-        createdSnapshotId
+        createdSnapshotId,
+        workflowState: workItem.workflowState,
+        workflowItemVersion: workItem.workflowItemVersion
       }
     });
   }
-  return createdSnapshotId;
+  return { createdSnapshotId, workItem };
 }
 
 async function requireActiveWorkflow(workflows: WorkflowRepository): Promise<ActiveWorkflowRow> {

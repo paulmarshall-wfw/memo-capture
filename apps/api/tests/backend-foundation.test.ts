@@ -1214,6 +1214,64 @@ test("manual workflow action into memo schedules nominate_tags", async () => {
   assert.equal(db.processingJobs[0]?.job_kind, "nominate_tags");
 });
 
+test("manual workflow action from failed to review runs classify_item entry hook", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedActiveClassifyWorkflow(db);
+  db.projects.push(projectRow("project-memo-capture", "Memo Capture"));
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  db.sourceMemos.push({
+    id: "00000000-0000-4000-8000-000000000101",
+    source_type: "watched_text_file",
+    extracted_text: "Manual recovery text.",
+    current_transcript_text: null,
+    original_file_modified_at: originalFileModifiedAt
+  });
+  db.workItems.push({
+    id: "00000000-0000-4000-8000-000000000201",
+    source_memo_id: "00000000-0000-4000-8000-000000000101",
+    project_id: "project-memo-capture",
+    contributor_text: null,
+    contributor_id: null,
+    title: "Failed memo",
+    body: "Manual recovery text.",
+    body_format: "markdown",
+    workflow_state: "failed",
+    tags: [],
+    workflow_item_version: 1,
+    accepted_snapshot_id: null,
+    accepted_unexported_changes: false,
+    original_file_modified_at: originalFileModifiedAt,
+    created_at: "2026-05-29T00:00:00.000Z",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+
+  const result = await services.workflows.executeAction(
+    "00000000-0000-4000-8000-000000000201",
+    "failed.review",
+    {},
+    session.user,
+    "request-review"
+  );
+
+  assert.equal(result.newState, "needs_review");
+  assert.equal(db.workItems[0]?.workflow_state, "needs_review");
+  assert.equal(db.processingJobs.length, 0);
+  assert.equal(
+    db.auditEvents.some(
+      (event) =>
+        event.event_name === "work_item.updated" &&
+        (event.metadata as { updateSource?: string } | null)?.updateSource === "classify_item"
+    ),
+    true
+  );
+});
+
 test("nominate_tags job assigns generated tags and reschedules recurring memo hook", async () => {
   const db = new FakeDatabase();
   seedActiveClassifyWorkflow(db);
@@ -4837,6 +4895,10 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
         {
           id: "parked",
           visible: true
+        },
+        {
+          id: "failed",
+          visible: true
         }
       ],
       actions: [
@@ -4853,6 +4915,14 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
           label: "Park",
           from: "memo",
           to: "parked",
+          trigger: "user",
+          visible: true
+        },
+        {
+          id: "failed.review",
+          label: "Review",
+          from: "failed",
+          to: "needs_review",
           trigger: "user",
           visible: true
         }
@@ -4895,6 +4965,12 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
           label: "Parked",
           visible: true,
           states: ["parked"]
+        },
+        {
+          id: "failures",
+          label: "Failures",
+          visible: true,
+          states: ["failed"]
         }
       ],
       embeddedStateMachineDefinition: {
@@ -4904,7 +4980,7 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
         version: "0.2.4",
         id: "memo_capture_state",
         initialState: "needs_review",
-        states: ["needs_review", "memo", "parked"],
+        states: ["needs_review", "memo", "parked", "failed"],
         entryStates: ["needs_review"],
         terminalStates: [],
         transitions: [
@@ -4917,6 +4993,11 @@ function seedActiveClassifyWorkflow(db: FakeDatabase): void {
             from: "memo",
             to: "parked",
             actionId: "memo.parked"
+          },
+          {
+            from: "failed",
+            to: "needs_review",
+            actionId: "failed.review"
           }
         ]
       }
