@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createPgDatabase } from "../../src/db/postgres.js";
 import type { Logger } from "../../src/logger.js";
 import { AuditRepository } from "../../src/repositories/audit.js";
 import { ProcessingJobRepository } from "../../src/repositories/jobs.js";
+import { UserRepository } from "../../src/repositories/users.js";
+import { WorkflowRepository } from "../../src/repositories/workflows.js";
+import { WorkflowService } from "../../src/services/workflows.js";
+import { hashBundle } from "../../src/services/workflow-runtime.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "";
 const silentLogger: Logger = {
@@ -259,6 +264,105 @@ test("audit repository lists events with display context in real Postgres", asyn
     assert.equal(event?.display.originalFilename, "postgres-source.md");
     assert.equal(event?.display.originalPath, "/incoming/postgres-source.md");
     assert.equal(event?.display.projectName, "Postgres Audit Project");
+  } finally {
+    await db.close();
+  }
+});
+
+test("workflow accept action creates accepted snapshot in real Postgres", async () => {
+  const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
+  const actor = await new UserRepository(db).upsertFromIdentity({
+    oidcIssuer: "memo-capture-test",
+    oidcSubject: "accept-action-user",
+    email: "accept-action@example.invalid",
+    displayName: "Accept Action User"
+  });
+  const projectId = "10000000-0000-4000-8000-000000000501";
+  const sourceMemoId = "10000000-0000-4000-8000-000000000502";
+  const workItemId = "10000000-0000-4000-8000-000000000503";
+  const workflowBundle = JSON.parse(
+    readFileSync(
+      new URL("../../../../docs/design/memo-capture-0.2.5-workflow-definition-bundled.json", import.meta.url),
+      "utf8"
+    )
+  ) as Record<string, unknown>;
+
+  try {
+    await new WorkflowRepository(db).replaceActive({
+      workflowId: "memo-capture_workflow",
+      workflowVersion: "0.2.5",
+      stateMachineVersion: "0.2.5",
+      contentHash: hashBundle(workflowBundle),
+      requiredAppCapabilities: ["create_accepted_snapshot"],
+      bundle: workflowBundle,
+      activatedBy: actor.id
+    });
+    await db.query(
+      `insert into projects (id, name, slug)
+       values ($1, $2, $3)`,
+      [projectId, "Postgres Accept Project", "postgres-accept-project"]
+    );
+    await db.query(
+      `insert into source_memos (
+         id,
+         source_type,
+         original_text,
+         extracted_text,
+         content_hash,
+         created_by,
+         updated_at
+       )
+       values ($1, $2, $3, $3, $4, $5, now())`,
+      [sourceMemoId, "form", "Accept this memo.", "postgres-accept-content-hash", actor.id]
+    );
+    await db.query(
+      `insert into work_items (
+         id,
+         source_memo_id,
+         project_id,
+         title,
+         body,
+         body_format,
+         workflow_state,
+         workflow_item_version,
+         accepted_unexported_changes,
+         created_by,
+         updated_by
+       )
+       values ($1, $2, $3, $4, $5, 'markdown', 'memo', 1, false, $6, $6)`,
+      [workItemId, sourceMemoId, projectId, "Acceptable memo", "Ready to accept.", actor.id]
+    );
+
+    const result = await new WorkflowService(db, "local-dev").executeAction(
+      workItemId,
+      "memo.accepted",
+      { expectedVersion: 1 },
+      actor,
+      "postgres-accept-action"
+    );
+
+    assert.equal(result.newState, "accepted");
+    assert.notEqual(result.createdSnapshotId, null);
+
+    const accepted = await db.query<{
+      workflow_state: string;
+      accepted_snapshot_id: string | null;
+      snapshot_count: number;
+    }>(
+      `select
+         work_items.workflow_state,
+         work_items.accepted_snapshot_id,
+         count(accepted_snapshots.id)::int as snapshot_count
+       from work_items
+       left join accepted_snapshots on accepted_snapshots.work_item_id = work_items.id
+       where work_items.id = $1
+       group by work_items.id`,
+      [workItemId]
+    );
+
+    assert.equal(accepted.rows[0]?.workflow_state, "accepted");
+    assert.equal(accepted.rows[0]?.accepted_snapshot_id, result.createdSnapshotId);
+    assert.equal(accepted.rows[0]?.snapshot_count, 1);
   } finally {
     await db.close();
   }
