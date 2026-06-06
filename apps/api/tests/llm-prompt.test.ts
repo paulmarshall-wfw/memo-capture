@@ -4,6 +4,7 @@ import { buildWorkItemExpansionPrompt, createLlmProvider, type WorkItemExpansion
 
 test("work item expansion prompt starts with freeform text and uses text-only context", () => {
   const context: WorkItemExpansionContext = {
+    hookKey: "memo-expansion",
     prompt: {
       name: "work_item_expansion",
       version: 2,
@@ -63,6 +64,7 @@ test("disabled LLM runtime reports the Settings/runtime mismatch", () => {
 
 test("OpenAI-compatible provider sends configured system message", async () => {
   const context: WorkItemExpansionContext = {
+    hookKey: "memo-expansion",
     prompt: {
       name: "work_item_expansion",
       version: 2,
@@ -100,7 +102,6 @@ test("OpenAI-compatible provider sends configured system message", async () => {
             message: {
               content: JSON.stringify({
                 expanded_work_item: { title: "Expanded", body: "Body", tags: [] },
-                related_suggestions: []
               })
             }
           }
@@ -145,6 +146,7 @@ test("local-dev provider output does not echo prompt focus into memo body", asyn
     "memo-capture-local-dev-expander-v1"
   );
   const output = await provider.generateWorkItemExpansion({
+    hookKey: "memo-expansion",
     prompt: {
       name: "work_item_expansion",
       version: 2,
@@ -173,4 +175,49 @@ test("local-dev provider output does not echo prompt focus into memo body", asyn
   });
 
   assert.doesNotMatch(output.rawText, /Prompt focus:/);
+  assert.doesNotMatch(output.rawText, /related_suggestions/);
+});
+
+test("local-dev provider returns suggested_work_items for suggestion hook", async () => {
+  const provider = createLlmProvider(
+    {
+      provider: "local-dev",
+      modelName: "memo-capture-local-dev-expander-v1",
+      endpoint: "",
+      openAiCompatibleApiKey: ""
+    },
+    "local-dev",
+    "memo-capture-local-dev-expander-v1"
+  );
+  const output = await provider.generateWorkItemExpansion({
+    hookKey: "suggest-new-memos",
+    prompt: {
+      name: "work_item_suggestions",
+      version: 1,
+      body: "Suggest useful follow-up memos.",
+      contextConfig: {
+        freeformText: "Suggest useful follow-up memos.",
+        systemMessage: "Use strict JSON.",
+        includeProjectSynopsis: true,
+        includeMemoMetadata: true,
+        includeMemoTranscriptText: true
+      }
+    },
+    project: {
+      id: "project-1",
+      name: "Memo Capture",
+      description: "Capture project synopsis."
+    },
+    workItem: {
+      id: "work-item-1",
+      title: "Voice memo follow-up",
+      body: "Existing work item text.",
+      tags: ["capture"],
+      contributorText: "Paul"
+    },
+    sourceMemo: null
+  });
+
+  assert.match(output.rawText, /suggested_work_items/);
+  assert.doesNotMatch(output.rawText, /expanded_work_item/);
 });

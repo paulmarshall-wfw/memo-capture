@@ -199,9 +199,9 @@ AI expansion sends structured context to the configured LLM service:
 - current work-item fields
 - source memo/body as appropriate
 
-AI output must be strict structured JSON and validated before storing any draft or suggestion records.
+AI output must be strict structured JSON and validated before exposing any generated draft or suggestion candidates.
 
-Recommended output shape:
+Memo expansion task output shape:
 
 ```json
 {
@@ -209,8 +209,15 @@ Recommended output shape:
     "title": "string",
     "body": "string",
     "tags": ["string"]
-  },
-  "related_suggestions": [
+  }
+}
+```
+
+Suggested new memo task output shape:
+
+```json
+{
+  "suggested_work_items": [
     {
       "title": "string",
       "body": "string",
@@ -221,14 +228,16 @@ Recommended output shape:
 }
 ```
 
-AI-generated related ideas are not workflow items immediately. They are `ai_suggestion` records with statuses such as `pending`, `applied`, and `dismissed`.
+AI-generated expanded memo content is ephemeral until the user accepts it in a review modal. Accepting an expanded memo stages the generated title and body into the current editable draft; backend persistence still requires Save.
+
+AI-generated related ideas are not workflow items immediately. Suggested new work items are ephemeral modal candidates and are not stored as `ai_suggestion` rows during task runs.
 
 Accepting a suggestion creates:
 
 - a `source_memo` with `source_type = ai_generated`
 - a normal `work_item` in `memo`
 
-Rejecting a suggestion does not create a workflow item or mutate workflow state. Rejected suggestions disappear from the normal review surface; V1 retains only backend suggestion status and audit/diagnostic metadata rather than a user-facing rejected-suggestions history.
+Rejecting or closing the review modal discards unaccepted generated content and does not create a workflow item or mutate workflow state. Accepting a suggested work item records audit metadata linking the created item to the parent work item and task run.
 
 ## Prompt Versioning And AI Provenance
 

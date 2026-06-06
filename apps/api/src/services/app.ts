@@ -59,12 +59,31 @@ export interface AiOperations {
     actor: AppUserRecord,
     requestId: string
   ): Promise<{
-    expandedWorkItem: { title: string; body: string; tags: string[] };
+    taskResultType: "expanded_memo" | "suggested_work_items";
+    expandedWorkItem: { title: string; body: string; tags: string[] } | null;
+    suggestedWorkItems: Array<{
+      id: string;
+      parentWorkItemId: string;
+      taskDefinitionId: string;
+      taskRunId: string;
+      title: string;
+      body: string;
+      tags: string[];
+      rationale: string;
+      providerName: string;
+      modelName: string;
+    }>;
     suggestions: AiSuggestionRecord[];
     providerName: string;
     modelName: string;
     validation: Record<string, unknown>;
   }>;
+  acceptEphemeralSuggestedWorkItem(
+    parentWorkItemId: string,
+    body: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<{ workItem: WorkItemRecord }>;
   acceptSuggestion(
     suggestionId: string,
     actor: AppUserRecord,

@@ -207,6 +207,11 @@ button:disabled {
   padding: 0;
 }
 
+.compact-icon-button {
+  width: 30px;
+  height: 30px;
+}
+
 .theme-toggle:hover,
 .icon-button:hover,
 .copy-button:hover {
@@ -1759,6 +1764,90 @@ button:disabled {
   font-weight: 760;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(16 20 22 / 48%);
+}
+
+.review-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 24px 70px rgb(16 20 22 / 28%);
+}
+
+.suggested-items-modal {
+  width: min(840px, calc(100vw - 32px));
+}
+
+.review-modal-header,
+.review-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-modal-header h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+}
+
+.review-modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.review-modal-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px;
+}
+
+.review-candidate-list {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.review-candidate {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.review-candidate p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .audit-event-row {

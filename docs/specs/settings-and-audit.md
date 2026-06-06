@@ -279,7 +279,7 @@ Rules:
 - Hook implementation status is derived from backend app code, not trusted from task rows.
 - User-created tasks are allowed, but their selected `hook_key` must exist in the processing hook registry.
 - `task_key` values are generated once from `display_name` at creation time; callers do not provide manual task keys and renaming a task never recalculates identity.
-- Processing hook registry entries are displayed in the Settings Hook Key dropdown. `memo-expansion` is implemented. `revise-memo`, `suggest-new-memos`, and `suggest-tags` are seeded no-op registry entries until backend code implements them.
+- Processing hook registry entries are displayed in the Settings Hook Key dropdown. `memo-expansion` and `suggest-new-memos` are implemented. `revise-memo` and `suggest-tags` are seeded no-op registry entries until backend code implements them.
 - Unknown legacy task hooks may be displayed as compatibility fallback on existing rows, but new task creation and changed hook selections must reference the registry.
 - Unimplemented hooks must display `Default no-op`; processing attempts must record a skipped/no-op diagnostic and must not call providers.
 - Tasks can be created while their hook is unimplemented, but cannot be enabled until that hook has real app logic.
@@ -725,7 +725,7 @@ Request:
 ```json
 {
   "freeformText": "Return strict JSON.",
-  "systemMessage": "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
+  "systemMessage": "Return only strict JSON matching this shape: { \"expanded_work_item\": { \"title\": \"string\", \"body\": \"string\", \"tags\": [\"string\"] } }. Do not include prose outside JSON.",
   "includeProjectSynopsis": true,
   "includeMemoMetadata": true,
   "includeMemoTranscriptText": true,
@@ -754,11 +754,45 @@ Filters:
 
 `POST /api/work-items/{workItemId}/ai-expansions`
 
-Creates an AI expansion run for a work item using the active prompt and an enabled LLM provider config. The provider response must be strict JSON matching the configured output schema shape. Invalid output creates a failed `expand_work_item` processing job and an `ai_expansion.validation_failed` audit event, and does not create suggestions.
+Creates an AI expansion run for a work item using the active prompt and an enabled LLM provider config. The provider response must be strict JSON matching:
+
+```json
+{
+  "expanded_work_item": {
+    "title": "string",
+    "body": "string",
+    "tags": ["string"]
+  }
+}
+```
+
+Invalid output creates a failed `expand_work_item` processing job and an `ai_expansion.validation_failed` audit event. Successful output returns one expanded memo candidate and does not mutate the work item draft or create `ai_suggestions` rows.
 
 `POST /api/work-items/{workItemId}/tasks/{taskDefinitionId}/run`
 
-Runs a configured task against the selected work item. V1 accepts only tasks with `render_location = work_item_detail`, an enabled and runtime-ready route, and implemented app hook logic. The first implemented hook is `memo-expansion`, which returns the same validated expansion/suggestion shape as the legacy AI expansion endpoint while selecting provider, model, and prompt from the explicit task id.
+Runs a configured task against the selected work item. V1 accepts only tasks with `render_location = work_item_detail`, an enabled and runtime-ready route, and implemented app hook logic.
+
+- `memo-expansion` returns `taskResultType: "expanded_memo"` and one `expandedWorkItem` candidate for modal review.
+- `suggest-new-memos` returns `taskResultType: "suggested_work_items"` and ephemeral `suggestedWorkItems` candidates for modal review. Provider output must match:
+
+```json
+{
+  "suggested_work_items": [
+    {
+      "title": "string",
+      "body": "string",
+      "tags": ["string"],
+      "rationale": "string"
+    }
+  ]
+}
+```
+
+Task runs never persist suggested work item candidates by themselves.
+
+`POST /api/work-items/{workItemId}/suggested-work-items/accept`
+
+Accepts one ephemeral suggested work item candidate by creating a `source_memo` with `source_type = ai_generated`, a normal `work_item` in `memo`, project-backed tags, and audit metadata linking the new item to the parent work item and task run. The parent work item remains selected in the desktop review UI.
 
 `GET /api/work-items/{workItemId}/ai-suggestions`
 

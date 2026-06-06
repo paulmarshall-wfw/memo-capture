@@ -324,7 +324,13 @@ test("settings schema supports multiple provider instances and task-owned prompt
          1,
          'Return strict JSON.',
          '{}'::jsonb,
-         '{"freeformText":"Return strict JSON.","systemMessage":"Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.","includeProjectSynopsis":true,"includeMemoMetadata":true,"includeMemoTranscriptText":true}'::jsonb
+         jsonb_build_object(
+           'freeformText', 'Return strict JSON.',
+           'systemMessage', 'Return only strict JSON matching this shape: { "expanded_work_item": { "title": "string", "body": "string", "tags": ["string"] } }. Do not include prose outside JSON.',
+           'includeProjectSynopsis', true,
+           'includeMemoMetadata', true,
+           'includeMemoTranscriptText', true
+         )
        )
        on conflict (prompt_definition_id, version) do nothing`
     );

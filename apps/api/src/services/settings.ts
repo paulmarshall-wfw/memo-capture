@@ -13,9 +13,18 @@ import {
   type ProviderConfigRow
 } from "../repositories/settings.js";
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
-import { DEFAULT_LLM_SYSTEM_MESSAGE, normalizePromptContextConfig } from "./llm.js";
+import {
+  DEFAULT_LLM_SYSTEM_MESSAGE,
+  DEFAULT_LLM_SYSTEM_MESSAGES_BY_HOOK,
+  MEMO_EXPANSION_HOOK_KEY,
+  SUGGEST_NEW_MEMOS_HOOK_KEY,
+  normalizePromptContextConfig
+} from "./llm.js";
 
-const IMPLEMENTED_AI_TASK_HOOKS: ReadonlySet<string> = new Set(["memo-expansion"]);
+const IMPLEMENTED_AI_TASK_HOOKS: ReadonlySet<string> = new Set([
+  MEMO_EXPANSION_HOOK_KEY,
+  SUGGEST_NEW_MEMOS_HOOK_KEY
+]);
 const PROVIDER_KIND_OPTIONS = new Set(["llm", "transcription", "stt", "tts", "ocr", "script"]);
 const TASK_RENDER_LOCATIONS = new Set(["work_item_detail", "work_item_list", "export_page"]);
 
@@ -361,6 +370,7 @@ export class SettingsService {
         input.initialPromptText ??
         input.promptUpdate?.body ??
         `Return strict JSON for ${input.displayName ?? current.display_name}. Do not include prose outside JSON.`;
+      const defaultSystemMessage = defaultSystemMessageForHook(hookKey);
       const promptsEnabled = input.promptsEnabled ?? current.prompt_definition_id !== null;
       const promptDefinitionId =
         promptsEnabled && current.prompt_definition_id === null
@@ -372,7 +382,7 @@ export class SettingsService {
                 outputSchema: input.promptUpdate?.outputSchema ?? {},
                 contextConfig:
                   input.promptUpdate?.contextConfig ??
-                  defaultPromptContextConfig(promptText, input.initialSystemMessage),
+                  defaultPromptContextConfig(promptText, input.initialSystemMessage ?? defaultSystemMessage),
                 actorUserId: actor.id
               })
             ).id
@@ -386,7 +396,7 @@ export class SettingsService {
         }
         const currentPromptContext = normalizePromptContextConfig(
           currentPrompt.active_context_config,
-          currentPrompt.active_body
+          currentPrompt.active_body ?? ""
         );
         await settings.updateCurrentPrompt({
           promptDefinitionId,
@@ -1546,7 +1556,7 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
         ? `Return strict JSON for ${displayName}. Do not include prose outside JSON.`
         : assertNonEmptyString(record.initialPromptText, "initialPromptText"),
       record.initialSystemMessage === undefined
-        ? undefined
+        ? defaultSystemMessageForHook(hookKey)
         : assertString(record.initialSystemMessage, "initialSystemMessage"),
       {
         includeProjectSynopsis: parsePromptToggle(record.includeProjectSynopsis, "includeProjectSynopsis"),
@@ -1656,6 +1666,10 @@ function defaultPromptContextConfig(
     includeMemoMetadata: toggles.includeMemoMetadata ?? true,
     includeMemoTranscriptText: toggles.includeMemoTranscriptText ?? true
   };
+}
+
+function defaultSystemMessageForHook(hookKey: string): string {
+  return DEFAULT_LLM_SYSTEM_MESSAGES_BY_HOOK[hookKey] ?? DEFAULT_LLM_SYSTEM_MESSAGE;
 }
 
 function humanizeKey(value: string): string {
@@ -1915,7 +1929,7 @@ function assertString(value: unknown, field: string): string {
 }
 
 function getPromptSystemMessageFallback(prompt: PromptDefinitionRow): string {
-  return normalizePromptContextConfig(prompt.active_context_config, prompt.active_body).systemMessage;
+  return normalizePromptContextConfig(prompt.active_context_config, prompt.active_body ?? "").systemMessage;
 }
 
 function parseThreshold(value: unknown, field: string): number {

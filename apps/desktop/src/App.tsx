@@ -37,6 +37,7 @@ import {
   PackagePlus,
   Plus,
   RefreshCcw,
+  RotateCcw,
   Save,
   Search,
   Settings,
@@ -318,18 +319,26 @@ interface FinalizeUploadSessionResponse {
   processingJobs: string[];
 }
 
-interface AiSuggestion {
-  id: string;
-  parentWorkItemId: string;
-  status: "pending" | "applied" | "dismissed";
+interface ExpandedMemoCandidate {
   title: string;
   body: string;
   tags: string[];
-  rationale: string | null;
-  providerName: string | null;
-  modelName: string | null;
-  appliedWorkItemId: string | null;
-  createdAt: string;
+  providerName: string;
+  modelName: string;
+  taskDisplayName: string;
+}
+
+interface SuggestedWorkItemCandidate {
+  id: string;
+  parentWorkItemId: string;
+  taskDefinitionId: string;
+  taskRunId: string;
+  title: string;
+  body: string;
+  tags: string[];
+  rationale: string;
+  providerName: string;
+  modelName: string;
 }
 
 interface MediaTypeSetting {
@@ -592,7 +601,13 @@ interface PromptDraft {
 }
 
 const defaultSystemMessage =
-  "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.";
+  'Return only strict JSON matching this shape: { "expanded_work_item": { "title": "string", "body": "string", "tags": ["string"] } }. Do not include prose outside JSON.';
+
+const defaultSystemMessagesByHook: Record<string, string> = {
+  "memo-expansion": defaultSystemMessage,
+  "suggest-new-memos":
+    'Return only strict JSON matching this shape: { "suggested_work_items": [{ "title": "string", "body": "string", "tags": ["string"], "rationale": "string" }] }. Do not include prose outside JSON.'
+};
 
 const defaultPromptContextConfig: PromptContextConfig = {
   freeformText: "",
@@ -601,6 +616,10 @@ const defaultPromptContextConfig: PromptContextConfig = {
   includeMemoMetadata: true,
   includeMemoTranscriptText: true
 };
+
+function defaultSystemMessageForHook(hookKey: string): string {
+  return defaultSystemMessagesByHook[hookKey] ?? defaultSystemMessage;
+}
 
 interface AuditEvent {
   id: string;
@@ -1448,13 +1467,18 @@ export function App() {
   const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null);
   const [audioLoadState, setAudioLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [transcriptSaving, setTranscriptSaving] = useState(false);
-  const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([]);
   const [tagSuggestions, setTagSuggestions] = useState<TagSuggestionRows>({ strong: [], related: [], weak: [] });
   const [suppressedTags, setSuppressedTags] = useState<SuppressedTag[]>([]);
   const [suppressedTagsLoading, setSuppressedTagsLoading] = useState(false);
   const [suppressedTagInFlight, setSuppressedTagInFlight] = useState<string | null>(null);
   const [workItemTaskIdInFlight, setWorkItemTaskIdInFlight] = useState<string | null>(null);
   const [suggestionIdInFlight, setSuggestionIdInFlight] = useState<string | null>(null);
+  const [expandedMemoReview, setExpandedMemoReview] = useState<ExpandedMemoCandidate | null>(null);
+  const [suggestedWorkItemReview, setSuggestedWorkItemReview] = useState<{
+    parentWorkItemId: string;
+    taskDisplayName: string;
+    candidates: SuggestedWorkItemCandidate[];
+  } | null>(null);
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
   const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
@@ -1764,6 +1788,8 @@ export function App() {
   useEffect(() => {
     if (accessToken === null || selectedItemId === null) {
       setTagSuggestions({ strong: [], related: [], weak: [] });
+      setExpandedMemoReview(null);
+      setSuggestedWorkItemReview(null);
       return;
     }
 
@@ -1772,7 +1798,9 @@ export function App() {
     let cancelled = false;
     async function loadSelectedItem() {
       try {
-        const [detailResponse, actionsResponse, diagnosticsResponse, suggestionsResponse] =
+        setExpandedMemoReview(null);
+        setSuggestedWorkItemReview(null);
+        const [detailResponse, actionsResponse, diagnosticsResponse] =
           await Promise.all([
             authedJson<{ workItem: WorkItem }>(token, `/api/work-items/${encodeURIComponent(workItemId)}`),
             authedJson<{ actions: AllowedWorkflowAction[] }>(
@@ -1782,10 +1810,6 @@ export function App() {
             authedJson<WorkItemDiagnostics>(
               token,
               `/api/work-items/${encodeURIComponent(workItemId)}/diagnostics`
-            ),
-            authedJson<{ suggestions: AiSuggestion[] }>(
-              token,
-              `/api/work-items/${encodeURIComponent(workItemId)}/ai-suggestions`
             )
           ]);
         const tagSuggestionResponse = detailResponse.workItem.tagsAvailable
@@ -1804,7 +1828,6 @@ export function App() {
           [detailResponse.workItem.id]: actionsResponse.actions.filter((action) => action.visible && !action.requiresInput)
         }));
         setSelectedDiagnostics(diagnosticsResponse);
-        setAiSuggestions(suggestionsResponse.suggestions);
         setTagSuggestions(tagSuggestionResponse.suggestions);
         setAudioObjectUrl((current) => {
           if (current !== null) {
@@ -2972,25 +2995,34 @@ export function App() {
     setStatusMessage(null);
     try {
       const response = await authedJson<{
-        expandedWorkItem: { title: string; body: string; tags: string[] };
-        suggestions: AiSuggestion[];
+        taskResultType: "expanded_memo" | "suggested_work_items";
+        expandedWorkItem: { title: string; body: string; tags: string[] } | null;
+        suggestedWorkItems: SuggestedWorkItemCandidate[];
+        suggestions: unknown[];
         providerName: string;
         modelName: string;
       }>(accessToken, `/api/work-items/${encodeURIComponent(selectedItem.id)}/tasks/${encodeURIComponent(task.id)}/run`, {
         method: "POST",
         body: JSON.stringify({})
       });
-      setDraft((current) =>
-        current === null
-          ? current
-          : {
-              ...current,
-              title: response.expandedWorkItem.title,
-              body: response.expandedWorkItem.body
-            }
-      );
-      setAiSuggestions((current) => [...response.suggestions, ...current]);
-      setStatusMessage(`${task.displayName} completed with ${response.providerName}/${response.modelName}. Save applies the updated draft.`);
+      if (response.taskResultType === "expanded_memo" && response.expandedWorkItem !== null) {
+        setExpandedMemoReview({
+          title: response.expandedWorkItem.title,
+          body: response.expandedWorkItem.body,
+          tags: response.expandedWorkItem.tags,
+          providerName: response.providerName,
+          modelName: response.modelName,
+          taskDisplayName: task.displayName
+        });
+        setStatusMessage(`${task.displayName} generated a memo draft for review.`);
+      } else if (response.taskResultType === "suggested_work_items") {
+        setSuggestedWorkItemReview({
+          parentWorkItemId: selectedItem.id,
+          taskDisplayName: task.displayName,
+          candidates: response.suggestedWorkItems
+        });
+        setStatusMessage(`${task.displayName} generated ${formatItemCount(response.suggestedWorkItems.length)} for review.`);
+      }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : `Unable to run ${task.displayName}.`);
     } finally {
@@ -2998,48 +3030,67 @@ export function App() {
     }
   }
 
-  async function acceptAiSuggestion(suggestionId: string) {
+  function acceptExpandedMemoReview() {
+    if (expandedMemoReview === null) {
+      return;
+    }
+    setDraft((current) =>
+      current === null
+        ? current
+        : {
+            ...current,
+            title: expandedMemoReview.title,
+            body: expandedMemoReview.body
+          }
+    );
+    setExpandedMemoReview(null);
+    setStatusMessage("Expanded memo staged in the draft. Save applies it.");
+  }
+
+  async function acceptSuggestedWorkItem(candidate: SuggestedWorkItemCandidate) {
     if (accessToken === null) {
       return;
     }
-    setSuggestionIdInFlight(suggestionId);
+    const parentWorkItemId = suggestedWorkItemReview?.parentWorkItemId ?? candidate.parentWorkItemId;
+    setSuggestionIdInFlight(candidate.id);
     setStatusMessage(null);
     try {
-      const response = await authedJson<{ suggestion: AiSuggestion; workItem: WorkItem }>(
+      await authedJson<{ workItem: WorkItem }>(
         accessToken,
-        `/api/ai-suggestions/${encodeURIComponent(suggestionId)}/accept`,
-        { method: "POST", body: JSON.stringify({}) }
+        `/api/work-items/${encodeURIComponent(parentWorkItemId)}/suggested-work-items/accept`,
+        {
+          method: "POST",
+          body: JSON.stringify({ candidate })
+        }
       );
-      setAiSuggestions((current) => current.filter((suggestion) => suggestion.id !== response.suggestion.id));
+      setSuggestedWorkItemReview((current) =>
+        current === null
+          ? current
+          : {
+              ...current,
+              candidates: current.candidates.filter((item) => item.id !== candidate.id)
+            }
+      );
       await refreshBucket();
-      setSelectedItemId(response.workItem.id);
-      setStatusMessage("AI suggestion accepted as a new memo.");
+      setSelectedItemId(parentWorkItemId);
+      setStatusMessage("Suggested work item accepted as a new memo.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to accept AI suggestion.");
+      setStatusMessage(error instanceof Error ? error.message : "Unable to accept suggested work item.");
     } finally {
       setSuggestionIdInFlight(null);
     }
   }
 
-  async function rejectAiSuggestion(suggestionId: string) {
-    if (accessToken === null) {
-      return;
-    }
-    setSuggestionIdInFlight(suggestionId);
-    setStatusMessage(null);
-    try {
-      const response = await authedJson<{ suggestion: AiSuggestion }>(
-        accessToken,
-        `/api/ai-suggestions/${encodeURIComponent(suggestionId)}/dismiss`,
-        { method: "POST", body: JSON.stringify({}) }
-      );
-      setAiSuggestions((current) => current.filter((suggestion) => suggestion.id !== response.suggestion.id));
-      setStatusMessage("AI suggestion rejected.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to reject AI suggestion.");
-    } finally {
-      setSuggestionIdInFlight(null);
-    }
+  function rejectSuggestedWorkItem(candidateId: string) {
+    setSuggestedWorkItemReview((current) =>
+      current === null
+        ? current
+        : {
+            ...current,
+            candidates: current.candidates.filter((candidate) => candidate.id !== candidateId)
+          }
+    );
+    setStatusMessage("Suggested work item rejected.");
   }
 
   async function toggleProvider(providerId: string, enabled: boolean) {
@@ -3180,7 +3231,20 @@ export function App() {
   }
 
   function updateNewAiTaskDraft<Field extends keyof NewAiTaskDraft>(field: Field, value: NewAiTaskDraft[Field]) {
-    setNewAiTaskDraft((current) => ({ ...current, [field]: value }));
+    setNewAiTaskDraft((current) => {
+      const next = { ...current, [field]: value };
+      if (
+        field === "promptsEnabled" &&
+        value === true &&
+        Object.values(defaultSystemMessagesByHook).includes(current.promptDraft.systemMessage)
+      ) {
+        next.promptDraft = {
+          ...current.promptDraft,
+          systemMessage: defaultSystemMessageForHook(current.hookKey)
+        };
+      }
+      return next;
+    });
   }
 
   function updateNewAiTaskPromptDraft<Field extends keyof PromptDraft>(field: Field, value: PromptDraft[Field]) {
@@ -3663,6 +3727,17 @@ export function App() {
         [field]: value
       }
     }));
+  }
+
+  function restoreNewTaskSystemMessageDefault() {
+    updateNewAiTaskPromptDraft("systemMessage", defaultSystemMessageForHook(newAiTaskDraft.hookKey));
+  }
+
+  function restoreTaskSystemMessageDefault(task: SettingsSummary["aiTasks"][number]) {
+    if (task.prompt === null) {
+      return;
+    }
+    updatePromptDraft(task.prompt.id, "systemMessage", defaultSystemMessageForHook(task.hookKey));
   }
 
   function addNewProjectDraft() {
@@ -4439,61 +4514,6 @@ export function App() {
                       );
                     })}
                   </div>
-                )}
-
-                {aiSuggestions.length === 0 ? null : (
-                  <section className="detail-section" aria-label="Suggested new work items">
-                    <div className="suggestion-list ai-suggestion-list" aria-label="Suggested new work items">
-                      {aiSuggestions.map((suggestion) => (
-                      <article className="suggestion-row ai-suggestion-row" key={suggestion.id}>
-                        <div>
-                          <div className="suggestion-kicker">
-                            <PackagePlus size={15} />
-                            <span>Suggested new work item</span>
-                          </div>
-                          <div className="batch-title">
-                            <strong>{suggestion.title}</strong>
-                            <span>Pending review</span>
-                          </div>
-                          <p>{suggestion.body}</p>
-                          <div className="item-meta">
-                            {suggestion.tags.map((tag) => (
-                              <span key={tag}>{tag}</span>
-                            ))}
-                            {suggestion.providerName === null ? null : <span>{suggestion.providerName}</span>}
-                          </div>
-                          {suggestion.rationale === null ? null : (
-                            <p className="candidate-message">{suggestion.rationale}</p>
-                          )}
-                        </div>
-                        <div className="suggestion-actions">
-                          <button
-                            className="secondary-button"
-                            type="button"
-                            disabled={suggestion.status !== "pending" || suggestionIdInFlight !== null}
-                            onClick={() => void acceptAiSuggestion(suggestion.id)}
-                          >
-                            {suggestionIdInFlight === suggestion.id ? (
-                              <RefreshCcw className="spin" size={18} />
-                            ) : (
-                              <Check size={18} />
-                            )}
-                            Accept
-                          </button>
-                          <button
-                            className="secondary-button"
-                            type="button"
-                            disabled={suggestion.status !== "pending" || suggestionIdInFlight !== null}
-                            onClick={() => void rejectAiSuggestion(suggestion.id)}
-                          >
-                            <CircleSlash size={18} />
-                            Reject
-                          </button>
-                        </div>
-                      </article>
-                      ))}
-                    </div>
-                  </section>
                 )}
 
                 {audioArtifact !== null ? (
@@ -6086,7 +6106,19 @@ export function App() {
                             />
                           </div>
                           <div className="field-group">
-                            <label htmlFor="new-task-prompt-system">System message</label>
+                            <div className="field-label-row">
+                              <label htmlFor="new-task-prompt-system">System message</label>
+                              <button
+                                className="icon-button compact-icon-button"
+                                type="button"
+                                title="Restore default system message"
+                                aria-label="Restore default system message"
+                                disabled={aiTaskCreateInFlight}
+                                onClick={restoreNewTaskSystemMessageDefault}
+                              >
+                                <RotateCcw size={15} />
+                              </button>
+                            </div>
                             <textarea
                               id="new-task-prompt-system"
                               value={newAiTaskDraft.promptDraft.systemMessage}
@@ -6333,7 +6365,19 @@ export function App() {
                                   />
                                 </div>
                                 <div className="field-group">
-                                  <label htmlFor={`prompt-${prompt.id}-system`}>System message</label>
+                                  <div className="field-label-row">
+                                    <label htmlFor={`prompt-${prompt.id}-system`}>System message</label>
+                                    <button
+                                      className="icon-button compact-icon-button"
+                                      type="button"
+                                      title="Restore default system message"
+                                      aria-label="Restore default system message"
+                                      disabled={aiTaskIdInFlight === task.id}
+                                      onClick={() => restoreTaskSystemMessageDefault(task)}
+                                    >
+                                      <RotateCcw size={15} />
+                                    </button>
+                                  </div>
                                   <textarea
                                     id={`prompt-${prompt.id}-system`}
                                     value={promptDraft.systemMessage}
@@ -6781,6 +6825,131 @@ export function App() {
             </section>
           </div>
         ) : null}
+
+        {expandedMemoReview === null ? null : (
+          <div className="modal-backdrop" role="presentation">
+            <section
+              className="review-modal expanded-memo-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="expanded-memo-review-title"
+            >
+              <header className="review-modal-header">
+                <div>
+                  <p className="eyebrow">{expandedMemoReview.taskDisplayName}</p>
+                  <h2 id="expanded-memo-review-title">Expanded memo</h2>
+                </div>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Close"
+                  aria-label="Close expanded memo review"
+                  onClick={() => setExpandedMemoReview(null)}
+                >
+                  <X size={18} />
+                </button>
+              </header>
+              <div className="review-modal-body">
+                <article className="review-candidate">
+                  <div className="batch-title">
+                    <strong>{expandedMemoReview.title}</strong>
+                    <span>{expandedMemoReview.providerName}/{expandedMemoReview.modelName}</span>
+                  </div>
+                  <p>{expandedMemoReview.body}</p>
+                  <div className="item-meta">
+                    {expandedMemoReview.tags.map((tag) => (
+                      <span key={tag}>{tag}</span>
+                    ))}
+                  </div>
+                </article>
+              </div>
+              <footer className="review-modal-actions">
+                <button className="secondary-button" type="button" onClick={() => setExpandedMemoReview(null)}>
+                  <CircleSlash size={18} />
+                  Reject
+                </button>
+                <button className="primary-button" type="button" onClick={acceptExpandedMemoReview}>
+                  <Check size={18} />
+                  Accept
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
+
+        {suggestedWorkItemReview === null || suggestedWorkItemReview.candidates.length === 0 ? null : (
+          <div className="modal-backdrop" role="presentation">
+            <section
+              className="review-modal suggested-items-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="suggested-items-review-title"
+            >
+              <header className="review-modal-header">
+                <div>
+                  <p className="eyebrow">{suggestedWorkItemReview.taskDisplayName}</p>
+                  <h2 id="suggested-items-review-title">Suggested work items</h2>
+                </div>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Close"
+                  aria-label="Close suggested work item review"
+                  onClick={() => setSuggestedWorkItemReview(null)}
+                >
+                  <X size={18} />
+                </button>
+              </header>
+              <div className="review-modal-body review-candidate-list">
+                {suggestedWorkItemReview.candidates.map((candidate) => (
+                  <article className="review-candidate" key={candidate.id}>
+                    <div>
+                      <div className="suggestion-kicker">
+                        <PackagePlus size={15} />
+                        <span>Suggested new work item</span>
+                      </div>
+                      <div className="batch-title">
+                        <strong>{candidate.title}</strong>
+                        <span>{candidate.providerName}/{candidate.modelName}</span>
+                      </div>
+                      <p>{candidate.body}</p>
+                      <div className="item-meta">
+                        {candidate.tags.map((tag) => (
+                          <span key={tag}>{tag}</span>
+                        ))}
+                      </div>
+                      <p className="candidate-message">{candidate.rationale}</p>
+                    </div>
+                    <div className="suggestion-actions">
+                      <button
+                        className="secondary-button"
+                        type="button"
+                        disabled={suggestionIdInFlight !== null}
+                        onClick={() => rejectSuggestedWorkItem(candidate.id)}
+                      >
+                        <CircleSlash size={18} />
+                        Reject
+                      </button>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        disabled={suggestionIdInFlight !== null}
+                        onClick={() => void acceptSuggestedWorkItem(candidate)}
+                      >
+                        {suggestionIdInFlight === candidate.id ? (
+                          <RefreshCcw className="spin" size={18} />
+                        ) : (
+                          <Check size={18} />
+                        )}
+                        Accept
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
 
       </section>
     </main>

@@ -693,6 +693,17 @@ function matchProtectedRoute(
       );
   }
 
+  const workItemEphemeralSuggestionAcceptMatch = /^\/api\/work-items\/([^/]+)\/suggested-work-items\/accept$/.exec(pathname);
+  if (method === "POST" && workItemEphemeralSuggestionAcceptMatch !== null) {
+    return async (context, session) =>
+      services.ai.acceptEphemeralSuggestedWorkItem(
+        decodeURIComponent(workItemEphemeralSuggestionAcceptMatch[1] ?? ""),
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
   const workItemActionsMatch = /^\/api\/work-items\/([^/]+)\/actions$/.exec(pathname);
   if (method === "GET" && workItemActionsMatch !== null) {
     return async () => services.workflows.getAllowedActions(decodeURIComponent(workItemActionsMatch[1] ?? ""));

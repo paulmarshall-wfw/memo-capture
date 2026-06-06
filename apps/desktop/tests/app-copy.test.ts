@@ -41,6 +41,11 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /label="Related"/);
   assert.match(appSource, /label="Weak"/);
   assert.match(appSource, /Suggested new work item/);
+  assert.match(appSource, /Suggested work items/);
+  assert.match(appSource, /Expanded memo/);
+  assert.match(appSource, /suggestedWorkItemReview/);
+  assert.match(appSource, /expandedMemoReview/);
+  assert.match(appSource, /\/suggested-work-items\/accept/);
   assert.doesNotMatch(appSource, /No pending suggested work items/);
   assert.match(appSource, /workItemDetailTasks/);
   assert.match(appSource, /work-item-task-actions/);
@@ -72,6 +77,8 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.doesNotMatch(appSource, /firstRegisteredTaskHookKey/);
   assert.match(appSource, /newAiTaskDraft\.promptDraft\.freeformText/);
   assert.match(appSource, /newAiTaskDraft\.promptDraft\.systemMessage/);
+  assert.match(appSource, /Restore default system message/);
+  assert.match(appSource, /defaultSystemMessageForHook/);
   assert.match(appSource, /includeProjectSynopsis: newAiTaskDraft\.promptDraft\.includeProjectSynopsis/);
   assert.match(appSource, /Select hook/);
   assert.doesNotMatch(appSource, /list="task-hook-options"/);
@@ -97,7 +104,7 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.doesNotMatch(appSource, /LLM_PROVIDER=local-dev/);
   assert.doesNotMatch(appSource, /Development LLM/);
   assert.doesNotMatch(appSource, /Enable dev expander/);
-  assert.match(appSource, /AI suggestion rejected/);
+  assert.match(appSource, /Suggested work item rejected/);
   assert.doesNotMatch(appSource, />\s*Dismiss\s*</);
   assert.match(appSource, /Suppressed Tags/);
   assert.match(appSource, /Suppress \$\{tag\} suggestions/);

@@ -2,6 +2,7 @@ import type { LlmProviderConfig, LlmProviderMode } from "../config.js";
 import { HttpError } from "./errors.js";
 
 export interface WorkItemExpansionContext {
+  hookKey: string;
   prompt: {
     name: string;
     version: number;
@@ -35,8 +36,17 @@ export interface PromptContextConfig {
   includeMemoTranscriptText: boolean;
 }
 
+export const MEMO_EXPANSION_HOOK_KEY = "memo-expansion";
+export const SUGGEST_NEW_MEMOS_HOOK_KEY = "suggest-new-memos";
+
 export const DEFAULT_LLM_SYSTEM_MESSAGE =
-  "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.";
+  'Return only strict JSON matching this shape: { "expanded_work_item": { "title": "string", "body": "string", "tags": ["string"] } }. Do not include prose outside JSON.';
+
+export const DEFAULT_LLM_SYSTEM_MESSAGES_BY_HOOK: Record<string, string> = {
+  [MEMO_EXPANSION_HOOK_KEY]: DEFAULT_LLM_SYSTEM_MESSAGE,
+  [SUGGEST_NEW_MEMOS_HOOK_KEY]:
+    'Return only strict JSON matching this shape: { "suggested_work_items": [{ "title": "string", "body": "string", "tags": ["string"], "rationale": "string" }] }. Do not include prose outside JSON.'
+};
 
 export const DEFAULT_PROMPT_CONTEXT_CONFIG: PromptContextConfig = {
   freeformText: "",
@@ -165,30 +175,34 @@ class LocalDevLlmProvider implements LlmProvider {
     const startedAt = Date.now();
     const title = context.workItem.title.trim();
     const projectPrefix = context.project.name === null ? "Memo" : context.project.name;
-    const expanded = {
-      expanded_work_item: {
-        title: title.endsWith("expanded") ? title : `${title} expanded`,
-        body: [
-          context.workItem.body.trim(),
-          "",
-          `Expansion focus: clarify the user value, evidence, edge cases, and next review questions for ${projectPrefix}.`
-        ]
-          .filter((part) => part !== "")
-          .join("\n"),
-        tags: ["ai-expanded", normalizeTag(projectPrefix)]
-      },
-      related_suggestions: [
-        {
-          title: `${title} acceptance criteria`,
-          body: `Define acceptance criteria, failure modes, and owner review notes for: ${context.workItem.body.trim()}`,
-          tags: ["acceptance-criteria", "ai-suggestion"],
-          rationale: "Acceptance criteria make the captured idea easier to review and export."
-        }
-      ]
-    };
+    const output =
+      context.hookKey === SUGGEST_NEW_MEMOS_HOOK_KEY
+        ? {
+            suggested_work_items: [
+              {
+                title: `${title} acceptance criteria`,
+                body: `Define acceptance criteria, failure modes, and owner review notes for: ${context.workItem.body.trim()}`,
+                tags: ["acceptance-criteria", "ai-suggestion"],
+                rationale: "Acceptance criteria make the captured idea easier to review and export."
+              }
+            ]
+          }
+        : {
+            expanded_work_item: {
+              title: title.endsWith("expanded") ? title : `${title} expanded`,
+              body: [
+                context.workItem.body.trim(),
+                "",
+                `Expansion focus: clarify the user value, evidence, edge cases, and next review questions for ${projectPrefix}.`
+              ]
+                .filter((part) => part !== "")
+                .join("\n"),
+              tags: ["ai-expanded", normalizeTag(projectPrefix)]
+            }
+          };
     return {
-      rawText: JSON.stringify(expanded),
-      parsed: expanded,
+      rawText: JSON.stringify(output),
+      parsed: output,
       providerName: "local-dev",
       modelName: this.modelName,
       latencyMs: Date.now() - startedAt

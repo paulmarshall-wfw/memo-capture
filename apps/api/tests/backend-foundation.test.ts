@@ -82,6 +82,7 @@ test("settings summary separates provider catalog from task-owned prompts and ca
     "suggest-tags"
   ]);
   assert.equal(summary.registeredTaskHooks.find((hook) => hook.hookKey === "memo-expansion")?.implemented, true);
+  assert.equal(summary.registeredTaskHooks.find((hook) => hook.hookKey === "suggest-new-memos")?.implemented, true);
   assert.equal(
     summary.registeredTaskHooks.find((hook) => hook.hookKey === "custom-summary")?.status,
     "default_noop"
@@ -142,7 +143,7 @@ test("AI task creation derives task key and reports duplicate derived key confli
   );
   assert.deepEqual(createdPromptVersion?.context_config, {
     freeformText: "Summarize this memo as strict JSON.",
-    systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
+    systemMessage: 'Return only strict JSON matching this shape: { "expanded_work_item": { "title": "string", "body": "string", "tags": ["string"] } }. Do not include prose outside JSON.',
     includeProjectSynopsis: false,
     includeMemoMetadata: true,
     includeMemoTranscriptText: false
@@ -541,7 +542,7 @@ test("direct prompt updates preserve the current system message when omitted", a
   const services = createAppServicesFromDatabase(config, db);
   const session = await services.auth.createLocalDevSession();
 
-  const prompt = await services.settings.updateCurrentPrompt(
+  const prompt = (await services.settings.updateCurrentPrompt(
     "prompt-work-item-expansion",
     {
       freeformText: "Return strict JSON with a direct prompt update.",
@@ -552,13 +553,13 @@ test("direct prompt updates preserve the current system message when omitted", a
     },
     session.user,
     "request-update-current-prompt-without-system-message"
-  );
+  )) as { prompt: { activeVersion: number } };
 
   assert.equal(prompt.prompt.activeVersion, 1);
   const promptVersion = db.promptVersions.find((row) => row.prompt_definition_id === "prompt-work-item-expansion");
   assert.deepEqual(promptVersion?.context_config, {
     freeformText: "Return strict JSON with a direct prompt update.",
-    systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
+    systemMessage: 'Return only strict JSON matching this shape: { "expanded_work_item": { "title": "string", "body": "string", "tags": ["string"] } }. Do not include prose outside JSON.',
     includeProjectSynopsis: true,
     includeMemoMetadata: false,
     includeMemoTranscriptText: true
@@ -1961,7 +1962,9 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     );
     assert.equal(taskRunExpansion.response.status, 200);
     assert.equal(taskRunExpansion.body.modelName, "memo-capture-detail-expander-v2");
+    assert.equal(taskRunExpansion.body.taskResultType, "expanded_memo");
     assert.equal(taskRunExpansion.body.expandedWorkItem.title, "Captured memo updated expanded");
+    assert.deepEqual(taskRunExpansion.body.suggestions, []);
 
     const aiExpansion = await authedJson(baseUrl, "/api/work-items/work-item-1/ai-expansions", {
       method: "POST",
@@ -1969,7 +1972,41 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     });
     assert.equal(aiExpansion.response.status, 200);
     assert.equal(aiExpansion.body.expandedWorkItem.title, "Captured memo updated expanded");
-    assert.equal(aiExpansion.body.suggestions[0].status, "pending");
+    assert.deepEqual(aiExpansion.body.suggestions, []);
+
+    const suggestWorkItemsTask = await authedJson(baseUrl, "/api/settings/ai-tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        displayName: "Suggest new work items",
+        hookKey: "suggest-new-memos",
+        renderLocation: "work_item_detail",
+        displayOrder: 6,
+        providerConfigId: "provider-local-dev",
+        modelName: "memo-capture-detail-expander-v2",
+        enabled: true
+      })
+    });
+    assert.equal(suggestWorkItemsTask.response.status, 200);
+    assert.equal(suggestWorkItemsTask.body.aiTask.hookImplemented, true);
+
+    const suggestedWorkItems = await authedJson(
+      baseUrl,
+      `/api/work-items/work-item-1/tasks/${suggestWorkItemsTask.body.aiTask.id}/run`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    );
+    assert.equal(suggestedWorkItems.response.status, 200);
+    assert.equal(suggestedWorkItems.body.taskResultType, "suggested_work_items");
+    assert.equal(suggestedWorkItems.body.suggestedWorkItems[0].parentWorkItemId, "work-item-1");
+
+    const acceptedEphemeralSuggestion = await authedJson(baseUrl, "/api/work-items/work-item-1/suggested-work-items/accept", {
+      method: "POST",
+      body: JSON.stringify({ candidate: suggestedWorkItems.body.suggestedWorkItems[0] })
+    });
+    assert.equal(acceptedEphemeralSuggestion.response.status, 200);
+    assert.equal(acceptedEphemeralSuggestion.body.workItem.workflowState, "memo");
 
     const aiSuggestions = await authedJson(baseUrl, "/api/work-items/work-item-1/ai-suggestions");
     assert.equal(aiSuggestions.response.status, 200);
@@ -2301,7 +2338,7 @@ function captureRouteServices(): AppServices {
   let promptActiveVersion = 1;
   let promptContextConfig = {
     freeformText: "Return strict JSON.",
-    systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
+    systemMessage: 'Return only strict JSON matching this shape: { "expanded_work_item": { "title": "string", "body": "string", "tags": ["string"] } }. Do not include prose outside JSON.',
     includeProjectSynopsis: true,
     includeMemoMetadata: true,
     includeMemoTranscriptText: true
@@ -2317,25 +2354,65 @@ function captureRouteServices(): AppServices {
           body: `${workItem.body}\n\nExpansion focus: clarify value.`,
           tags: ["ai-expanded"]
         },
-        suggestions: [suggestionOne],
+        suggestions: [],
         providerName: "local-dev",
         modelName: "memo-capture-local-dev-expander-v1",
         validation: { ok: true, strictJson: true }
       }),
-      runWorkItemTask: async (_workItemId: string, taskDefinitionId: string) => ({
-        expandedWorkItem: {
-          title: `${workItem.title} expanded`,
-          body: `${workItem.body}\n\nExpansion focus: clarify value.`,
-          tags: ["ai-expanded"]
-        },
-        suggestions: [suggestionOne],
-        providerName: "local-dev",
-        modelName:
-          taskDefinitionId === "task-detail-expansion"
-            ? "memo-capture-detail-expander-v2"
-            : "memo-capture-local-dev-expander-v1",
-        validation: { ok: true, strictJson: true }
-      }),
+      runWorkItemTask: async (_workItemId: string, taskDefinitionId: string) =>
+        taskDefinitionId === "task-custom-summary"
+          ? {
+              taskResultType: "suggested_work_items" as const,
+              expandedWorkItem: null,
+              suggestedWorkItems: [
+                {
+                  id: "ephemeral-suggestion-1",
+                  parentWorkItemId: "work-item-1",
+                  taskDefinitionId,
+                  taskRunId: "job-ephemeral-1",
+                  title: suggestionOne.title,
+                  body: suggestionOne.body,
+                  tags: suggestionOne.tags,
+                  rationale: suggestionOne.rationale ?? "Suggested follow-up memo.",
+                  providerName: "local-dev",
+                  modelName: "memo-capture-detail-expander-v2"
+                }
+              ],
+              suggestions: [],
+              providerName: "local-dev",
+              modelName: "memo-capture-detail-expander-v2",
+              validation: { ok: true, strictJson: true }
+            }
+          : {
+              taskResultType: "expanded_memo" as const,
+              expandedWorkItem: {
+                title: `${workItem.title} expanded`,
+                body: `${workItem.body}\n\nExpansion focus: clarify value.`,
+                tags: ["ai-expanded"]
+              },
+              suggestedWorkItems: [],
+              suggestions: [],
+              providerName: "local-dev",
+              modelName:
+                taskDefinitionId === "task-detail-expansion"
+                  ? "memo-capture-detail-expander-v2"
+                  : "memo-capture-local-dev-expander-v1",
+              validation: { ok: true, strictJson: true }
+            },
+      acceptEphemeralSuggestedWorkItem: async (_parentWorkItemId: string, body: unknown) => {
+        const candidate = (body as { candidate: { title: string; body: string; tags: string[] } }).candidate;
+        return {
+          workItem: {
+            ...workItem,
+            id: "work-item-ai-ephemeral-1",
+            sourceMemoId: "source-memo-ai-ephemeral-1",
+            title: candidate.title,
+            body: candidate.body,
+            tags: candidate.tags,
+            workflowItemVersion: 1
+          }
+        };
+      },
       acceptSuggestion: async () => {
         const createdWorkItem = {
           ...workItem,
@@ -2861,11 +2938,11 @@ function captureRouteServices(): AppServices {
           hookKey: (body as { hookKey?: string }).hookKey ?? "custom-summary",
           renderLocation: (body as { renderLocation?: string }).renderLocation ?? "work_item_detail",
           displayOrder: (body as { displayOrder?: number }).displayOrder ?? 0,
-          hookImplemented: (body as { hookKey?: string }).hookKey === "memo-expansion",
+          hookImplemented: ["memo-expansion", "suggest-new-memos"].includes((body as { hookKey?: string }).hookKey ?? ""),
           routeEnabled: (body as { enabled?: boolean }).enabled ?? false,
           runtimeReady: (body as { enabled?: boolean }).enabled === true,
           unavailableReason:
-            (body as { hookKey?: string }).hookKey === "memo-expansion"
+            ["memo-expansion", "suggest-new-memos"].includes((body as { hookKey?: string }).hookKey ?? "")
               ? null
               : "No app logic is registered for this hook."
         }
@@ -4624,7 +4701,7 @@ function seedTaskSettings(db: FakeDatabase): void {
     output_schema: {},
     context_config: {
       freeformText: "Return strict JSON.",
-      systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
+      systemMessage: 'Return only strict JSON matching this shape: { "expanded_work_item": { "title": "string", "body": "string", "tags": ["string"] } }. Do not include prose outside JSON.',
       includeProjectSynopsis: true,
       includeMemoMetadata: true,
       includeMemoTranscriptText: true
