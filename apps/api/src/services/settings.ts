@@ -380,11 +380,23 @@ export class SettingsService {
             ? current.prompt_definition_id
             : null;
       if (promptsEnabled && promptDefinitionId !== null && input.promptUpdate !== undefined) {
+        const currentPrompt = await settings.getPromptById(promptDefinitionId);
+        if (currentPrompt === null) {
+          throw new HttpError(404, "not_found", "prompt_definition was not found.");
+        }
+        const currentPromptContext = normalizePromptContextConfig(
+          currentPrompt.active_context_config,
+          currentPrompt.active_body
+        );
         await settings.updateCurrentPrompt({
           promptDefinitionId,
           body: input.promptUpdate.body,
           outputSchema: input.promptUpdate.outputSchema,
-          contextConfig: input.promptUpdate.contextConfig,
+          contextConfig: {
+            ...currentPromptContext,
+            ...input.promptUpdate.contextConfig,
+            freeformText: input.promptUpdate.contextConfig.freeformText
+          },
           actorUserId: actor.id
         });
       }
@@ -881,10 +893,14 @@ export class SettingsService {
     actor: AppUserRecord,
     requestId: string
   ): Promise<Record<string, unknown>> {
-    const input = parsePromptVersionBody(body);
     return this.db.transaction(async (client) => {
       const settings = new SettingsRepository(client);
       const audit = new AuditRepository(client);
+      const currentPrompt = await settings.getPromptById(promptDefinitionId);
+      if (currentPrompt === null) {
+        throw new HttpError(404, "not_found", "prompt_definition was not found.");
+      }
+      const input = parsePromptVersionBody(body, getPromptSystemMessageFallback(currentPrompt));
       const prompt = await settings.createPromptVersion({
         promptDefinitionId,
         body: input.body,
@@ -926,10 +942,14 @@ export class SettingsService {
     actor: AppUserRecord,
     requestId: string
   ): Promise<Record<string, unknown>> {
-    const input = parsePromptVersionBody(body);
     return this.db.transaction(async (client) => {
       const settings = new SettingsRepository(client);
       const audit = new AuditRepository(client);
+      const currentPrompt = await settings.getPromptById(promptDefinitionId);
+      if (currentPrompt === null) {
+        throw new HttpError(404, "not_found", "prompt_definition was not found.");
+      }
+      const input = parsePromptVersionBody(body, getPromptSystemMessageFallback(currentPrompt));
       const prompt = await settings.updateCurrentPrompt({
         promptDefinitionId,
         body: input.body,
@@ -1586,7 +1606,7 @@ function parseUpdateAiTaskBody(body: unknown) {
       record.initialSystemMessage === undefined
         ? undefined
         : assertString(record.initialSystemMessage, "initialSystemMessage"),
-    promptUpdate: promptFieldsPresent ? parsePromptVersionBody(record) : undefined,
+    promptUpdate: promptFieldsPresent ? parsePromptVersionBody(record, DEFAULT_LLM_SYSTEM_MESSAGE, true) : undefined,
     ...route
   };
 }
@@ -1843,7 +1863,11 @@ async function validateMediaParserSelection(
   }
 }
 
-function parsePromptVersionBody(body: unknown) {
+function parsePromptVersionBody(
+  body: unknown,
+  fallbackSystemMessage = DEFAULT_LLM_SYSTEM_MESSAGE,
+  preserveMissingSystemMessage = false
+) {
   const record = parseObject(body);
   const outputSchema = record.outputSchema ?? {};
   if (outputSchema === null || typeof outputSchema !== "object" || Array.isArray(outputSchema)) {
@@ -1855,11 +1879,13 @@ function parsePromptVersionBody(body: unknown) {
       : assertNonEmptyString(record.freeformText, "freeformText");
   const systemMessage =
     record.systemMessage === undefined
-      ? DEFAULT_LLM_SYSTEM_MESSAGE
+      ? preserveMissingSystemMessage
+        ? undefined
+        : fallbackSystemMessage
       : assertString(record.systemMessage, "systemMessage");
   const contextConfig = {
     freeformText,
-    systemMessage,
+    ...(systemMessage === undefined ? {} : { systemMessage }),
     includeProjectSynopsis: parsePromptToggle(record.includeProjectSynopsis, "includeProjectSynopsis"),
     includeMemoMetadata: parsePromptToggle(record.includeMemoMetadata, "includeMemoMetadata"),
     includeMemoTranscriptText: parsePromptToggle(record.includeMemoTranscriptText, "includeMemoTranscriptText")
@@ -1886,6 +1912,10 @@ function assertString(value: unknown, field: string): string {
     throw new HttpError(400, "invalid_request", `${field} must be a string.`);
   }
   return value;
+}
+
+function getPromptSystemMessageFallback(prompt: PromptDefinitionRow): string {
+  return normalizePromptContextConfig(prompt.active_context_config, prompt.active_body).systemMessage;
 }
 
 function parseThreshold(value: unknown, field: string): number {

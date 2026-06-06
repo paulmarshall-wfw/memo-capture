@@ -493,6 +493,33 @@ test("AI task updates save prompt fields and task definitions can be deleted", a
     includeMemoTranscriptText: true
   });
 
+  await services.settings.updateAiTaskDefinition(
+    "task-memo-expansion",
+    {
+      displayName: "Memo expansion",
+      hookKey: "memo-expansion",
+      providerConfigId: "provider-local-dev",
+      modelName: "memo-capture-local-dev-expander-v1",
+      promptsEnabled: true,
+      freeformText: "Return strict JSON with preserved system instructions.",
+      includeProjectSynopsis: true,
+      includeMemoMetadata: true,
+      includeMemoTranscriptText: false,
+      outputSchema: {},
+      enabled: true
+    },
+    session.user,
+    "request-update-task-without-system-message"
+  );
+
+  assert.deepEqual(promptVersion?.context_config, {
+    freeformText: "Return strict JSON with preserved system instructions.",
+    systemMessage: "Use the task-owned system message.",
+    includeProjectSynopsis: true,
+    includeMemoMetadata: true,
+    includeMemoTranscriptText: false
+  });
+
   const deleted = await services.settings.deleteAiTaskDefinition(
     "task-custom",
     session.user,
@@ -502,6 +529,40 @@ test("AI task updates save prompt fields and task definitions can be deleted", a
   assert.deepEqual(deleted, { deleted: true, taskId: "task-custom" });
   assert.equal(db.aiTaskDefinitions.some((row) => row.id === "task-custom"), false);
   assert.equal(db.aiTaskRoutes.some((row) => row.task_definition_id === "task-custom"), false);
+});
+
+test("direct prompt updates preserve the current system message when omitted", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  const prompt = await services.settings.updateCurrentPrompt(
+    "prompt-work-item-expansion",
+    {
+      freeformText: "Return strict JSON with a direct prompt update.",
+      includeProjectSynopsis: true,
+      includeMemoMetadata: false,
+      includeMemoTranscriptText: true,
+      outputSchema: {}
+    },
+    session.user,
+    "request-update-current-prompt-without-system-message"
+  );
+
+  assert.equal(prompt.prompt.activeVersion, 1);
+  const promptVersion = db.promptVersions.find((row) => row.prompt_definition_id === "prompt-work-item-expansion");
+  assert.deepEqual(promptVersion?.context_config, {
+    freeformText: "Return strict JSON with a direct prompt update.",
+    systemMessage: "Return strict JSON for expanded_work_item and related_suggestions. Do not include prose outside JSON.",
+    includeProjectSynopsis: true,
+    includeMemoMetadata: false,
+    includeMemoTranscriptText: true
+  });
 });
 
 test("form memo service creates source memo, work item, import event, and audit rows", async () => {
