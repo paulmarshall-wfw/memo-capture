@@ -354,3 +354,8 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Added migration `0031` to make the obsolete accepted-snapshot `legacy_snapshot_kind` column nullable, added a real Postgres regression test for `memo.accepted`, applied the local dev migration, verified the live Accept endpoint, and rebuilt the native `.app` bundle.
   Verification: `npm run test:postgres`, `npm run db:migrate`, live `memo.accepted` API smoke with cleanup, `npm run typecheck`, `git diff --check`, and `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed.
   Traceability: branch `main`, base HEAD `038ed72`; changed files include `apps/api/db/migrations/0031_nullable_accepted_snapshot_legacy_kind.sql`, `apps/api/tests/postgres/integration.test.ts`, and `docs/completed-tasks.md`.
+
+- Task: Harden workflow definition enforcement
+  Outcome: Made the backend public action surface enforce visible no-input user actions, rejected hidden and automatic direct-post actions, added phase-aware hook validation for the V1 hook matrix, rejected unsupported input-required actions, and documented the hardened workflow contract.
+  Verification: `npm run verify`, `npm run typecheck`, focused workflow runtime/service tests, `git diff --check`, and `npm run tauri:build -w @memo-capture/desktop -- --bundles app` passed.
+  Traceability: branch `main`, HEAD `1f574e1`; changed files include `apps/api/src/services/workflow-runtime.ts`, `apps/api/tests/backend-foundation.test.ts`, `apps/api/tests/workflow-runtime.test.ts`, `docs/specs/workflow-runtime-integration.md`, and native build output at `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`.
