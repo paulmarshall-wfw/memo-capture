@@ -19,6 +19,19 @@ const logPath = path.join(root, ".memo-capture/native-launch.log");
 const children = new Set();
 let shuttingDown = false;
 
+function openAiCompatibleApiKey() {
+  if ((process.env.OPENAI_COMPATIBLE_API_KEY ?? "").trim() !== "") {
+    return process.env.OPENAI_COMPATIBLE_API_KEY;
+  }
+  if (
+    process.env.LLM_PROVIDER === "openai-compatible" &&
+    process.env.LLM_ENDPOINT === "http://127.0.0.1:1234/v1"
+  ) {
+    return "lm-studio";
+  }
+  return "";
+}
+
 const baseEnv = {
   ...process.env,
   PATH: [
@@ -48,6 +61,7 @@ const baseEnv = {
   MEMO_CAPTURE_LOCAL_DEV_AUTH_DISPLAY_NAME: "Local Dev User",
   LLM_PROVIDER: process.env.LLM_PROVIDER ?? "disabled",
   LLM_MODEL: process.env.LLM_MODEL ?? "memo-capture-local-dev-expander-v1",
+  OPENAI_COMPATIBLE_API_KEY: openAiCompatibleApiKey(),
   TRANSCRIPTION_PROVIDER: "whisper-cpp",
   TRANSCRIPTION_MODEL: "base.en",
   WHISPER_CPP_MODE: "cli",
