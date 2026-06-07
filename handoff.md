@@ -4,20 +4,17 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-06T22:50:15Z
+- Created timestamp UTC: 2026-06-06T22:55:10Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: wire local LM Studio into Memo Capture through the existing OpenAI-compatible LLM runtime path.
+- Session scope: wire and validate local LM Studio through Memo Capture's existing OpenAI-compatible LLM runtime path.
 
 ### Checkpoint Status
 
-- Git HEAD: `b9c94c3`
+- Git HEAD: `64a09d0`
 - Working tree: dirty
 - Dirty tracked files intentionally in scope:
-  - `.env.example`
-  - `apps/desktop/tests/app-copy.test.ts`
-  - `docs/env.md`
   - `docs/completed-tasks.md`
   - `handoff.md`
 - Generated/ignored artifacts intentionally updated:
@@ -28,10 +25,10 @@
   - `~/Library/Application Support/AppLauncher/manifests/memo-capture/0.1.0/manifest.json`
   - `~/Library/Application Support/AppLauncher/manifests/memo-capture-native/0.1.0/manifest.json`
 - Local database state intentionally updated:
-  - `provider_configs` row `llm/openai-compatible` is enabled, displayed as `LM Studio`, points at `http://127.0.0.1:1234/v1`, uses model `qwen/qwen3-coder-next`, requires `OPENAI_COMPATIBLE_API_KEY`, and has `external_send_enabled=false`.
+  - `provider_configs` row `llm/openai-compatible` is enabled, displayed as `LM Studio`, points at `http://127.0.0.1:1234/v1`, uses model `openai/gpt-oss-20b`, requires `OPENAI_COMPATIBLE_API_KEY`, and has `external_send_enabled=false`.
   - `ai_task_routes` for `memo-expansion` and `suggest-new-memos` route to that provider and model.
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: app-side wiring, manifests, docs, local DB routing, and runtime readiness have been verified; end-to-end generation is blocked by LM Studio model loading, not by Memo Capture routing.
+- Safe-to-continue basis: app-side wiring, manifests, local DB routing, and runtime readiness were committed at `64a09d0`; the current working tree adds the OpenAI-compatible `json_schema` adapter patch and has passed real LM Studio task smoke tests with `openai/gpt-oss-20b`.
 
 ## 2. Executive Summary
 
@@ -42,22 +39,16 @@ Complete now:
 - AppLauncher web and native manifests include a new explicit `LM Studio` option under existing `llm-runtime`.
 - The option injects:
   - `LLM_PROVIDER=openai-compatible`
-  - `LLM_MODEL=qwen/qwen3-coder-next`
+  - `LLM_MODEL=openai/gpt-oss-20b`
   - `LLM_ENDPOINT=http://127.0.0.1:1234/v1`
 - Secrets remain outside manifests. Runtime launch used `OPENAI_COMPATIBLE_API_KEY=lm-studio` as the local dummy value.
-- The live local `memo_capture` database routes `expand memo` and `suggest memos` to the OpenAI-compatible provider row configured for LM Studio.
-- The native dev stack was relaunched with LM Studio env values, and `/api/settings` reports both implemented AI tasks as `runtimeReady: true`.
-
-Blocked outside the app:
-
-- LM Studio currently exposes models at `/v1/models`, but none of the listed chat models loaded successfully during smoke testing.
-- `qwen/qwen3-coder-next` failed on LM Studio resource guardrails.
-- `nvidia/nemotron-3-nano` and `qwen/qwen3-vl-30b` failed because LM Studio's local MLX backend could not find `libpython3.11.dylib`.
-- A work-item task API smoke reached the provider path and failed with `OpenAI-compatible provider returned HTTP 400`, matching LM Studio's model-load failure.
+- The live local `memo_capture` database routes `expand memo` and `suggest memos` to the OpenAI-compatible provider row configured for LM Studio and `openai/gpt-oss-20b`.
+- The API was relaunched with LM Studio env values, and both implemented work-item AI task smokes returned `validation.ok: true`.
+- The OpenAI-compatible adapter now sends task-specific `json_schema` response formats. LM Studio rejected the older `json_object` format.
 
 ## 3. Current Objective
 
-Immediate goal: finish validating LM Studio once a chat model can load.
+Immediate goal: continue using the validated LM Studio route in normal app testing and tune prompts/model choice if output quality is not acceptable.
 
 Definition of done for the app-side work:
 
@@ -65,35 +56,28 @@ Definition of done for the app-side work:
 - Provider/task settings route to the existing OpenAI-compatible adapter.
 - Runtime readiness is green when launched with LM Studio env.
 - Provider invocation reaches LM Studio.
-
-Remaining acceptance item:
-
-- Load a working chat/completions model in LM Studio and rerun the work-item task smoke until it returns valid structured JSON.
+- Real work-item task smoke returns valid structured JSON for both `expand memo` and `suggest memos`.
 
 ## 4. Current State
 
 ### Working
 
-- `GET http://127.0.0.1:1234/v1/models` reaches LM Studio and returns:
-  - `qwen/qwen3-coder-next`
-  - `qwen/qwen3-vl-30b`
-  - `nvidia/nemotron-3-nano`
-  - `text-embedding-nomic-embed-text-v1.5`
+- `GET http://127.0.0.1:1234/v1/models` reaches LM Studio and includes `openai/gpt-oss-20b`.
 - Memo Capture API runtime after relaunch:
   - provider: `openai-compatible`
-  - model: `qwen/qwen3-coder-next`
+  - model: `openai/gpt-oss-20b`
   - endpoint configured: `true`
 - Both implemented work-item AI tasks are runtime-ready:
   - `expand memo`
   - `suggest memos`
 - Installed AppLauncher manifests validate with zero errors and warnings.
-- Native Memo Capture app is currently running from:
+- Native Memo Capture app bundle exists at:
   - `apps/desktop/src-tauri/target/release/bundle/macos/Memo Capture.app`
 
-### Not Working Yet
+### Known Caveats
 
-- End-to-end AI generation cannot complete until LM Studio can load a chat model.
-- The currently selected `qwen/qwen3-coder-next` model is exposed by LM Studio but failed to load due resource guardrails.
+- `openai/gpt-oss-20b` returns structurally valid JSON through the app path, but output quality still needs normal product review and prompt/model tuning.
+- `qwen/qwen3-coder-next` is no longer the selected local runtime because LM Studio resource guardrails stopped it from loading on this machine.
 
 ### Not Yet Done
 
@@ -126,7 +110,7 @@ Runtime checks performed:
 
 ```bash
 curl -sS --max-time 5 http://127.0.0.1:1234/v1/models
-LLM_PROVIDER=openai-compatible LLM_MODEL="qwen/qwen3-coder-next" LLM_ENDPOINT="http://127.0.0.1:1234/v1" OPENAI_COMPATIBLE_API_KEY=lm-studio node scripts/applauncher-native-dev.mjs
+LLM_PROVIDER=openai-compatible LLM_MODEL="openai/gpt-oss-20b" LLM_ENDPOINT="http://127.0.0.1:1234/v1" OPENAI_COMPATIBLE_API_KEY=lm-studio npm run dev:api
 ```
 
 Live API readiness after relaunch:
@@ -134,17 +118,19 @@ Live API readiness after relaunch:
 - `/api/settings` showed `llmRuntime.provider = "openai-compatible"`.
 - `/api/settings` showed both implemented AI tasks with `runtimeReady: true`.
 
-Expected failing smoke until LM Studio is fixed:
+Passing smoke after the adapter patch:
 
 ```bash
 POST /api/work-items/{workItemId}/tasks/{memoExpansionTaskId}/run
+POST /api/work-items/{workItemId}/tasks/{suggestMemosTaskId}/run
 ```
 
 Observed result:
 
-- HTTP `502` from Memo Capture.
-- Error: `llm_provider_failed`, `OpenAI-compatible provider returned HTTP 400`.
-- Direct LM Studio probes showed model-load failures.
+- HTTP `200`.
+- `providerName: "openai-compatible"`.
+- `modelName: "openai/gpt-oss-20b"`.
+- `validation.ok: true`.
 
 ## 7. Files to Open First
 
@@ -152,7 +138,7 @@ Observed result:
 - `.env.example`: non-secret env template and local LM Studio example.
 - `dist/applauncher-manifests/memo-capture/0.1.0/manifest.json`: generated web manifest artifact.
 - `dist/applauncher-manifests/memo-capture-native/0.1.0/manifest.json`: generated native manifest artifact.
-- `apps/api/src/services/llm.ts`: OpenAI-compatible adapter and JSON response handling.
+- `apps/api/src/services/llm.ts`: OpenAI-compatible adapter, task-specific `json_schema` response format, and JSON response handling.
 - `apps/api/src/services/ai-expansion.ts`: task/provider readiness and invocation path.
 - `apps/desktop/tests/app-copy.test.ts`: manifest/runtime option assertions.
 
@@ -160,19 +146,18 @@ Observed result:
 
 Next:
 
-- Fix LM Studio so at least one chat/completions model loads successfully.
-- If using a different model, update the local provider row, AI task route model, and AppLauncher `lm-studio` runtime option model from `qwen/qwen3-coder-next` to that model ID.
-- Relaunch Memo Capture with:
+- Use the validated `openai/gpt-oss-20b` route for app testing, or select a different LM Studio model and update the local provider row, AI task route model, and AppLauncher `lm-studio` runtime option model to that model ID.
+- Relaunch Memo Capture API with:
 
 ```bash
 LLM_PROVIDER=openai-compatible \
-LLM_MODEL="<working-lm-studio-model-id>" \
+LLM_MODEL="openai/gpt-oss-20b" \
 LLM_ENDPOINT="http://127.0.0.1:1234/v1" \
 OPENAI_COMPATIBLE_API_KEY=lm-studio \
-node scripts/applauncher-native-dev.mjs
+npm run dev:api
 ```
 
-- Rerun the work-item task smoke and confirm it returns valid structured JSON.
+- Rerun the work-item task smoke after prompt/model changes and confirm it returns valid structured JSON.
 
 Before committing:
 
@@ -186,4 +171,4 @@ node --test apps/desktop/tests/app-copy.test.ts
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `b9c94c3` with tracked dirty files `.env.example`, `apps/desktop/tests/app-copy.test.ts`, `docs/env.md`, `docs/completed-tasks.md`, and `handoff.md`, plus generated/installed AppLauncher manifest artifacts for Memo Capture updated outside Git tracking. The app-side LM Studio wiring is complete through the existing `openai-compatible` provider: AppLauncher has an explicit `lm-studio` runtime option, the local DB routes `memo-expansion` and `suggest-new-memos` to the LM Studio-backed provider row, and `/api/settings` reports both tasks `runtimeReady: true` when launched with the LM Studio env. The remaining blocker is external to Memo Capture: LM Studio exposes models but no tested chat model currently loads. Fix or select a working LM Studio chat model, update the configured model ID if needed, relaunch, then rerun the work-item task smoke.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `64a09d0` with app-code changes in `apps/api/src/services/llm.ts`, `apps/api/src/services/ai-expansion.ts`, and `apps/api/tests/llm-prompt.test.ts`, plus continuity docs dirty after this refresh. The app-side LM Studio wiring is complete through the existing `openai-compatible` provider: the local DB routes `memo-expansion` and `suggest-new-memos` to the LM Studio-backed provider row using `openai/gpt-oss-20b`, and `/api/settings` reports both tasks `runtimeReady: true` when launched with `LLM_PROVIDER=openai-compatible`, `LLM_MODEL=openai/gpt-oss-20b`, `LLM_ENDPOINT=http://127.0.0.1:1234/v1`, and `OPENAI_COMPATIBLE_API_KEY=lm-studio`. The OpenAI-compatible adapter now sends task-specific `json_schema` response formats, and real work-item task smokes for `expand memo` and `suggest memos` returned HTTP 200 with `validation.ok: true`.

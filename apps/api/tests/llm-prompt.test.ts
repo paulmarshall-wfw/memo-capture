@@ -62,7 +62,7 @@ test("disabled LLM runtime reports the Settings/runtime mismatch", () => {
   );
 });
 
-test("OpenAI-compatible provider sends configured system message", async () => {
+test("OpenAI-compatible provider sends configured system message and JSON schema response format", async () => {
   const context: WorkItemExpansionContext = {
     hookKey: "memo-expansion",
     prompt: {
@@ -132,6 +132,134 @@ test("OpenAI-compatible provider sends configured system message", async () => {
     { role: "system", content: "Return only reviewed JSON." },
     { role: "user", content: "Lead with this operator guidance.\n\nMemo text:\nExisting work item text." }
   ]);
+  assert.deepEqual((capturedBody as { response_format: unknown }).response_format, {
+    type: "json_schema",
+    json_schema: {
+      name: "memo_capture_expanded_work_item",
+      strict: true,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["expanded_work_item"],
+        properties: {
+          expanded_work_item: {
+            type: "object",
+            additionalProperties: false,
+            required: ["title", "body", "tags"],
+            properties: {
+              title: { type: "string" },
+              body: { type: "string" },
+              tags: {
+                type: "array",
+                items: { type: "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+});
+
+test("OpenAI-compatible provider sends suggested-work-items JSON schema for suggestion tasks", async () => {
+  const context: WorkItemExpansionContext = {
+    hookKey: "suggest-new-memos",
+    prompt: {
+      name: "suggest_new_memos",
+      version: 1,
+      body: "Suggest follow-up memos.",
+      contextConfig: {
+        freeformText: "Suggest follow-up memos.",
+        systemMessage: "Return only suggestion JSON.",
+        includeProjectSynopsis: false,
+        includeMemoMetadata: true,
+        includeMemoTranscriptText: true
+      }
+    },
+    project: {
+      id: null,
+      name: null,
+      description: null
+    },
+    workItem: {
+      id: "work-item-1",
+      title: "Voice memo follow-up",
+      body: "Existing work item text.",
+      tags: [],
+      contributorText: null
+    },
+    sourceMemo: null
+  };
+  let capturedBody: unknown = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url, init) => {
+    capturedBody = JSON.parse(String(init?.body ?? "{}")) as unknown;
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                suggested_work_items: [
+                  { title: "Follow-up", body: "Body", tags: [], rationale: "Useful next memo." }
+                ],
+              })
+            }
+          }
+        ]
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  }) as typeof fetch;
+
+  try {
+    const provider = createLlmProvider(
+      {
+        provider: "openai-compatible",
+        modelName: "model-a",
+        endpoint: "https://llm.example.test/v1",
+        openAiCompatibleApiKey: "test-key"
+      },
+      "openai-compatible",
+      "model-a"
+    );
+
+    await provider.generateWorkItemExpansion(context);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.deepEqual((capturedBody as { response_format: unknown }).response_format, {
+    type: "json_schema",
+    json_schema: {
+      name: "memo_capture_suggested_work_items",
+      strict: true,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["suggested_work_items"],
+        properties: {
+          suggested_work_items: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["title", "body", "tags", "rationale"],
+              properties: {
+                title: { type: "string" },
+                body: { type: "string" },
+                tags: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                rationale: { type: "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
 });
 
 test("local-dev provider output does not echo prompt focus into memo body", async () => {

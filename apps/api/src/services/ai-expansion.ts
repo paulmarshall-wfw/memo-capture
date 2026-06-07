@@ -813,7 +813,7 @@ function validateSuggestedWorkItemsOutput(output: unknown):
       }
     });
   }
-  if (suggestedWorkItems.length === 0 || errors.length > 0) {
+  if (errors.length > 0) {
     return { ok: false, errors };
   }
   return { ok: true, value: { suggestedWorkItems } };

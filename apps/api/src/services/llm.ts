@@ -64,6 +64,15 @@ export interface LlmStructuredOutput {
   latencyMs: number;
 }
 
+interface JsonSchemaResponseFormat {
+  type: "json_schema";
+  json_schema: {
+    name: string;
+    strict: true;
+    schema: Record<string, unknown>;
+  };
+}
+
 export interface LlmProvider {
   generateWorkItemExpansion(context: WorkItemExpansionContext): Promise<LlmStructuredOutput>;
 }
@@ -247,7 +256,7 @@ class OpenAiCompatibleLlmProvider implements LlmProvider {
       },
       body: JSON.stringify({
         model: this.options.modelName,
-        response_format: { type: "json_object" },
+        response_format: buildStructuredResponseFormat(context.hookKey),
         messages
       })
     });
@@ -279,6 +288,70 @@ class OpenAiCompatibleLlmProvider implements LlmProvider {
       latencyMs: Date.now() - startedAt
     };
   }
+}
+
+function buildStructuredResponseFormat(hookKey: string): JsonSchemaResponseFormat {
+  if (hookKey === SUGGEST_NEW_MEMOS_HOOK_KEY) {
+    return {
+      type: "json_schema",
+      json_schema: {
+        name: "memo_capture_suggested_work_items",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["suggested_work_items"],
+          properties: {
+            suggested_work_items: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["title", "body", "tags", "rationale"],
+                properties: {
+                  title: { type: "string" },
+                  body: { type: "string" },
+                  tags: {
+                    type: "array",
+                    items: { type: "string" }
+                  },
+                  rationale: { type: "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+  }
+
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "memo_capture_expanded_work_item",
+      strict: true,
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["expanded_work_item"],
+        properties: {
+          expanded_work_item: {
+            type: "object",
+            additionalProperties: false,
+            required: ["title", "body", "tags"],
+            properties: {
+              title: { type: "string" },
+              body: { type: "string" },
+              tags: {
+                type: "array",
+                items: { type: "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  };
 }
 
 function normalizeTag(value: string): string {
