@@ -148,6 +148,20 @@ test("watched imports use filesystem creation time before modified time", () => 
   assert.doesNotMatch(appSource, /parseTimestampPrefixedFilename/);
 });
 
+test("desktop supports photo watched-folder intake and create-memo selection", () => {
+  const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+
+  assert.match(appSource, /photosBucketId = "photos"/);
+  assert.match(appSource, /watched_photo_file/);
+  assert.match(appSource, /fileType\?\.mediaKind === "image"/);
+  assert.match(appSource, /\/api\/photo-imports/);
+  assert.match(appSource, /\/api\/photo-imports\/create-memo/);
+  assert.match(appSource, /selectedPhotoImportIds/);
+  assert.match(appSource, /Create Memo/);
+  assert.match(appSource, /optimisticPhotoImports/);
+  assert.match(appSource, /formatPhotoCount\(selectedAvailablePhotoCount\)/);
+});
+
 test("workflow row actions surface confirmation and draft-blocked state in app UI", () => {
   const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
 

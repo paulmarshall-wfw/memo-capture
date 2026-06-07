@@ -9,6 +9,7 @@ import {
   type ImportUploadSessionRecord
 } from "../repositories/import-upload-sessions.js";
 import { ProcessingJobRepository } from "../repositories/jobs.js";
+import { PhotoImportRepository } from "../repositories/photo-imports.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import {
   ImportEventRepository,
@@ -414,6 +415,122 @@ async function finalizeWatchedAudioImport(input: {
   };
 }
 
+async function finalizeWatchedPhotoImport(input: {
+  client: Queryable;
+  objectStorage: ObjectStorageService;
+  session: ImportUploadSessionRecord;
+  fileType?: FileTypeSettingRow;
+  actor: AppUserRecord;
+  requestId: string;
+  archivePlanned: boolean;
+}): Promise<FinalizeUploadSessionResponse> {
+  const session = input.session;
+  if (
+    session === null ||
+    session.objectKey === null ||
+    session.bucket === null ||
+    session.artifactId === null ||
+    session.reservedSourceMemoId === null
+  ) {
+    throw new Error("Invalid upload session state.");
+  }
+
+  const artifacts = new ArtifactRepository(input.client);
+  const sourceMemos = new SourceMemoRepository(input.client);
+  const sourceMemoArtifacts = new SourceMemoArtifactRepository(input.client);
+  const importEvents = new ImportEventRepository(input.client);
+  const photoImports = new PhotoImportRepository(input.client);
+  const jobs = new ProcessingJobRepository(input.client);
+  const audit = new AuditRepository(input.client);
+  const contributor = await new ContributorRepository(input.client).findOrCreateForWatchedFolder({
+    contributorText: session.contributorText,
+    actorUserId: input.actor.id
+  });
+  const contributorText = contributor === null ? null : session.contributorText?.trim() ?? contributor.displayName;
+
+  await artifacts.create({
+    id: session.artifactId,
+    artifactKind: "original_photo_file",
+    objectKey: session.objectKey,
+    bucket: session.bucket,
+    originalFilename: session.originalFilename,
+    mimeType: session.mimeType,
+    byteSize: session.byteSize,
+    contentHash: session.contentHash,
+    layoutVersion: "v1",
+    createdBy: input.actor.id
+  });
+
+  const sourceMemo = await sourceMemos.create({
+    id: session.reservedSourceMemoId,
+    sourceType: session.sourceType,
+    primaryArtifactId: session.artifactId,
+    contentHash: session.contentHash,
+    originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
+    contributorText,
+    contributorId: contributor?.id ?? null,
+    createdBy: input.actor.id
+  });
+  await sourceMemoArtifacts.link({
+    sourceMemoId: sourceMemo.id,
+    artifactId: session.artifactId,
+    relationship: "primary_original"
+  });
+
+  const importEvent = await importEvents.create({
+    sourceMemoId: sourceMemo.id,
+    artifactId: session.artifactId,
+    machineId: session.machineId,
+    watchFolderId: session.watchFolderId,
+    originalPath: session.originalPath,
+    originalFileModifiedAt: session.originalFileModifiedAt,
+    contentHash: session.contentHash,
+    status: "imported"
+  });
+  await photoImports.create({
+    sourceMemoId: sourceMemo.id,
+    originalArtifactId: session.artifactId,
+    importEventId: importEvent.id,
+    originalFilename: session.originalFilename,
+    contentHash: session.contentHash,
+    contributorText,
+    contributorId: contributor?.id ?? null,
+    createdBy: input.actor.id
+  });
+  const preprocessJob = await jobs.create({
+    jobKind: "preprocess_photo",
+    sourceMemoId: sourceMemo.id,
+    workItemId: null,
+    maxAttempts: 2,
+    initiatedBy: input.actor.id
+  });
+  await new ImportUploadSessionRepository(input.client).markFinalized(session.id);
+  await audit.record({
+    eventName: "source_memo.created",
+    actor: input.actor,
+    subjectType: "source_memo",
+    subjectId: sourceMemo.id,
+    requestId: input.requestId,
+    sourceMemoId: sourceMemo.id,
+    metadata: {
+      sourceType: session.sourceType,
+      archivePlanned: input.archivePlanned,
+      importEventId: importEvent.id,
+      photoImportQueued: true
+    }
+  });
+
+  return {
+    sourceMemoId: sourceMemo.id,
+    workItemId: null,
+    artifactId: session.artifactId,
+    importEventId: importEvent.id,
+    initialWorkflowState: null,
+    processingJobs: [preprocessJob.id]
+  };
+}
+
 async function finalizeWatchedTextImport(input: {
   client: Queryable;
   objectStorage: ObjectStorageService;
@@ -680,7 +797,11 @@ function parseCreateUploadSessionRequest(body: unknown): CreateUploadSessionRequ
 
   const record = body as Record<string, unknown>;
   const sourceType = assertNonEmptyString(record.sourceType, "sourceType") as SourceMemoType;
-  if (sourceType !== "watched_text_file" && sourceType !== "watched_audio_file") {
+  if (
+    sourceType !== "watched_text_file" &&
+    sourceType !== "watched_audio_file" &&
+    sourceType !== "watched_photo_file"
+  ) {
     throw new HttpError(400, "invalid_request", "sourceType must be a watched file source type.");
   }
 
@@ -763,7 +884,12 @@ async function assertActiveWatchedFileType(
   const extension = extensionFromFilename(input.originalFilename);
   const settings = new SettingsRepository(db);
   const fileType = extension === null ? null : await settings.findFileTypeByExtension(extension);
-  const expectedMediaKind = input.sourceType === "watched_audio_file" ? "audio" : "text";
+  const expectedMediaKind =
+    input.sourceType === "watched_audio_file"
+      ? "audio"
+      : input.sourceType === "watched_photo_file"
+        ? "image"
+        : "text";
   if (
     fileType === null ||
     fileType.media_kind !== expectedMediaKind ||
@@ -789,6 +915,9 @@ function finalizerForHandler(handler: WatchedImportParserHandler | null) {
   }
   if (handler === "text") {
     return finalizeWatchedTextImport;
+  }
+  if (handler === "photo-preprocess") {
+    return finalizeWatchedPhotoImport;
   }
   return finalizeUnsupportedWatchedImport;
 }
@@ -838,7 +967,13 @@ function sanitizeFilename(filename: string): string {
 }
 
 function artifactKindForSourceType(sourceType: SourceMemoType): ArtifactKind {
-  return sourceType === "watched_audio_file" ? "original_audio_file" : "original_text_file";
+  if (sourceType === "watched_audio_file") {
+    return "original_audio_file";
+  }
+  if (sourceType === "watched_photo_file") {
+    return "original_photo_file";
+  }
+  return "original_text_file";
 }
 
 function decodeTextArtifact(body: Buffer): string {

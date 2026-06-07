@@ -47,8 +47,10 @@ See `.env.example` for the current non-secret template.
 - `LLM_MODEL`: generic LLM runtime model label. Defaults to `memo-capture-local-dev-expander-v1`.
 - `LLM_ENDPOINT`: generic LLM runtime endpoint for OpenAI-compatible providers.
 - Local LM Studio uses the OpenAI-compatible adapter with `LLM_PROVIDER=openai-compatible`, `LLM_ENDPOINT=http://127.0.0.1:1234/v1`, a chat model ID reported by `GET /v1/models`, and a non-empty local dummy `OPENAI_COMPATIBLE_API_KEY` such as `lm-studio`. The AppLauncher native helper supplies `lm-studio` when that local LM Studio endpoint is selected and no key was injected. The adapter requests task-specific `json_schema` structured output for Memo Capture LLM tasks.
+- The AppLauncher `manifestVersion: 1.3.0` manifests expose provider-slot choices for LM Studio `openai/gpt-oss-20b`, LM Studio `nvidia/nemotron-3-nano`, a generic OpenAI-compatible endpoint/model pair, local development, and Codex CLI setup metadata.
+- Codex CLI is represented as launcher provider metadata only. Memo Capture's current API runtime does not accept `LLM_PROVIDER=codex-cli`; using Codex CLI for app LLM tasks requires a compatible Memo Capture provider adapter.
 - Memo expansion, revision, suggestion, tag, and OCR task routing is configured inside Memo Capture Settings. AppLauncher does not emit task-specific LLM env names.
-- `OPENAI_COMPATIBLE_API_KEY`: AppLauncher secret/env value for the OpenAI-compatible adapter. Do not put API keys in manifest `runtimeOptions`.
+- `OPENAI_COMPATIBLE_API_KEY`: AppLauncher secret/env value for the OpenAI-compatible adapter. Do not put API keys in manifest runtime options or provider slots.
 - `TRANSCRIPTION_PROVIDER`: configured transcription provider. Supported values are `disabled`, `local-dev`, and `whisper-cpp`. Use `whisper-cpp` for local V1 transcription once the binary and model are configured.
 - `TRANSCRIPTION_MODEL`: model label recorded on transcription jobs, such as `base.en`.
 - `WHISPER_CPP_MODE`: `cli` for the current implementation. `server` is reserved for a future `whisper-server` adapter.

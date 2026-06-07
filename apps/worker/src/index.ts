@@ -13,6 +13,10 @@ import { KeywordJobError, KeywordService } from "@memo-capture/api/src/services/
 import { MetadataExtractionService } from "@memo-capture/api/src/services/metadata-extraction.js";
 import { ObjectStorageService } from "@memo-capture/api/src/services/object-storage.js";
 import {
+  PhotoPreprocessingJobError,
+  PhotoPreprocessingService
+} from "@memo-capture/api/src/services/photo-preprocessing.js";
+import {
   TranscriptionJobError,
   TranscriptionService
 } from "@memo-capture/api/src/services/transcription.js";
@@ -25,6 +29,7 @@ const leaseSeconds = 300;
 const heartbeatIntervalMs = 15_000;
 const supportedJobKinds = [
   "transcribe_audio",
+  "preprocess_photo",
   "extract_memo_metadata",
   "generate_keywords",
   "nominate_tags",
@@ -34,6 +39,10 @@ const db = createPgDatabase(config.databaseUrl, logger);
 const exportsService = new ExportService(db, config);
 const keywordService = new KeywordService(db);
 const metadataExtractionService = new MetadataExtractionService(db);
+const photoPreprocessingService = new PhotoPreprocessingService(
+  db,
+  new ObjectStorageService(config.objectStorage)
+);
 const transcriptionService = new TranscriptionService(db, new ObjectStorageService(config.objectStorage), config);
 let stopping = false;
 let lastHeartbeatAt = 0;
@@ -105,6 +114,12 @@ async function runClaimedJob(job: {
         jobId: job.id,
         sourceMemoId: job.sourceMemoId,
         workItemId: job.workItemId
+      });
+    } else if (job.jobKind === "preprocess_photo" && job.sourceMemoId !== null) {
+      await photoPreprocessingService.runPreprocessJob({
+        jobId: job.id,
+        sourceMemoId: job.sourceMemoId,
+        actorUserId: null
       });
     } else if (job.jobKind === "generate_export_batch" && job.exportBatchId !== null) {
       await exportsService.generateBatch(job.exportBatchId, job.id);
@@ -242,6 +257,15 @@ function classifyFailure(error: unknown): {
   }
 
   if (error instanceof TranscriptionJobError) {
+    return {
+      errorCode: error.code,
+      userSafeErrorMessage: error.message,
+      retryable: error.retryable,
+      retryDelaySeconds: error.retryable ? 30 : 0
+    };
+  }
+
+  if (error instanceof PhotoPreprocessingJobError) {
     return {
       errorCode: error.code,
       userSafeErrorMessage: error.message,

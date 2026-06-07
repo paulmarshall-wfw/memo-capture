@@ -16,7 +16,9 @@
   "dependencies": {
     "@memo-capture/config": "0.1.0",
     "@memo-capture/domain": "0.1.0",
+    "exifr": "7.1.3",
     "pg": "8.13.1",
+    "sharp": "0.34.5",
     "state-workflow-runtime": "file:../../../state-workflow-runtime"
   },
   "devDependencies": {

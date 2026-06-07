@@ -2,6 +2,7 @@ export const MEMO_CAPTURE_EXPORT_SCHEMA_VERSION = "memo-capture-export.v1" as co
 
 export const ACTIVE_TEXT_FILE_EXTENSIONS = [".txt", ".md", ".markdown"] as const;
 export const ACTIVE_AUDIO_FILE_EXTENSIONS = [".m4a", ".mp3", ".wav"] as const;
+export const ACTIVE_IMAGE_FILE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"] as const;
 
 export const BODY_FORMATS = ["markdown"] as const;
 
@@ -11,6 +12,7 @@ export const SOURCE_MEMO_TYPES = [
   "form",
   "watched_text_file",
   "watched_audio_file",
+  "watched_photo_file",
   "ai_generated"
 ] as const;
 
@@ -19,7 +21,9 @@ export type SourceMemoType = (typeof SOURCE_MEMO_TYPES)[number];
 export const ARTIFACT_KINDS = [
   "original_text_file",
   "original_audio_file",
+  "original_photo_file",
   "derived_transcript",
+  "derived_photo_thumbnail",
   "export_manifest",
   "export_jsonl",
   "export_markdown_combined",
@@ -32,8 +36,14 @@ export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 export const SOURCE_MEMO_ARTIFACT_RELATIONSHIPS = [
   "primary_original",
   "derived_transcript",
+  "derived_photo_thumbnail",
   "export_source_reference"
 ] as const;
+
+export const WORK_ITEM_ARTIFACT_RELATIONSHIPS = ["photo_attachment"] as const;
+
+export type WorkItemArtifactRelationship =
+  (typeof WORK_ITEM_ARTIFACT_RELATIONSHIPS)[number];
 
 export type SourceMemoArtifactRelationship =
   (typeof SOURCE_MEMO_ARTIFACT_RELATIONSHIPS)[number];
@@ -103,6 +113,7 @@ export type PossibleDuplicateStatus = (typeof POSSIBLE_DUPLICATE_STATUSES)[numbe
 
 export const PROCESSING_JOB_KINDS = [
   "transcribe_audio",
+  "preprocess_photo",
   "extract_memo_metadata",
   "generate_keywords",
   "nominate_tags",

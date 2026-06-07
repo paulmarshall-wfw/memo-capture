@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_MEMO_WORK_ITEM_STATE,
+  ACTIVE_IMAGE_FILE_EXTENSIONS,
   ARTIFACT_KINDS,
   AUDIT_EVENT_NAMES,
   EXPORT_BATCH_STATUSES,
@@ -43,9 +44,12 @@ test("schema contract constants include v1 storage states", () => {
     "form",
     "watched_text_file",
     "watched_audio_file",
+    "watched_photo_file",
     "ai_generated"
   ]);
-  assert.equal(ARTIFACT_KINDS.includes("export_bundle"), true);
+  assert.deepEqual([...ACTIVE_IMAGE_FILE_EXTENSIONS], [".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"]);
+  assert.equal(ARTIFACT_KINDS.includes("original_photo_file"), true);
+  assert.equal(ARTIFACT_KINDS.includes("derived_photo_thumbnail"), true);
   assert.equal(IMPORT_EVENT_STATUSES.includes("duplicate_exact"), true);
   assert.equal(AUDIT_EVENT_NAMES.includes("source_memo.archive_result_recorded"), true);
   assert.equal(POSSIBLE_DUPLICATE_STATUSES.includes("confirmed_duplicate"), true);

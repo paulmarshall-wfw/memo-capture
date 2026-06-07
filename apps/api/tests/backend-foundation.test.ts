@@ -2433,6 +2433,13 @@ function stubServices(): AppServices {
         throw new Error("not used");
       }
     } as unknown as AppServices["jobs"],
+    photoImports: {
+      list: async () => ({ photoImports: [] }),
+      countVisible: async () => 0,
+      createMemoFromPhotos: async () => {
+        throw new Error("not used");
+      }
+    } as unknown as AppServices["photoImports"],
     settings: {
       getSummary: async () => ({ providers: [], aiTasks: [], appLauncher: null }),
       updateExtraction: async () => {
@@ -2889,6 +2896,11 @@ function captureRouteServices(): AppServices {
         }
       })
     } as unknown as AppServices["jobs"],
+    photoImports: {
+      list: async () => ({ photoImports: [] }),
+      countVisible: async () => 0,
+      createMemoFromPhotos: async () => ({ workItem, attachedPhotoImportIds: [] })
+    } as unknown as AppServices["photoImports"],
     settings: {
       getSummary: async () => ({
         mediaTypes: [

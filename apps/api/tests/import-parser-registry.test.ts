@@ -24,6 +24,13 @@ test("watched parser registry resolves implemented text and audio parsers", () =
     }),
     "audio-transcription"
   );
+  assert.equal(
+    resolveWatchedImportParser({
+      sourceType: "watched_photo_file",
+      support: support("image", "photo-preprocess", "active")
+    }),
+    "photo-preprocess"
+  );
 });
 
 test("watched parser registry leaves unsupported or mismatched parser choices unimplemented", () => {
@@ -54,7 +61,7 @@ function support(mediaKind: string, parserKey: string, parserState: string): Act
   return {
     fileType: {
       id: `file-type-${mediaKind}`,
-      extension: mediaKind === "audio" ? ".m4a" : ".md",
+      extension: mediaKind === "audio" ? ".m4a" : mediaKind === "image" ? ".jpg" : ".md",
       media_kind: mediaKind,
       capability_state: "active",
       parser_key: parserKey,
@@ -79,4 +86,3 @@ function support(mediaKind: string, parserKey: string, parserState: string): Act
     }
   };
 }
-

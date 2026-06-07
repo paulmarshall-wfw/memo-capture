@@ -51,8 +51,9 @@ Supported V1 ingestion channels:
 - app data-entry form
 - watched folder for audio files
 - watched folder for text files
+- watched folder for photo files
 
-Watched-folder imports always create source memo provenance first. Text imports create the workflow work item in `needs_review` immediately. Audio imports defer work-item creation until transcription succeeds or reaches recoverable failure, so users do not see an empty review item while automatic transcription can still complete.
+Watched-folder imports always create source memo provenance first. Text imports create the workflow work item in `needs_review` immediately. Audio imports defer work-item creation until transcription succeeds or reaches recoverable failure, so users do not see an empty review item while automatic transcription can still complete. Photo imports create source memo provenance, an original photo artifact, and a standalone `photo_imports` row; users select available photos from the app-owned Photos bucket and consume them into a new `memo` work item as attachments.
 
 Watched-folder source memo provenance preserves the source file's filesystem creation timestamp as the original memo time, falling back to filesystem modified time only when creation time is unavailable. Work queue rows and the work item detail header should show this original file time rather than workflow processing timestamps; processing dates belong in audit, diagnostics, and logs.
 
@@ -69,7 +70,7 @@ Tags and contributor are optional.
 
 ## File Type Support
 
-The settings model should support adding and editing user-configurable media types, parser types, and file type entries. V1 supports text and audio media, while image and PDF media are represented for future support. Parser selection is tracked separately from whether an extension is active.
+The settings model should support adding and editing user-configurable media types, parser types, and file type entries. V1 supports text, audio, and photo media, while PDF media is represented for future support. Parser selection is tracked separately from whether an extension is active.
 
 Active text formats in V1:
 
@@ -82,6 +83,15 @@ Active audio formats in V1:
 - `.m4a`
 - `.mp3`
 - `.wav`
+
+Active photo formats in V1:
+
+- `.jpg`
+- `.jpeg`
+- `.png`
+- `.webp`
+- `.heic`
+- `.heif`
 
 Inactive configured file types are not scanned or accepted. Active file types whose media type is not supported are rejected before upload. Active configured types with no active implemented parser are accepted into managed storage, then create a `needs_review` work item prompting parser support instead of queuing text extraction or transcription.
 

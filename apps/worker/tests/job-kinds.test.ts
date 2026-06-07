@@ -5,6 +5,7 @@ import { PROCESSING_JOB_KINDS } from "@memo-capture/domain";
 test("worker knows the v1 processing job kinds", () => {
   assert.deepEqual([...PROCESSING_JOB_KINDS], [
     "transcribe_audio",
+    "preprocess_photo",
     "extract_memo_metadata",
     "generate_keywords",
     "nominate_tags",

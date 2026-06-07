@@ -16,6 +16,7 @@ import { FormMemoService } from "./form-memos.js";
 import { ImportService, type FinalizeUploadSessionResponse, type UploadSessionResponse } from "./imports.js";
 import { JobService } from "./jobs.js";
 import { ObjectStorageService } from "./object-storage.js";
+import { PhotoImportService, type CreateMemoFromPhotosResult } from "./photo-imports.js";
 import { SettingsService } from "./settings.js";
 import { TagService } from "./tags.js";
 import { WorkItemService, type TagSuggestionResponse } from "./work-items.js";
@@ -33,6 +34,7 @@ export interface AppServices {
   formMemos: FormMemoService;
   imports: ImportOperations;
   jobs: JobOperations;
+  photoImports: PhotoImportOperations;
   settings: SettingsOperations;
   tags: TagOperations;
   workflows: WorkflowService;
@@ -178,6 +180,16 @@ export interface ImportOperations {
   ): Promise<{ importEventId: string; status: string; archivePath: string | null }>;
 }
 
+export interface PhotoImportOperations {
+  list(): Promise<unknown>;
+  countVisible(): Promise<number>;
+  createMemoFromPhotos(
+    requestBody: unknown,
+    actor: AppUserRecord,
+    requestId: string
+  ): Promise<CreateMemoFromPhotosResult>;
+}
+
 export interface DiagnosticsOperations {
   getWorkItemDiagnostics(workItemId: string): Promise<unknown>;
   listProviderHealth(): Promise<unknown>;
@@ -232,6 +244,7 @@ export function createAppServicesFromDatabase(config: ApiConfig, db: Database): 
     formMemos: new FormMemoService(db),
     imports: new ImportService(db, objectStorage),
     jobs: new JobService(db),
+    photoImports: new PhotoImportService(db),
     settings: new SettingsService(db, config),
     tags: new TagService(db),
     workflows: new WorkflowService(db, config.authMode),

@@ -731,6 +731,19 @@ function matchProtectedRoute(
     });
   }
 
+  if (method === "GET" && pathname === "/api/photo-imports") {
+    return async () => services.photoImports.list();
+  }
+
+  if (method === "POST" && pathname === "/api/photo-imports/create-memo") {
+    return async (context, session) =>
+      services.photoImports.createMemoFromPhotos(
+        await readJsonBody(context.request),
+        session.user,
+        context.requestId
+      );
+  }
+
   if (method === "POST" && pathname === "/api/imports/upload-sessions") {
     return async (context, session) =>
       services.imports.createUploadSession(await readJsonBody(context.request), session.user, context.requestId);

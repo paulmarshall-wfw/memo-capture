@@ -35,6 +35,7 @@ import {
   Moon,
   PackageCheck,
   PackagePlus,
+  Image,
   Plus,
   RefreshCcw,
   RotateCcw,
@@ -139,6 +140,30 @@ interface WorkItem {
   originalFileModifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface PhotoImport {
+  id: string;
+  sourceMemoId: string;
+  originalArtifactId: string;
+  thumbnailArtifactId: string | null;
+  status: "available" | "preprocessing" | "preprocessing_failed" | "attached";
+  originalFilename: string;
+  contributorText: string | null;
+  capturedAt: string | null;
+  cameraMake: string | null;
+  cameraModel: string | null;
+  gpsLatitude: number | null;
+  gpsLongitude: number | null;
+  preprocessingErrorMessage: string | null;
+  createdAt: string;
+}
+
+interface PhotoMemoDraft {
+  projectId: string;
+  title: string;
+  body: string;
+  tags: string;
 }
 
 interface WorkItemDiagnostics {
@@ -705,6 +730,7 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
   ""
 );
 const appVersion = "0.1.0";
+const photosBucketId = "photos";
 const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const watchedFolderPollingIntervalMs = 5000;
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -753,6 +779,12 @@ const defaultNewParserTypeDraft: ParserTypeDraft = {
   description: "",
   mediaKey: "text",
   capabilityState: "not_supported_yet"
+};
+const defaultPhotoMemoDraft: PhotoMemoDraft = {
+  projectId: "",
+  title: "",
+  body: "",
+  tags: ""
 };
 const defaultExtractionSettings = {
   projectConfidenceThreshold: 0.65,
@@ -815,6 +847,13 @@ function normalizeTagsForCompare(tags: string[]): string {
     .map((tag) => tag.toLowerCase())
     .sort()
     .join("|");
+}
+
+function retainAvailablePhotoSelections(current: Set<string>, photoImports: PhotoImport[]): Set<string> {
+  const availableIds = new Set(
+    photoImports.filter((photoImport) => photoImport.status === "available").map((photoImport) => photoImport.id)
+  );
+  return new Set([...current].filter((photoImportId) => availableIds.has(photoImportId)));
 }
 
 function createEmptyProjectForm(): ProjectFormState {
@@ -1447,6 +1486,11 @@ export function App() {
   const [workItems, setWorkItems] = useState<WorkItem[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
+  const [photoImports, setPhotoImports] = useState<PhotoImport[]>([]);
+  const [selectedPhotoImportIds, setSelectedPhotoImportIds] = useState<Set<string>>(new Set());
+  const [photoMemoDraft, setPhotoMemoDraft] = useState<PhotoMemoDraft>(defaultPhotoMemoDraft);
+  const [photoMemoSaving, setPhotoMemoSaving] = useState(false);
+  const [photoThumbnailUrls, setPhotoThumbnailUrls] = useState<Record<string, string>>({});
   const [rowActionsByItemId, setRowActionsByItemId] = useState<Record<string, AllowedWorkflowAction[]>>({});
   const [projects, setProjects] = useState<Project[]>([]);
   const [contributors, setContributors] = useState<Contributor[]>([]);
@@ -1539,8 +1583,10 @@ export function App() {
   const projectListRef = useRef<HTMLDivElement | null>(null);
   const workItemRowButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const watchScanInFlightRef = useRef(false);
+  const activeBucketIdRef = useRef<string | null>(null);
 
   const selectedBucket = buckets.find((bucket) => bucket.id === activeBucketId) ?? null;
+  const activeBucketIsPhotos = activeBucketId === photosBucketId;
   const workItemById = useMemo(() => new Map(workItems.map((item) => [item.id, item])), [workItems]);
   const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const contributorById = useMemo(
@@ -1598,6 +1644,11 @@ export function App() {
     : watchedSettingsSaved
       ? "Watching paused"
       : "Save to activate watching";
+
+  function applyActiveBucketId(bucketId: string | null) {
+    activeBucketIdRef.current = bucketId;
+    setActiveBucketId(bucketId);
+  }
   const visibleTagSuggestions = useMemo(() => {
     const selectedNames = new Set((draft?.tags ?? []).map((tag) => tag.trim().toLowerCase()));
     const filterRow = (tags: string[]) => tags.filter((tag) => !selectedNames.has(tag.trim().toLowerCase()));
@@ -1638,6 +1689,24 @@ export function App() {
         .includes(query)
     );
   }, [contributorById, projectById, search, workItems]);
+  const filteredPhotoImports = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (query === "") {
+      return photoImports;
+    }
+    return photoImports.filter((photoImport) =>
+      [
+        photoImport.originalFilename,
+        photoImport.contributorText ?? "",
+        photoImport.cameraMake ?? "",
+        photoImport.cameraModel ?? "",
+        photoImport.status
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [photoImports, search]);
   const filteredExportSnapshots = useMemo(() => {
     const query = exportSearch.trim().toLowerCase();
     if (query === "") {
@@ -1665,11 +1734,21 @@ export function App() {
   ).length;
   const isWorkQueueSearchActive = search.trim() !== "";
   const workQueueStatusItems = [
-    formatItemCount(workItems.length),
-    isWorkQueueSearchActive ? `${filteredItems.length} shown` : null,
+    activeBucketIsPhotos ? formatPhotoCount(photoImports.length) : formatItemCount(workItems.length),
+    isWorkQueueSearchActive
+      ? `${activeBucketIsPhotos ? filteredPhotoImports.length : filteredItems.length} shown`
+      : null,
     workQueueLastRefreshedAt === null ? "Not refreshed yet" : `Last refreshed ${formatRelativeTime(workQueueLastRefreshedAt)}`,
     workQueueSyncState === "syncing" ? "Syncing" : workQueueSyncState === "error" ? "API error" : "API connected"
   ].filter((item): item is string => item !== null);
+  const selectedAvailablePhotoCount = [...selectedPhotoImportIds].filter(
+    (photoImportId) => photoImports.find((photoImport) => photoImport.id === photoImportId)?.status === "available"
+  ).length;
+  const canCreatePhotoMemo =
+    selectedAvailablePhotoCount > 0 &&
+    photoMemoDraft.projectId.trim() !== "" &&
+    photoMemoDraft.body.trim() !== "" &&
+    !photoMemoSaving;
   const activeProjectCount = projects.filter((project) => project.isActive).length;
   const inactiveProjectCount = projects.length - activeProjectCount;
   const hasDraftChanges =
@@ -1780,6 +1859,51 @@ export function App() {
   }, [audioObjectUrl]);
 
   useEffect(() => {
+    if (accessToken === null || photoImports.length === 0) {
+      setPhotoThumbnailUrls((current) => {
+        Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+        return {};
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const thumbnailPhotoImports = photoImports.filter((photoImport) => photoImport.thumbnailArtifactId !== null);
+    void Promise.all(
+      thumbnailPhotoImports.map(async (photoImport) => {
+        const response = await authedFetch(
+          accessToken,
+          `/api/artifacts/${encodeURIComponent(photoImport.thumbnailArtifactId ?? "")}/download`
+        );
+        const blob = await response.blob();
+        return [photoImport.id, URL.createObjectURL(blob)] as const;
+      })
+    )
+      .then((entries) => {
+        if (cancelled) {
+          entries.forEach(([, url]) => URL.revokeObjectURL(url));
+          return;
+        }
+        setPhotoThumbnailUrls((current) => {
+          Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+          return Object.fromEntries(entries);
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPhotoThumbnailUrls((current) => {
+            Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+            return {};
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, photoImports]);
+
+  useEffect(() => {
     setWatchedFolders(readWatchedFolderSettings());
     setWatchedSettingsSaved(true);
     if (!isTauriRuntime) {
@@ -1794,7 +1918,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (accessToken === null || selectedItemId === null) {
+    if (accessToken === null || selectedItemId === null || activeBucketIsPhotos) {
       setTagSuggestions({ strong: [], related: [], weak: [] });
       setExpandedMemoReview(null);
       setSuggestedWorkItemReview(null);
@@ -1856,7 +1980,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, selectedItemId]);
+  }, [accessToken, activeBucketIsPhotos, selectedItemId]);
 
   useEffect(() => {
     if (accessToken === null || activeView !== "exports") {
@@ -1994,34 +2118,44 @@ export function App() {
       const defaultBucketId =
         orderedBuckets.find((bucket) => bucket.label.toLowerCase() === "memos")?.id ?? orderedBuckets[0]?.id ?? null;
       const nextBucketId = requestedBucketId ?? defaultBucketId;
-      const itemResponse = await loadWorkItems(token, nextBucketId);
+      const photoBucketSelected = nextBucketId === photosBucketId;
+      const itemResponse = photoBucketSelected ? { workItems: [] } : await loadWorkItems(token, nextBucketId);
+      const photoResponse = photoBucketSelected ? await loadPhotoImports(token) : { photoImports: [] };
 
       setBuckets(orderedBuckets);
       applyProjects(projectsResponse.projects);
       setContributors(contributorsResponse.contributors);
-      setActiveBucketId(nextBucketId);
+      applyActiveBucketId(nextBucketId);
       setWorkItems(itemResponse.workItems);
+      setPhotoImports(photoResponse.photoImports);
       const rowActionsLoaded = await loadRowActionsForItems(token, itemResponse.workItems);
       if (!rowActionsLoaded) {
         setStatusMessage("Work items loaded. Some workflow actions could not be loaded.");
       } else {
         setStatusMessage(null);
       }
-      if (itemResponse.workItems.length === 0) {
+      if (photoBucketSelected || itemResponse.workItems.length === 0) {
         setSelectedItem(null);
         setDraft(null);
       }
       setSelectedItemId((current) =>
-        current !== null && itemResponse.workItems.some((item) => item.id === current)
+        !photoBucketSelected && current !== null && itemResponse.workItems.some((item) => item.id === current)
           ? current
-          : itemResponse.workItems[0]?.id ?? null
+          : photoBucketSelected
+            ? null
+            : itemResponse.workItems[0]?.id ?? null
       );
+      setSelectedPhotoImportIds((current) => retainAvailablePhotoSelections(current, photoResponse.photoImports));
       setWorkQueueLastRefreshedAt(new Date());
       setWorkQueueSyncState("connected");
     } catch (error) {
       setWorkQueueSyncState("error");
       throw error;
     }
+  }
+
+  async function loadPhotoImports(token: string): Promise<{ photoImports: PhotoImport[] }> {
+    return authedJson<{ photoImports: PhotoImport[] }>(token, "/api/photo-imports");
   }
 
   async function loadRowActionsForItems(token: string, items: WorkItem[]): Promise<boolean> {
@@ -2069,34 +2203,40 @@ export function App() {
     }
   }
 
-  async function refreshBucket(bucketId = activeBucketId): Promise<void> {
+  async function refreshBucket(bucketId: string | null = activeBucketIdRef.current): Promise<void> {
     if (accessToken === null) {
       return;
     }
 
     setWorkQueueSyncState("syncing");
     try {
-      const [bucketResponse, itemResponse] = await Promise.all([
+      const photoBucketSelected = bucketId === photosBucketId;
+      const [bucketResponse, itemResponse, photoResponse] = await Promise.all([
         authedJson<{ buckets: WorkflowBucket[] }>(accessToken, "/api/workflow/buckets"),
-        loadWorkItems(accessToken, bucketId)
+        photoBucketSelected ? Promise.resolve({ workItems: [] }) : loadWorkItems(accessToken, bucketId),
+        photoBucketSelected ? loadPhotoImports(accessToken) : Promise.resolve({ photoImports: [] })
       ]);
       setBuckets([...bucketResponse.buckets].sort((left, right) => left.order - right.order));
       setWorkItems(itemResponse.workItems);
+      setPhotoImports(photoResponse.photoImports);
       const rowActionsLoaded = await loadRowActionsForItems(accessToken, itemResponse.workItems);
       if (!rowActionsLoaded) {
         setStatusMessage("Work items loaded. Some workflow actions could not be loaded.");
       } else {
         setStatusMessage(null);
       }
-      if (itemResponse.workItems.length === 0) {
+      if (photoBucketSelected || itemResponse.workItems.length === 0) {
         setSelectedItem(null);
         setDraft(null);
       }
       setSelectedItemId((current) =>
-        current !== null && itemResponse.workItems.some((item) => item.id === current)
+        !photoBucketSelected && current !== null && itemResponse.workItems.some((item) => item.id === current)
           ? current
-          : itemResponse.workItems[0]?.id ?? null
+          : photoBucketSelected
+            ? null
+            : itemResponse.workItems[0]?.id ?? null
       );
+      setSelectedPhotoImportIds((current) => retainAvailablePhotoSelections(current, photoResponse.photoImports));
       setWorkQueueLastRefreshedAt(new Date());
       setWorkQueueSyncState("connected");
     } catch (error) {
@@ -2421,23 +2561,28 @@ export function App() {
       return;
     }
 
-    setActiveBucketId(bucketId);
+    applyActiveBucketId(bucketId);
     setSelectedItem(null);
     setDraft(null);
+    setSelectedItemId(null);
     setRowActionsByItemId({});
     setTagSuggestions({ strong: [], related: [], weak: [] });
     setStatusMessage(null);
     setWorkQueueSyncState("syncing");
     try {
-      const itemResponse = await loadWorkItems(accessToken, bucketId);
+      const photoBucketSelected = bucketId === photosBucketId;
+      const itemResponse = photoBucketSelected ? { workItems: [] } : await loadWorkItems(accessToken, bucketId);
+      const photoResponse = photoBucketSelected ? await loadPhotoImports(accessToken) : { photoImports: [] };
       setWorkItems(itemResponse.workItems);
+      setPhotoImports(photoResponse.photoImports);
       const rowActionsLoaded = await loadRowActionsForItems(accessToken, itemResponse.workItems);
       if (!rowActionsLoaded) {
         setStatusMessage("Work items loaded. Some workflow actions could not be loaded.");
       } else {
         setStatusMessage(null);
       }
-      setSelectedItemId(itemResponse.workItems[0]?.id ?? null);
+      setSelectedItemId(photoBucketSelected ? null : itemResponse.workItems[0]?.id ?? null);
+      setSelectedPhotoImportIds((current) => retainAvailablePhotoSelections(current, photoResponse.photoImports));
       setWorkQueueLastRefreshedAt(new Date());
       setWorkQueueSyncState("connected");
     } catch (error) {
@@ -2500,6 +2645,80 @@ export function App() {
 
       setSaveState("error");
       setStatusMessage(error instanceof Error ? error.message : "Unable to save work item.");
+    }
+  }
+
+  function togglePhotoImportSelection(photoImport: PhotoImport, checked: boolean) {
+    if (photoImport.status !== "available") {
+      return;
+    }
+    setSelectedPhotoImportIds((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(photoImport.id);
+      } else {
+        next.delete(photoImport.id);
+      }
+      return next;
+    });
+  }
+
+  function updatePhotoMemoDraft<Field extends keyof PhotoMemoDraft>(
+    field: Field,
+    value: PhotoMemoDraft[Field]
+  ) {
+    setPhotoMemoDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function createMemoFromSelectedPhotos() {
+    if (accessToken === null || !canCreatePhotoMemo) {
+      return;
+    }
+
+    const selectedAvailableIds = [...selectedPhotoImportIds].filter(
+      (photoImportId) => photoImports.find((photoImport) => photoImport.id === photoImportId)?.status === "available"
+    );
+    const previousPhotoImports = photoImports;
+    const optimisticPhotoImports = photoImports.filter((photoImport) => !selectedAvailableIds.includes(photoImport.id));
+    setPhotoMemoSaving(true);
+    setStatusMessage(null);
+    setPhotoImports(optimisticPhotoImports);
+    setSelectedPhotoImportIds(new Set());
+    try {
+      const response = await authedJson<{ workItem: WorkItem; attachedPhotoImportIds: string[] }>(
+        accessToken,
+        "/api/photo-imports/create-memo",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            photoImportIds: selectedAvailableIds,
+            projectId: photoMemoDraft.projectId,
+            title: photoMemoDraft.title,
+            body: photoMemoDraft.body,
+            tags: parseTagsText(photoMemoDraft.tags)
+          })
+        }
+      );
+      setPhotoMemoDraft(defaultPhotoMemoDraft);
+      const bucketResponse = await authedJson<{ buckets: WorkflowBucket[] }>(accessToken, "/api/workflow/buckets");
+      setBuckets([...bucketResponse.buckets].sort((left, right) => left.order - right.order));
+      if (optimisticPhotoImports.length > 0) {
+        await refreshBucket(photosBucketId);
+        setStatusMessage("Memo created from selected photos.");
+      } else {
+        const memosBucketId = bucketResponse.buckets.find((bucket) => bucket.label.toLowerCase() === "memos")?.id ?? null;
+        await loadWorkspace(accessToken, memosBucketId);
+        setSelectedItemId(response.workItem.id);
+        setSelectedItem(response.workItem);
+        setDraft(createDraft(response.workItem));
+        setStatusMessage("Memo created from selected photos.");
+      }
+    } catch (error) {
+      setPhotoImports(previousPhotoImports);
+      setSelectedPhotoImportIds(new Set(selectedAvailableIds));
+      setStatusMessage(error instanceof Error ? error.message : "Unable to create memo from photos.");
+    } finally {
+      setPhotoMemoSaving(false);
     }
   }
 
@@ -2882,6 +3101,8 @@ export function App() {
       const sourceType =
         fileType?.mediaKind === "audio"
           ? "watched_audio_file"
+          : fileType?.mediaKind === "image"
+            ? "watched_photo_file"
           : "watched_text_file";
       const uploadSession = await authedJson<UploadSessionResponse>(accessToken, "/api/imports/upload-sessions", {
         method: "POST",
@@ -2943,6 +3164,8 @@ export function App() {
           ? "Imported for review. Parser support is still needed."
           : sourceType === "watched_audio_file"
             ? "Audio imported and queued for transcription."
+            : sourceType === "watched_photo_file"
+              ? "Photo imported and queued for preprocessing."
             : "Imported, finalized, and archived."
       );
       await refreshBucket();
@@ -4136,7 +4359,7 @@ export function App() {
 
         {activeView === "work-items" ? (
           <div className="toolbar search-toolbar" role="search">
-            <label htmlFor="work-item-search">Search work items</label>
+            <label htmlFor="work-item-search">{activeBucketIsPhotos ? "Search photos" : "Search work items"}</label>
             <div className="search-field">
               <Search size={18} />
               <input
@@ -4229,6 +4452,65 @@ export function App() {
           </aside>
 
           <section className="item-list" aria-label="Filtered work items">
+            {activeBucketIsPhotos ? (
+              <>
+                {filteredPhotoImports.length === 0 ? null : (
+                  <div className="item-list-header photo-list-header" aria-hidden="true">
+                    <span>Photo / Metadata</span>
+                  </div>
+                )}
+                {filteredPhotoImports.length === 0 ? (
+                  <div className="empty-state">
+                    <CircleSlash size={20} />
+                    <span>No photos available</span>
+                  </div>
+                ) : null}
+                {filteredPhotoImports.map((photoImport) => {
+                  const checked = selectedPhotoImportIds.has(photoImport.id);
+                  const available = photoImport.status === "available";
+                  const thumbnailUrl = photoThumbnailUrls[photoImport.id] ?? null;
+                  return (
+                    <article
+                      className={`item-row photo-row ${checked ? "selected" : ""} ${available ? "" : "disabled"}`}
+                      key={photoImport.id}
+                    >
+                      <label className="photo-row-select">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={!available}
+                          onChange={(event) => togglePhotoImportSelection(photoImport, event.currentTarget.checked)}
+                        />
+                        <span className="photo-thumb">
+                          {thumbnailUrl === null ? (
+                            <Image size={20} />
+                          ) : (
+                            <img src={thumbnailUrl} alt="" loading="lazy" />
+                          )}
+                        </span>
+                        <span className="photo-row-main">
+                          <strong>{photoImport.originalFilename}</strong>
+                          <span>
+                            {photoImport.capturedAt === null ? "No captured date" : formatDate(photoImport.capturedAt)}
+                          </span>
+                        </span>
+                      </label>
+                      <span className={`item-row-state state-chip state-${photoImport.status}`}>
+                        {statusLabel(photoImport.status)}
+                      </span>
+                      <div className="photo-row-metadata">
+                        <span>{[photoImport.cameraMake, photoImport.cameraModel].filter(Boolean).join(" ") || "No camera"}</span>
+                        <span>{photoImport.gpsLatitude === null || photoImport.gpsLongitude === null ? "No GPS" : "GPS"}</span>
+                        {photoImport.preprocessingErrorMessage === null ? null : (
+                          <span className="error-text">{photoImport.preprocessingErrorMessage}</span>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </>
+            ) : (
+              <>
             {filteredItems.length === 0 ? null : (
               <div className="item-list-header" aria-hidden="true">
                 <span>Title / Body</span>
@@ -4315,6 +4597,8 @@ export function App() {
                 </article>
               );
             })}
+              </>
+            )}
           </section>
 
           <div
@@ -4328,8 +4612,96 @@ export function App() {
             onKeyDown={handlePanelResizeKeyDown}
           />
 
-          <aside className="detail-panel" aria-label="Work item detail">
-            {selectedItem === null || draft === null ? (
+          <aside className="detail-panel" aria-label={activeBucketIsPhotos ? "Photo memo creation" : "Work item detail"}>
+            {activeBucketIsPhotos ? (
+              <>
+                <div className="detail-header">
+                  <div>
+                    <p className="eyebrow">{formatPhotoCount(selectedAvailablePhotoCount)} selected</p>
+                    <h2>Create memo</h2>
+                  </div>
+                </div>
+                <div className="detail-actions detail-header-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={!canCreatePhotoMemo}
+                    onClick={() => void createMemoFromSelectedPhotos()}
+                  >
+                    {photoMemoSaving ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
+                    Create Memo
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={photoMemoSaving}
+                    onClick={() => {
+                      setPhotoMemoDraft(defaultPhotoMemoDraft);
+                      setSelectedPhotoImportIds(new Set());
+                    }}
+                  >
+                    Reset
+                  </button>
+                </div>
+                <div className="detail-meta">
+                  <span>Available: {photoImports.filter((photoImport) => photoImport.status === "available").length}</span>
+                  <span>Preprocessing: {photoImports.filter((photoImport) => photoImport.status === "preprocessing").length}</span>
+                  <span>Failed: {photoImports.filter((photoImport) => photoImport.status === "preprocessing_failed").length}</span>
+                </div>
+                <div className="field-group">
+                  <label htmlFor="photo-memo-project">Project</label>
+                  <select
+                    id="photo-memo-project"
+                    value={photoMemoDraft.projectId}
+                    disabled={photoMemoSaving}
+                    onChange={(event) => updatePhotoMemoDraft("projectId", event.currentTarget.value)}
+                  >
+                    <option value="">Select project</option>
+                    {projects
+                      .filter((project) => project.isActive)
+                      .map((project) => (
+                        <option value={project.id} key={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                <div className="field-group">
+                  <label htmlFor="photo-memo-title">Title</label>
+                  <input
+                    id="photo-memo-title"
+                    value={photoMemoDraft.title}
+                    disabled={photoMemoSaving}
+                    onChange={(event) => updatePhotoMemoDraft("title", event.currentTarget.value)}
+                  />
+                </div>
+                <div className="field-group grow">
+                  <label htmlFor="photo-memo-body">Memo body</label>
+                  <textarea
+                    id="photo-memo-body"
+                    value={photoMemoDraft.body}
+                    disabled={photoMemoSaving}
+                    rows={12}
+                    onChange={(event) => updatePhotoMemoDraft("body", event.currentTarget.value)}
+                  />
+                </div>
+                <div className="field-group">
+                  <label htmlFor="photo-memo-tags">Tags</label>
+                  <input
+                    id="photo-memo-tags"
+                    value={photoMemoDraft.tags}
+                    disabled={photoMemoSaving}
+                    onChange={(event) => updatePhotoMemoDraft("tags", event.currentTarget.value)}
+                  />
+                </div>
+                {selectedAvailablePhotoCount === 0 ? (
+                  <div className="empty-detail inline-empty">
+                    <Image size={22} />
+                    <span>Select available photos</span>
+                  </div>
+                ) : null}
+              </>
+            ) : selectedItem === null || draft === null ? (
               <div className="empty-detail">
                 <FileText size={22} />
                 <span>Select a work item</span>
@@ -7302,12 +7674,26 @@ function mimeTypeForExtension(extension: string, mediaKind?: string): string {
       return "audio/mpeg";
     case ".wav":
       return "audio/wav";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".webp":
+      return "image/webp";
+    case ".heic":
+      return "image/heic";
+    case ".heif":
+      return "image/heif";
     case ".md":
     case ".markdown":
       return "text/markdown";
     default:
       if (mediaKind === "audio") {
         return "application/octet-stream";
+      }
+      if (mediaKind === "image") {
+        return "image/*";
       }
       return "text/plain";
   }
@@ -7375,6 +7761,10 @@ function formatDate(value: string): string {
 
 function formatItemCount(count: number): string {
   return `${count} ${count === 1 ? "item" : "items"}`;
+}
+
+function formatPhotoCount(count: number): string {
+  return `${count} ${count === 1 ? "photo" : "photos"}`;
 }
 
 function formatRelativeTime(value: Date): string {

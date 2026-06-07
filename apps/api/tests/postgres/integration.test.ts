@@ -175,6 +175,123 @@ test("processing hook registry is migrated, seeded, and counts task usage in rea
   }
 });
 
+test("photo import schema seeds active image intake and accepts photo rows", async () => {
+  const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
+  const userId = "10000000-0000-4000-8000-000000000501";
+  const artifactId = "10000000-0000-4000-8000-000000000502";
+  const sourceMemoId = "10000000-0000-4000-8000-000000000503";
+  const photoImportId = "10000000-0000-4000-8000-000000000504";
+
+  try {
+    const imageSettings = await db.query<{
+      extension: string;
+      media_kind: string;
+      capability_state: string;
+      parser_key: string | null;
+    }>(
+      `select extension, media_kind, capability_state, parser_key
+       from file_type_settings
+       where extension in ('.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif')
+       order by extension`
+    );
+    assert.deepEqual(
+      imageSettings.rows.map((row) => [row.extension, row.media_kind, row.capability_state, row.parser_key]),
+      [
+        [".heic", "image", "active", "photo-preprocess"],
+        [".heif", "image", "active", "photo-preprocess"],
+        [".jpeg", "image", "active", "photo-preprocess"],
+        [".jpg", "image", "active", "photo-preprocess"],
+        [".png", "image", "active", "photo-preprocess"],
+        [".webp", "image", "active", "photo-preprocess"]
+      ]
+    );
+
+    await db.query(
+      `insert into app_users (id, oidc_issuer, oidc_subject, first_seen_at, last_seen_at)
+       values ($1, 'test', 'photo-user', now(), now())`,
+      [userId]
+    );
+    await db.query(
+      `insert into import_upload_sessions (
+         id,
+         status,
+         machine_id,
+         watch_folder_id,
+         source_type,
+         original_filename,
+         original_path,
+         original_file_modified_at,
+         mime_type,
+         byte_size,
+         content_hash,
+         created_by
+       )
+       values (
+         '10000000-0000-4000-8000-000000000505',
+         'duplicate_exact',
+         'machine-photo',
+         'watch-photo',
+         'watched_photo_file',
+         'photo.jpg',
+         '/incoming/photo.jpg',
+         now(),
+         'image/jpeg',
+         12,
+         'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+         $1
+       )`,
+      [userId]
+    );
+    await db.query(
+      `insert into artifacts (
+         id,
+         object_key,
+         original_filename,
+         mime_type,
+         byte_size,
+         content_hash,
+         artifact_kind,
+         bucket
+       )
+       values ($1, 'postgres-photo/original.jpg', 'original.jpg', 'image/jpeg', 12, 'photo-hash', 'original_photo_file', 'memo-capture')`,
+      [artifactId]
+    );
+    await db.query(
+      `insert into source_memos (
+         id,
+         source_type,
+         primary_artifact_id,
+         content_hash,
+         updated_at
+       )
+       values ($1, 'watched_photo_file', $2, 'photo-hash', now())`,
+      [sourceMemoId, artifactId]
+    );
+    await db.query(
+      `insert into photo_imports (
+         id,
+         source_memo_id,
+         original_artifact_id,
+         status,
+         original_filename,
+         content_hash,
+         created_by
+       )
+       values ($1, $2, $3, 'available', 'original.jpg', 'photo-hash', $4)`,
+      [photoImportId, sourceMemoId, artifactId, userId]
+    );
+
+    const visible = await db.query<{ id: string; status: string }>(
+      `select id, status
+       from photo_imports
+       where status in ('available', 'preprocessing', 'preprocessing_failed')`
+    );
+    assert.equal(visible.rows.some((row) => row.id === photoImportId && row.status === "available"), true);
+  } finally {
+    await db.close();
+  }
+});
+
 test("audit repository lists events with display context in real Postgres", async () => {
   const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
   const audit = new AuditRepository(db);

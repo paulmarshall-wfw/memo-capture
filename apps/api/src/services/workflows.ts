@@ -2,6 +2,7 @@ import { SUPPORTED_WORKFLOW_HOOK_HANDLERS, type AllowedWorkflowAction } from "@m
 import type { AuthMode } from "../config.js";
 import type { Database, Queryable } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
+import { PhotoImportRepository } from "../repositories/photo-imports.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import {
@@ -239,13 +240,27 @@ export class WorkflowService {
   async getBuckets() {
     const active = await requireActiveWorkflow(new WorkflowRepository(this.db));
     const workItems = new WorkItemRepository(this.db);
+    const photoImports = new PhotoImportRepository(this.db);
+    const workflowBuckets = this.runtime.getBuckets(active.bundle);
+    const reviewBucket = workflowBuckets.find((bucket) => bucket.label.toLowerCase() === "review");
+    const fallbackOrder = workflowBuckets[0]?.order ?? 0;
+    const photosBucket = {
+      id: "photos",
+      label: "Photos",
+      order: (reviewBucket?.order ?? fallbackOrder) - 0.5,
+      states: [],
+      count: await photoImports.countVisible()
+    };
     return {
-      buckets: await Promise.all(
-        this.runtime.getBuckets(active.bundle).map(async (bucket) => ({
-          ...bucket,
-          count: await workItems.countByStates(bucket.states)
-        }))
-      )
+      buckets: [
+        photosBucket,
+        ...(await Promise.all(
+          workflowBuckets.map(async (bucket) => ({
+            ...bucket,
+            count: await workItems.countByStates(bucket.states)
+          }))
+        ))
+      ]
     };
   }
 

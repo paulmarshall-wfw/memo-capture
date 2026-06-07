@@ -5,7 +5,7 @@ import type {
   ParserTypeSettingRow
 } from "../repositories/settings.js";
 
-export type WatchedImportParserHandler = "text" | "audio-transcription";
+export type WatchedImportParserHandler = "text" | "audio-transcription" | "photo-preprocess";
 
 export interface ActiveWatchedFileType {
   fileType: FileTypeSettingRow;
@@ -38,6 +38,12 @@ const implementedWatchedParsers: readonly ParserRegistration[] = [
     parserKey: "audio-transcription",
     sourceType: "watched_audio_file",
     handler: "audio-transcription"
+  },
+  {
+    mediaKind: "image",
+    parserKey: "photo-preprocess",
+    sourceType: "watched_photo_file",
+    handler: "photo-preprocess"
   }
 ];
 
@@ -59,4 +65,3 @@ export function resolveWatchedImportParser(input: {
     )?.handler ?? null
   );
 }
-
