@@ -1782,14 +1782,18 @@ button:disabled {
   font-weight: 720;
 }
 
-.provider-dev-panel {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
+.provider-registry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
-.provider-dev-actions {
-  display: flex;
-  justify-content: flex-end;
+.provider-registry-meta span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
 }
 
 .section-subhead {
@@ -2953,7 +2957,6 @@ button:disabled {
   .settings-row-header,
   .settings-table-header,
   .settings-table-row,
-  .provider-dev-panel,
   .watch-folder-table-header,
   .watch-folder-row,
   .settings-inline-form,
@@ -2968,10 +2971,6 @@ button:disabled {
   .settings-row-header,
   .prompt-editor-header {
     display: grid;
-  }
-
-  .provider-dev-actions {
-    justify-content: flex-start;
   }
 
   .watch-folder-table-header {

@@ -44,7 +44,7 @@ export function readLogLevel(env: NodeJS.ProcessEnv): LogLevel {
 
 export function readRuntimeConfig(env: NodeJS.ProcessEnv): RuntimeConfig {
   return {
-    appVersion: readStringEnv(env, "MEMO_CAPTURE_APP_VERSION", "0.1.0"),
+    appVersion: readStringEnv(env, "MEMO_CAPTURE_APP_VERSION", "1.0.0"),
     commitSha: readStringEnv(env, "MEMO_CAPTURE_COMMIT_SHA", "dev"),
     logLevel: readLogLevel(env)
   };

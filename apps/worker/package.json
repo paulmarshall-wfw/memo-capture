@@ -1,6 +1,6 @@
 {
   "name": "@memo-capture/worker",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "dist/src/index.js",
@@ -12,9 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@memo-capture/api": "0.1.0",
-    "@memo-capture/config": "0.1.0",
-    "@memo-capture/domain": "0.1.0"
-  },
-  "devDependencies": {}
+    "@memo-capture/api": "1.0.0",
+    "@memo-capture/config": "1.0.0",
+    "@memo-capture/domain": "1.0.0"
+  }
 }

@@ -48,7 +48,7 @@ const baseEnv = {
   MEMO_CAPTURE_API_HOST: "127.0.0.1",
   MEMO_CAPTURE_API_PORT: apiPort,
   MEMO_CAPTURE_LOG_LEVEL: "debug",
-  MEMO_CAPTURE_APP_VERSION: "0.1.0",
+  MEMO_CAPTURE_APP_VERSION: "1.0.0",
   MEMO_CAPTURE_COMMIT_SHA: "dev",
   DATABASE_URL: "postgres://memo_capture:memo_capture@127.0.0.1:5432/memo_capture",
   OBJECT_STORAGE_BUCKET: "memo-capture",

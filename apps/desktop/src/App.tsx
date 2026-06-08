@@ -453,19 +453,6 @@ interface AiTaskRouteDraft {
   enabled: boolean;
 }
 
-interface ProviderDraft {
-  displayName: string;
-  endpoint: string;
-  modelName: string;
-  requiredSecretEnv: string;
-  externalSendEnabled: boolean;
-  enabled: boolean;
-}
-
-interface NewProviderDraft extends ProviderDraft {
-  providerKind: string;
-}
-
 interface NewAiTaskDraft {
   displayName: string;
   description: string;
@@ -561,6 +548,7 @@ interface SettingsSummary {
       displayName: string;
       enabled: boolean;
       adapterKey: string;
+      model?: string;
       externalSend: boolean;
       requiredSecretRef?: string;
       capabilities: Array<{ key: string; displayName: string }>;
@@ -767,7 +755,6 @@ const settingsSections: readonly { id: SettingsSectionId; label: string }[] = [
   { id: "operations", label: "Operations" },
   { id: "diagnostics", label: "Diagnostics" }
 ];
-const providerKindSelectOptions = ["llm", "stt", "tts", "ocr", "script"] as const;
 const taskRenderLocationOptions: { value: TaskRenderLocation; label: string }[] = [
   { value: "work_item_detail", label: "Work item detail" },
   { value: "work_item_list", label: "Work item list" },
@@ -787,7 +774,7 @@ const apiBaseUrl = (import.meta.env.VITE_MEMO_CAPTURE_API_URL ?? "http://127.0.0
   /\/$/,
   ""
 );
-const appVersion = "0.1.0";
+const appVersion = "1.0.0";
 const photosBucketId = "photos";
 const watchedSettingsStorageKey = "memo-capture.watched-text-folders.v1";
 const watchedFolderPollingIntervalMs = 5000;
@@ -814,15 +801,6 @@ const defaultNewAiTaskDraft: NewAiTaskDraft = {
     includeMemoMetadata: true,
     includeMemoTranscriptText: true
   },
-  enabled: false
-};
-const defaultNewProviderDraft: NewProviderDraft = {
-  providerKind: "llm",
-  displayName: "",
-  endpoint: "",
-  modelName: "",
-  requiredSecretEnv: "",
-  externalSendEnabled: false,
   enabled: false
 };
 const defaultNewMediaTypeDraft: MediaTypeDraft = {
@@ -1600,10 +1578,6 @@ export function App() {
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
   const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
-  const [providerDrafts, setProviderDrafts] = useState<Record<string, ProviderDraft>>({});
-  const [newProviderDraft, setNewProviderDraft] = useState<NewProviderDraft>(defaultNewProviderDraft);
-  const [providerIdInFlight, setProviderIdInFlight] = useState<string | null>(null);
-  const [providerCreateInFlight, setProviderCreateInFlight] = useState(false);
   const [aiTaskRouteDrafts, setAiTaskRouteDrafts] = useState<Record<string, AiTaskRouteDraft>>({});
   const [aiTaskIdInFlight, setAiTaskIdInFlight] = useState<string | null>(null);
   const [newAiTaskDraft, setNewAiTaskDraft] = useState<NewAiTaskDraft>(defaultNewAiTaskDraft);
@@ -2449,21 +2423,6 @@ export function App() {
               mediaKind: fileType.mediaKind,
               parserKey: fileType.parserKey ?? "",
               capabilityState: fileType.capabilityState
-            }
-          ])
-        )
-      );
-      setProviderDrafts(
-        Object.fromEntries(
-          normalized.providers.map((provider) => [
-            provider.id,
-            {
-              displayName: provider.displayName ?? provider.providerName,
-              endpoint: provider.endpoint ?? "",
-              modelName: provider.modelName ?? "",
-              requiredSecretEnv: provider.requiredSecretEnv ?? "",
-              externalSendEnabled: provider.externalSendEnabled === true,
-              enabled: provider.enabled
             }
           ])
         )
@@ -3471,119 +3430,6 @@ export function App() {
           }
     );
     setStatusMessage("Suggested work item rejected.");
-  }
-
-  async function toggleProvider(providerId: string, enabled: boolean) {
-    if (accessToken === null) {
-      return;
-    }
-    setSettingsLoading(true);
-    setStatusMessage(null);
-    try {
-      await authedJson(accessToken, `/api/settings/providers/${encodeURIComponent(providerId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ enabled })
-      });
-      await loadSettings(accessToken);
-      setStatusMessage(enabled ? "Provider enabled." : "Provider disabled.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to update provider.");
-    } finally {
-      setSettingsLoading(false);
-    }
-  }
-
-  function updateProviderDraft<Field extends keyof ProviderDraft>(
-    providerId: string,
-    field: Field,
-    value: ProviderDraft[Field]
-  ) {
-    setProviderDrafts((current) => ({
-      ...current,
-      [providerId]: {
-        ...(current[providerId] ?? {
-          displayName: "",
-          endpoint: "",
-          modelName: "",
-          requiredSecretEnv: "",
-          externalSendEnabled: false,
-          enabled: false
-        }),
-        [field]: value
-      }
-    }));
-  }
-
-  function updateNewProviderDraft<Field extends keyof NewProviderDraft>(
-    field: Field,
-    value: NewProviderDraft[Field]
-  ) {
-    setNewProviderDraft((current) => ({ ...current, [field]: value }));
-  }
-
-  async function createProvider() {
-    if (accessToken === null) {
-      return;
-    }
-    if (newProviderDraft.displayName.trim() === "" || newProviderDraft.providerKind.trim() === "") {
-      setStatusMessage("Provider name and kind are required.");
-      return;
-    }
-    setProviderCreateInFlight(true);
-    setStatusMessage(null);
-    try {
-      await authedJson(accessToken, "/api/settings/providers", {
-        method: "POST",
-        body: JSON.stringify({
-          providerKind: newProviderDraft.providerKind,
-          displayName: newProviderDraft.displayName,
-          endpoint: newProviderDraft.endpoint,
-          modelName: newProviderDraft.modelName,
-          requiredSecretEnv: newProviderDraft.requiredSecretEnv,
-          externalSendEnabled: newProviderDraft.externalSendEnabled,
-          enabled: newProviderDraft.enabled
-        })
-      });
-      setNewProviderDraft(defaultNewProviderDraft);
-      await loadSettings(accessToken);
-      setStatusMessage("Provider added.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to add provider.");
-    } finally {
-      setProviderCreateInFlight(false);
-    }
-  }
-
-  async function saveProvider(providerId: string) {
-    if (accessToken === null) {
-      return;
-    }
-    const draft = providerDrafts[providerId];
-    if (draft === undefined || draft.displayName.trim() === "") {
-      setStatusMessage("Provider name is required.");
-      return;
-    }
-    setProviderIdInFlight(providerId);
-    setStatusMessage(null);
-    try {
-      await authedJson(accessToken, `/api/settings/providers/${encodeURIComponent(providerId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          displayName: draft.displayName,
-          endpoint: draft.endpoint,
-          modelName: draft.modelName,
-          requiredSecretEnv: draft.requiredSecretEnv,
-          externalSendEnabled: draft.externalSendEnabled,
-          enabled: draft.enabled
-        })
-      });
-      await loadSettings(accessToken);
-      setStatusMessage("Provider saved.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to save provider.");
-    } finally {
-      setProviderIdInFlight(null);
-    }
   }
 
   function updateAiTaskRouteDraft<Field extends keyof AiTaskRouteDraft>(
@@ -6213,271 +6059,61 @@ export function App() {
                 </section>
               ) : activeSettingsSection === "providers" ? (
                 <section className="detail-section" aria-label="Providers">
-                  <article className="settings-row provider-dev-panel">
-                    <div>
-                      <div className="batch-title">
-                        <strong>AppLauncher runtime options</strong>
-                        <span>{settingsSummary.appLauncher?.runtimeOptionsPresent ? "Configured" : "Missing"}</span>
-                      </div>
-                      <p>
-                        Manifest {settingsSummary.appLauncher?.manifestVersion ?? "not configured"}; minimum launcher{" "}
-                        {settingsSummary.appLauncher?.minLauncherVersion ?? "not configured"}; native launch target{" "}
-                        {settingsSummary.appLauncher?.nativeLaunchTarget ?? "unknown"}
-                      </p>
-                      <p>
-                        LLM runtime {settingsSummary.appLauncher?.llmRuntime?.provider ?? "not configured"}; model{" "}
-                        {settingsSummary.appLauncher?.llmRuntime?.modelName ?? "not configured"}; endpoint{" "}
-                        {settingsSummary.appLauncher?.llmRuntime?.endpointConfigured ? "configured" : "not configured"}.
-                        Secrets use AppLauncher secret storage:{" "}
-                        {(settingsSummary.appLauncher?.secretEnvironmentNames ?? []).length === 0
-                          ? "none"
-                          : settingsSummary.appLauncher?.secretEnvironmentNames.join(", ")}
-                      </p>
-                    </div>
-                  </article>
-                  <article className="settings-row provider-dev-panel">
-                    <div>
-                      <div className="batch-title">
-                        <strong>Shared provider registry</strong>
-                        <span>
-                          {settingsSummary.providerCatalog?.registry.reachable
-                            ? "Reachable"
-                            : settingsSummary.providerCatalog?.fallbackUsed
-                              ? "Using local fallback"
-                              : "Unavailable"}
-                        </span>
-                      </div>
-                      <p>
-                        URL {settingsSummary.providerCatalog?.registry.url ?? "not configured"}; profile{" "}
-                        {settingsSummary.providerCatalog?.registry.profile ?? "not configured"}; providers{" "}
-                        {settingsSummary.providerCatalog?.providers.length ?? 0}
-                      </p>
-                      {settingsSummary.providerCatalog?.registry.error ? (
-                        <p>{settingsSummary.providerCatalog.registry.error}</p>
-                      ) : null}
-                      <div className="chip-row">
-                        {(settingsSummary.providerCatalog?.providers ?? []).slice(0, 8).map((provider) => (
-                          <span className="tag-chip" key={provider.providerKey}>
-                            {provider.displayName} · {provider.enabled ? "enabled" : "disabled"} ·{" "}
-                            {provider.capabilities.map((capability) => capability.key).join(", ") || "no capabilities"}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </article>
-                  <article className="settings-row provider-task-row">
-                    <div>
-                      <div className="batch-title">
-                        <strong>Add provider</strong>
-                        <span>Key: {deriveTaskKeyPreview(newProviderDraft.displayName)}</span>
-                      </div>
-                      <div className="provider-route-controls">
-                        <label>
-                          <span>Provider Name</span>
-                          <input
-                            type="text"
-                            value={newProviderDraft.displayName}
-                            disabled={providerCreateInFlight}
-                            onChange={(event) => updateNewProviderDraft("displayName", event.currentTarget.value)}
-                          />
-                        </label>
-                        <label>
-                          <span>Provider Kind</span>
-                          <select
-                            value={newProviderDraft.providerKind}
-                            disabled={providerCreateInFlight}
-                            onChange={(event) => updateNewProviderDraft("providerKind", event.currentTarget.value)}
-                          >
-                            {providerKindSelectOptions.map((providerKind) => (
-                              <option value={providerKind} key={providerKind}>
-                                {providerKind}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          <span>Endpoint/base URL</span>
-                          <input
-                            type="text"
-                            value={newProviderDraft.endpoint}
-                            disabled={providerCreateInFlight}
-                            onChange={(event) => updateNewProviderDraft("endpoint", event.currentTarget.value)}
-                          />
-                        </label>
-                        <label>
-                          <span>Model ID/name</span>
-                          <input
-                            type="text"
-                            value={newProviderDraft.modelName}
-                            disabled={providerCreateInFlight}
-                            onChange={(event) => updateNewProviderDraft("modelName", event.currentTarget.value)}
-                          />
-                        </label>
-                        <label>
-                          <span>Required secret env</span>
-                          <input
-                            type="text"
-                            value={newProviderDraft.requiredSecretEnv}
-                            disabled={providerCreateInFlight}
-                            onChange={(event) =>
-                              updateNewProviderDraft("requiredSecretEnv", event.currentTarget.value)
-                            }
-                          />
-                        </label>
-                        <label className="toggle-row">
-                          <input
-                            type="checkbox"
-                            checked={newProviderDraft.externalSendEnabled}
-                            disabled={providerCreateInFlight}
-                            onChange={(event) =>
-                              updateNewProviderDraft("externalSendEnabled", event.currentTarget.checked)
-                            }
-                          />
-                          External send
-                        </label>
-                        <label className="toggle-row">
-                          <input
-                            type="checkbox"
-                            checked={newProviderDraft.enabled}
-                            disabled={providerCreateInFlight}
-                            onChange={(event) => updateNewProviderDraft("enabled", event.currentTarget.checked)}
-                          />
-                          Enabled
-                        </label>
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          disabled={providerCreateInFlight}
-                          onClick={() => void createProvider()}
-                        >
-                          {providerCreateInFlight ? <RefreshCcw className="spin" size={18} /> : <Plus size={18} />}
-                          Add provider
-                        </button>
-                      </div>
-                    </div>
-                  </article>
                   <div className="settings-list">
-                    {settingsSummary.providers.map((provider) => {
-                      const draft = providerDrafts[provider.id] ?? {
-                        displayName: provider.displayName ?? provider.providerName,
-                        endpoint: provider.endpoint ?? "",
-                        modelName: provider.modelName ?? "",
-                        requiredSecretEnv: provider.requiredSecretEnv ?? "",
-                        externalSendEnabled: provider.externalSendEnabled === true,
-                        enabled: provider.enabled
-                      };
-                      return (
-                      <article className="settings-row" key={provider.id}>
-                        <div>
+                    {(() => {
+                      const providerCatalog = settingsSummary.providerCatalog;
+                      const registryReachable = providerCatalog?.registry.reachable === true;
+                      const registryProviders = registryReachable ? providerCatalog.providers : [];
+                      if (!registryReachable) {
+                        return (
+                          <article className="settings-row">
+                            <div className="batch-title">
+                              <strong>Provider registry unavailable</strong>
+                              <span>Unavailable</span>
+                            </div>
+                            <p>Provider registry records are managed outside Memo Capture.</p>
+                            {providerCatalog?.registry.error ? <p>{providerCatalog.registry.error}</p> : null}
+                          </article>
+                        );
+                      }
+                      if (registryProviders.length === 0) {
+                        return (
+                          <article className="settings-row">
+                            <div className="batch-title">
+                              <strong>No registry providers</strong>
+                              <span>Empty</span>
+                            </div>
+                            <p>The active provider registry profile does not contain any providers.</p>
+                          </article>
+                        );
+                      }
+                      return registryProviders.map((provider) => (
+                        <article className="settings-row provider-registry-row" key={provider.providerKey}>
                           <div className="batch-title">
-                            <strong>{provider.providerKind}: {provider.displayName ?? provider.providerName}</strong>
-                            <span>{provider.enabled ? "Enabled" : "Disabled"}</span>
+                            <strong>{provider.displayName}</strong>
+                            <span className={provider.enabled ? "status-pill ready" : "status-pill"}>
+                              {provider.enabled ? "Enabled" : "Disabled"}
+                            </span>
                           </div>
-                          <p>
-                            Provider Key {provider.providerName}; adapter {provider.adapterKey ?? provider.providerName};
-                            runtime model {provider.runtimeModelName}
-                          </p>
-                          <p>
-                            Secret {provider.requiredSecretEnv ?? "not required"}{" "}
-                            {provider.secretConfigured ? "configured" : "not configured"}; health {provider.healthStatus}
-                          </p>
-                          {provider.runtimeConfiguration === null ? null : (
-                            <p>
-                              {provider.runtimeConfiguration.mode}; binary {provider.runtimeConfiguration.binaryPath};
-                              model {provider.runtimeConfiguration.modelPathConfigured ? "configured" : "not configured"};
-                              timeout {provider.runtimeConfiguration.timeoutMs}ms
-                            </p>
-                          )}
-                          <div className="provider-route-controls">
-                            <label>
-                              <span>Provider Name</span>
-                              <input
-                                type="text"
-                                value={draft.displayName}
-                                disabled={providerIdInFlight === provider.id}
-                                onChange={(event) =>
-                                  updateProviderDraft(provider.id, "displayName", event.currentTarget.value)
-                                }
-                              />
-                            </label>
-                            <label>
-                              <span>Provider Kind</span>
-                              <input type="text" value={provider.providerKind} readOnly />
-                            </label>
-                            <label>
-                              <span>Endpoint/base URL</span>
-                              <input
-                                type="text"
-                                value={draft.endpoint}
-                                disabled={providerIdInFlight === provider.id}
-                                onChange={(event) =>
-                                  updateProviderDraft(provider.id, "endpoint", event.currentTarget.value)
-                                }
-                              />
-                            </label>
-                            <label>
-                              <span>Model ID/name</span>
-                              <input
-                                type="text"
-                                value={draft.modelName}
-                                disabled={providerIdInFlight === provider.id}
-                                onChange={(event) =>
-                                  updateProviderDraft(provider.id, "modelName", event.currentTarget.value)
-                                }
-                              />
-                            </label>
-                            <label>
-                              <span>Required secret env</span>
-                              <input
-                                type="text"
-                                value={draft.requiredSecretEnv}
-                                disabled={providerIdInFlight === provider.id}
-                                onChange={(event) =>
-                                  updateProviderDraft(provider.id, "requiredSecretEnv", event.currentTarget.value)
-                                }
-                              />
-                            </label>
+                          <div className="provider-registry-meta">
+                            <span>Key {provider.providerKey}</span>
+                            {provider.model === undefined ? null : <span>Model {provider.model}</span>}
+                            <span>Health {provider.health?.status ?? "unknown"}</span>
                           </div>
-                        </div>
-                        <label className="toggle-row">
-                          <input
-                            type="checkbox"
-                            checked={draft.externalSendEnabled}
-                            disabled={providerIdInFlight === provider.id}
-                            onChange={(event) =>
-                              updateProviderDraft(provider.id, "externalSendEnabled", event.currentTarget.checked)
-                            }
-                          />
-                          External send
-                        </label>
-                        <div className="settings-table-actions">
-                          <label className="toggle-row">
-                            <input
-                              type="checkbox"
-                              checked={draft.enabled}
-                              disabled={providerIdInFlight === provider.id}
-                              onChange={(event) =>
-                                updateProviderDraft(provider.id, "enabled", event.currentTarget.checked)
-                              }
-                            />
-                            Enabled
-                          </label>
-                          <button
-                            className="secondary-button"
-                            type="button"
-                            disabled={providerIdInFlight === provider.id}
-                            onClick={() => void saveProvider(provider.id)}
-                          >
-                            {providerIdInFlight === provider.id ? (
-                              <RefreshCcw className="spin" size={18} />
+                          <div className="tag-chip-list">
+                            {provider.capabilities.length === 0 ? (
+                              <span className="tag-chip">No capabilities</span>
                             ) : (
-                              <Save size={18} />
+                              provider.capabilities.map((capability) => (
+                                <span className="tag-chip" key={`${provider.providerKey}-${capability.key}`}>
+                                  {capability.displayName}
+                                </span>
+                              ))
                             )}
-                            Save
-                          </button>
-                        </div>
-                      </article>
-                    );})}
+                          </div>
+                        </article>
+                      ));
+                    })()}
                   </div>
                 </section>
               ) : activeSettingsSection === "processing-hooks" ? (
@@ -7869,19 +7505,6 @@ function normalizePromptSummary(prompt: PromptSummary): PromptSummary {
 
 function normalizeTaskRenderLocation(value: unknown): TaskRenderLocation {
   return value === "work_item_list" || value === "export_page" ? value : "work_item_detail";
-}
-
-function deriveTaskKeyPreview(displayName: string): string {
-  return (
-    displayName
-      .trim()
-      .toLowerCase()
-      .replace(/['"]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 64)
-      .replace(/-+$/g, "") || "derived-from-name"
-  );
 }
 
 function stateLabel(state: string): string {

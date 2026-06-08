@@ -131,8 +131,6 @@ export interface SettingsOperations {
   getSummary(): Promise<unknown>;
   updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
-  createProvider(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
-  updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   getRegistryStatus(): Promise<unknown>;
   getReadinessDiagnostics(): Promise<unknown>;
   diagnoseProviderAdapter(body: unknown): Promise<unknown>;

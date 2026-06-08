@@ -298,22 +298,6 @@ function matchProtectedRoute(
       services.settings.updateTranscription(await readJsonBody(context.request), session.user, context.requestId);
   }
 
-  const providerPatchMatch = /^\/api\/settings\/providers\/([^/]+)$/.exec(pathname);
-  if (method === "PATCH" && providerPatchMatch !== null) {
-    return async (context, session) =>
-      services.settings.updateProvider(
-        decodeURIComponent(providerPatchMatch[1] ?? ""),
-        await readJsonBody(context.request),
-        session.user,
-        context.requestId
-      );
-  }
-
-  if (method === "POST" && pathname === "/api/settings/providers") {
-    return async (context, session) =>
-      services.settings.createProvider(await readJsonBody(context.request), session.user, context.requestId);
-  }
-
   if (method === "GET" && pathname === "/api/settings/registry/status") {
     return async () => services.settings.getRegistryStatus();
   }

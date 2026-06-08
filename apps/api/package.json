@@ -1,6 +1,6 @@
 {
   "name": "@memo-capture/api",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "dist/src/index.js",
@@ -18,8 +18,8 @@
     "@invoke-providers/client": "file:../../../invoke-providers-for-tasks/packages/client",
     "@invoke-providers/core": "file:../../../invoke-providers-for-tasks/packages/core",
     "@invoke-providers/react": "file:../../../invoke-providers-for-tasks/packages/react",
-    "@memo-capture/config": "0.1.0",
-    "@memo-capture/domain": "0.1.0",
+    "@memo-capture/config": "1.0.0",
+    "@memo-capture/domain": "1.0.0",
     "exifr": "7.1.3",
     "pg": "8.13.1",
     "sharp": "0.34.5",

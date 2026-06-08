@@ -1,6 +1,6 @@
 {
   "name": "@memo-capture/desktop",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@memo-capture/domain": "0.1.0",
+    "@memo-capture/domain": "1.0.0",
     "@state-workflow/debugger-react": "file:../../../state-workflow-runtime/packages/debugger-react",
     "@tauri-apps/api": "2.5.0",
     "lucide-react": "0.511.0",

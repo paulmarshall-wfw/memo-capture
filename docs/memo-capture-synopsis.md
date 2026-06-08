@@ -30,7 +30,7 @@ Use Projects for controlled project setup and auto-promotion thresholds, Setting
 
 ## Technical Foundations
 
-Memo Capture is an npm workspace at version `0.1.0` with a Tauri + React desktop app, a TypeScript API service, a TypeScript worker, and shared TypeScript packages for domain and configuration contracts.
+Memo Capture is an npm workspace at version `1.0.0` with a Tauri + React desktop app, a TypeScript API service, a TypeScript worker, and shared TypeScript packages for domain and configuration contracts.
 
 Postgres stores canonical records, workflow state, settings, processing jobs, audit events, and export metadata. S3-compatible object storage stores original files, transcript artifacts, export bundles, and other large managed artifacts. Desktop clients do not connect directly to Postgres or object storage; all canonical mutations go through the backend API.
 

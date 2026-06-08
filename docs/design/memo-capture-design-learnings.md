@@ -259,7 +259,7 @@ Prompt editing is attached to prompt-backed task definitions rather than a stand
 
 Task definitions are user-managed Settings records. The app must not seed OCR, memo expansion, revision, suggestion, or tag tasks as configured tasks; users add and delete the task definitions they want. Processing hook keys are persisted in a Settings-managed registry and do not create task rows by themselves.
 
-The deterministic `local-dev` work-item expander is a development provider. Provider configuration should allow multiple named provider instances of the same kind to coexist. App-owned AI actions route through explicit task definitions and dispatch by app-owned `hookKey`, so multiple configured tasks can share the same implementation hook with different prompts or model overrides. Settings exposes one Tasks list with provider-key selection, read-only provider kind, hook selection, prompt controls, and readiness messaging; task keys are generated once from display names and are not foregrounded in normal Settings UI. AppLauncher runtime options provide only generic non-secret LLM runtime values (`LLM_PROVIDER`, `LLM_MODEL`, and `LLM_ENDPOINT`); API keys remain AppLauncher secrets or process environment values and are never stored in runtime options.
+The deterministic `local-dev` work-item expander is a development provider. Provider configuration should allow multiple named provider instances of the same kind to coexist. App-owned AI actions route through explicit task definitions and dispatch by app-owned `hookKey`, so multiple configured tasks can share the same implementation hook with different prompts or model overrides. Settings exposes one Tasks list with provider-key selection, read-only provider kind, hook selection, prompt controls, and readiness messaging; task keys are generated once from display names and are not foregrounded in normal Settings UI. The Providers page is a read-only shared-registry catalog in the target app: it shows provider display name, provider key, enabled/disabled status, capabilities, model when relevant, and health, but it does not create, save, enable, disable, or edit providers. AppLauncher runtime options provide only generic non-secret LLM runtime values (`LLM_PROVIDER`, `LLM_MODEL`, and `LLM_ENDPOINT`); API keys remain AppLauncher secrets or process environment values and are never stored in runtime options.
 
 Settings has a Processing Hooks page for creating hook keys, reviewing hook status, and deleting unused hooks. A hook shows `Custom function implemented` only when backend app code has a handler for that hook key; otherwise it shows `Default no-op`. Hook records are immutable after creation. Deleting any hook is blocked while any configured task references it, enabled or disabled. Until app code registers logic for a hook, runtime attempts must skip as a no-op and providers must not be called.
 
@@ -536,7 +536,7 @@ Rules:
 - watched-folder archive copies are outside Memo Capture's privacy boundary after the app moves them
 - local file paths may appear in local diagnostics, but must not be sent to external AI/transcription providers
 
-Provider enablement UI should clearly show provider name, endpoint/model where relevant, whether content/audio may be sent externally, and redacted secret status.
+Provider management belongs outside Memo Capture when using the shared provider registry. Memo Capture should not expose endpoint/base URL, provider kind, external-send controls, enabled controls, or secret fields on the Providers page.
 
 ## Project, Feature Group, And Contributor Governance
 
@@ -668,6 +668,7 @@ Provider configs are global for the deployment in V1. Project-specific provider 
 
 Rules:
 
+- the Providers page reads from the shared provider registry and includes disabled registry providers
 - transcription providers and LLM providers are configured independently
 - each provider has explicit enabled/disabled state
 - disabled providers never receive jobs

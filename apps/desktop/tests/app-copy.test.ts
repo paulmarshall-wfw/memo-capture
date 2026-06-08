@@ -50,8 +50,15 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /workItemDetailTasks/);
   assert.match(appSource, /work-item-task-actions/);
   assert.match(appSource, /\/tasks\/\$\{encodeURIComponent\(task\.id\)\}\/run/);
-  assert.match(appSource, /AppLauncher runtime options/);
-  assert.match(appSource, /Provider Name/);
+  assert.match(appSource, /Provider registry unavailable/);
+  assert.match(appSource, /No registry providers/);
+  assert.match(appSource, /providerCatalog\.providers/);
+  assert.doesNotMatch(appSource, /AppLauncher runtime options/);
+  assert.doesNotMatch(appSource, /Shared provider registry/);
+  assert.doesNotMatch(appSource, /Provider Name/);
+  assert.doesNotMatch(appSource, /Endpoint\/base URL/);
+  assert.doesNotMatch(appSource, /Required secret env/);
+  assert.doesNotMatch(appSource, /External send/);
   assert.match(appSource, /Provider Kind/);
   assert.match(appSource, /Provider Key/);
   assert.match(appSource, /Processing Hooks/);
@@ -67,8 +74,8 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /Work item list/);
   assert.match(appSource, /Export page/);
   assert.match(appSource, /displayOrder/);
-  assert.match(appSource, /Add provider/);
-  assert.match(appSource, /\/api\/settings\/providers/);
+  assert.doesNotMatch(appSource, /Add provider/);
+  assert.doesNotMatch(appSource, /\/api\/settings\/providers/);
   assert.doesNotMatch(appSource, /Generated identity/);
   assert.doesNotMatch(appSource, /prompt\.name/);
   assert.doesNotMatch(appSource, /prompt\.purpose/);
@@ -90,7 +97,7 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /\/api\/settings\/ai-tasks\/\$\{encodeURIComponent\(task\.id\)\}/);
   assert.doesNotMatch(appSource, /\/api\/settings\/prompts\/\$\{encodeURIComponent\(prompt\.id\)\}\/current/);
   assert.match(appSource, /Model override/);
-  assert.match(appSource, /LLM runtime/);
+  assert.match(appSource, /runtimeReady/);
   assert.match(appSource, /task\.prompt/);
   assert.doesNotMatch(appSource, /Task kinds/);
   assert.doesNotMatch(appSource, /Add task kind/);
@@ -131,11 +138,11 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
 
 test("AppLauncher manifests expose generic LLM runtime options", () => {
   const webManifest = readFileSync(
-    new URL("../../../dist/applauncher-manifests/memo-capture/0.1.0/manifest.json", import.meta.url),
+    new URL("../../../dist/applauncher-manifests/memo-capture/1.0.0/manifest.json", import.meta.url),
     "utf8"
   );
   const nativeManifest = readFileSync(
-    new URL("../../../dist/applauncher-manifests/memo-capture-native/0.1.0/manifest.json", import.meta.url),
+    new URL("../../../dist/applauncher-manifests/memo-capture-native/1.0.0/manifest.json", import.meta.url),
     "utf8"
   );
   const combined = `${webManifest}\n${nativeManifest}`;

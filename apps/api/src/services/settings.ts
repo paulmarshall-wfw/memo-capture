@@ -13,6 +13,7 @@ import {
   type ProviderConfigRow
 } from "../repositories/settings.js";
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
+import { fetchRegistryProviders } from "./invoke-providers/registry.js";
 import { createTargetAppRuntimeService } from "./invoke-providers/runtime.js";
 import { normalizeCapabilityKey } from "./invoke-providers/mapping.js";
 import {
@@ -27,7 +28,6 @@ const IMPLEMENTED_AI_TASK_HOOKS: ReadonlySet<string> = new Set([
   MEMO_EXPANSION_HOOK_KEY,
   SUGGEST_NEW_MEMOS_HOOK_KEY
 ]);
-const PROVIDER_KIND_OPTIONS = new Set(["llm", "transcription", "stt", "tts", "ocr", "script"]);
 const TASK_RENDER_LOCATIONS = new Set(["work_item_detail", "work_item_list", "export_page"]);
 
 export class SettingsService {
@@ -66,7 +66,7 @@ export class SettingsService {
       settings.listAiTaskRoutes(),
       settings.listProcessingHooks(),
       settings.listPrompts(),
-      runtimeService.getProviderCatalog(),
+      fetchRegistryProviders(this.config),
       runtimeService.getReadinessDiagnostics(),
       runtimeService.getHookRegistryState()
     ]);
@@ -100,7 +100,7 @@ export class SettingsService {
       providers: providers.map((provider) => serializeProvider(provider, this.config, providerCapabilities)),
       providerCatalog: {
         registry: providerCatalog.registry,
-        fallbackUsed: providerCatalog.fallbackUsed,
+        fallbackUsed: false,
         providers: providerCatalog.providers
       },
       providerCapabilities: providerCapabilities.map(serializeProviderCapability),
@@ -127,11 +127,10 @@ export class SettingsService {
   }
 
   async getRegistryStatus(): Promise<Record<string, unknown>> {
-    const runtimeService = createTargetAppRuntimeService(this.db, this.config);
-    const providerCatalog = await runtimeService.getProviderCatalog();
+    const providerCatalog = await fetchRegistryProviders(this.config);
     return {
       registry: providerCatalog.registry,
-      fallbackUsed: providerCatalog.fallbackUsed,
+      fallbackUsed: false,
       providers: providerCatalog.providers
     };
   }
@@ -244,71 +243,6 @@ export class SettingsService {
           updatedAt: toIso(updated.updated_at)
         }
       };
-    });
-  }
-
-  async updateProvider(
-    providerId: string,
-    body: unknown,
-    actor: AppUserRecord,
-    requestId: string
-  ): Promise<Record<string, unknown>> {
-    const input = parseProviderBody(body);
-    return this.db.transaction(async (client) => {
-      const settings = new SettingsRepository(client);
-      const audit = new AuditRepository(client);
-      const provider = await settings.updateProvider({ providerId, ...input, actorUserId: actor.id });
-      if (provider === null) {
-        throw new HttpError(404, "not_found", "provider_config was not found.");
-      }
-      await audit.record({
-        eventName: "provider_config.updated",
-        actor,
-        subjectType: "provider_config",
-        subjectId: provider.id,
-        requestId,
-        metadata: {
-          providerKind: provider.provider_kind,
-          providerName: provider.provider_name,
-          enabled: provider.enabled,
-          endpointConfigured: provider.endpoint !== null,
-          modelName: provider.model_name
-        },
-        redactionApplied: true
-      });
-      return { provider: serializeProvider(provider, this.config, await settings.listProviderCapabilities()) };
-    });
-  }
-
-  async createProvider(body: unknown, actor: AppUserRecord, requestId: string): Promise<Record<string, unknown>> {
-    const input = parseCreateProviderBody(body);
-    return this.db.transaction(async (client) => {
-      const settings = new SettingsRepository(client);
-      const audit = new AuditRepository(client);
-      const existing = await settings.findProviderByKindAndName(input.providerKind, input.providerName);
-      if (existing !== null) {
-        throw new HttpError(409, "provider_config_exists", "A provider already exists for the derived provider key.", {
-          providerKind: input.providerKind,
-          providerName: input.providerName
-        });
-      }
-      const provider = await settings.createProvider({ ...input, actorUserId: actor.id });
-      await audit.record({
-        eventName: "provider_config.created",
-        actor,
-        subjectType: "provider_config",
-        subjectId: provider.id,
-        requestId,
-        metadata: {
-          providerKind: provider.provider_kind,
-          providerName: provider.provider_name,
-          enabled: provider.enabled,
-          endpointConfigured: provider.endpoint !== null,
-          modelName: provider.model_name
-        },
-        redactionApplied: true
-      });
-      return { provider: serializeProvider(provider, this.config, await settings.listProviderCapabilities()) };
     });
   }
 
@@ -1827,61 +1761,6 @@ function parseTranscriptionBody(body: unknown) {
     throw new HttpError(400, "invalid_request", "maxRetryAttempts must be an integer from 0 to 10.");
   }
   return { maxRetryAttempts };
-}
-
-function parseProviderBody(body: unknown) {
-  const record = parseObject(body);
-  if (record.enabled !== undefined && typeof record.enabled !== "boolean") {
-    throw new HttpError(400, "invalid_request", "enabled must be a boolean.");
-  }
-  if (record.externalSendEnabled !== undefined && typeof record.externalSendEnabled !== "boolean") {
-    throw new HttpError(400, "invalid_request", "externalSendEnabled must be a boolean.");
-  }
-  return {
-    displayName: record.displayName === undefined ? undefined : assertNonEmptyString(record.displayName, "displayName"),
-    enabled: record.enabled === undefined ? undefined : record.enabled === true,
-    endpoint: record.endpoint === undefined ? undefined : optionalString(record.endpoint, "endpoint"),
-    modelName: record.modelName === undefined ? undefined : optionalString(record.modelName, "modelName"),
-    requiredSecretEnv:
-      record.requiredSecretEnv === undefined ? undefined : optionalString(record.requiredSecretEnv, "requiredSecretEnv"),
-    externalSendEnabled:
-      record.externalSendEnabled === undefined ? undefined : record.externalSendEnabled === true
-  };
-}
-
-function parseCreateProviderBody(body: unknown) {
-  const record = parseObject(body);
-  const displayName = assertNonEmptyString(record.displayName ?? record.providerName, "displayName");
-  const providerKind = parseProviderKind(record.providerKind);
-  const providerName = deriveTaskKey(displayName);
-  const enabled = parseOptionalBoolean(record.enabled, "enabled") ?? false;
-  const externalSendEnabled = parseOptionalBoolean(record.externalSendEnabled, "externalSendEnabled") ?? false;
-  const adapterKey =
-    record.adapterKey === undefined
-      ? providerKind === "llm"
-        ? "openai-compatible"
-        : providerName
-      : parseConfigKey(record.adapterKey, "adapterKey");
-  return {
-    providerKind,
-    providerName,
-    displayName,
-    adapterKey,
-    enabled,
-    endpoint: record.endpoint === undefined ? null : optionalString(record.endpoint, "endpoint"),
-    modelName: record.modelName === undefined ? null : optionalString(record.modelName, "modelName"),
-    requiredSecretEnv:
-      record.requiredSecretEnv === undefined ? null : optionalString(record.requiredSecretEnv, "requiredSecretEnv"),
-    externalSendEnabled
-  };
-}
-
-function parseProviderKind(value: unknown): string {
-  const providerKind = parseConfigKey(value, "providerKind");
-  if (!PROVIDER_KIND_OPTIONS.has(providerKind)) {
-    throw new HttpError(400, "invalid_request", "providerKind must be llm, stt, tts, ocr, script, or transcription.");
-  }
-  return providerKind === "stt" ? "transcription" : providerKind;
 }
 
 function parseFileTypeBody(body: unknown) {

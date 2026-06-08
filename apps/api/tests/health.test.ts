@@ -6,7 +6,7 @@ import { createHealthPayload } from "../src/health.js";
 test("health payload exposes service version and commit", () => {
   const config = readApiConfig({
     MEMO_CAPTURE_API_PORT: "4788",
-    MEMO_CAPTURE_APP_VERSION: "0.1.0",
+    MEMO_CAPTURE_APP_VERSION: "1.0.0",
     MEMO_CAPTURE_COMMIT_SHA: "test-sha"
   });
 
@@ -14,6 +14,6 @@ test("health payload exposes service version and commit", () => {
 
   assert.equal(payload.ok, true);
   assert.equal(payload.service, "memo-capture-api");
-  assert.equal(payload.version, "0.1.0");
+  assert.equal(payload.version, "1.0.0");
   assert.equal(payload.commitSha, "test-sha");
 });

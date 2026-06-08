@@ -82,7 +82,7 @@ Storage:
 
 The repo is scaffolded, not feature-complete. Current implementation includes:
 
-- npm workspace at version `0.1.0`
+- npm workspace at version `1.0.0`
 - `apps/desktop` placeholder Tauri + React UI
 - `apps/api` health, readiness, and version endpoints
 - `apps/worker` placeholder startup process

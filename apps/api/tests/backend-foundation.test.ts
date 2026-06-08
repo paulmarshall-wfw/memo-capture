@@ -29,7 +29,7 @@ test("local-dev auth creates a fixed development session when explicitly enabled
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_EMAIL: "dev@example.test",
-    MEMO_CAPTURE_APP_VERSION: "0.1.0",
+    MEMO_CAPTURE_APP_VERSION: "1.0.0",
     MEMO_CAPTURE_COMMIT_SHA: "test-sha"
   });
   const db = new FakeDatabase();
@@ -2023,7 +2023,7 @@ test("protected routes require authorization and include a request id", async ()
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    MEMO_CAPTURE_APP_VERSION: "0.1.0",
+    MEMO_CAPTURE_APP_VERSION: "1.0.0",
     MEMO_CAPTURE_COMMIT_SHA: "test-sha"
   });
   const services = stubServices();
@@ -2049,7 +2049,7 @@ test("basic protected capture routes expose session, catalog, work items, and fo
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    MEMO_CAPTURE_APP_VERSION: "0.1.0",
+    MEMO_CAPTURE_APP_VERSION: "1.0.0",
     MEMO_CAPTURE_COMMIT_SHA: "test-sha"
   });
   const services = captureRouteServices();
@@ -2245,7 +2245,13 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     const settings = await authedJson(baseUrl, "/api/settings");
     assert.equal(settings.response.status, 200);
     assert.equal(settings.body.providers[0].providerName, "local-dev");
+    assert.equal(settings.body.providerCatalog.fallbackUsed, false);
     assert.equal(settings.body.fileTypes[0].extension, ".md");
+
+    const registryStatus = await authedJson(baseUrl, "/api/settings/registry/status");
+    assert.equal(registryStatus.response.status, 200);
+    assert.equal(registryStatus.body.fallbackUsed, false);
+    assert.ok(Array.isArray(registryStatus.body.providers));
 
     const taskKindCreate = await authedJson(baseUrl, "/api/settings/task-kinds", {
       method: "POST",
@@ -2267,13 +2273,6 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     });
     assert.equal(taskKindPatch.response.status, 200, JSON.stringify(taskKindPatch.body));
     assert.equal(taskKindPatch.body.taskKind.enabled, false);
-
-    const providerPatch = await authedJson(baseUrl, "/api/settings/providers/provider-1", {
-      method: "PATCH",
-      body: JSON.stringify({ enabled: true, modelName: "memo-capture-local-dev-expander-v1" })
-    });
-    assert.equal(providerPatch.response.status, 200);
-    assert.equal(providerPatch.body.provider.enabled, true);
 
     const processingHookCreate = await authedJson(baseUrl, "/api/settings/processing-hooks", {
       method: "POST",
@@ -2632,7 +2631,22 @@ function stubServices(): AppServices {
       }
     } as unknown as AppServices["photoImports"],
     settings: {
-      getSummary: async () => ({ providers: [], aiTasks: [], appLauncher: null }),
+      getSummary: async () => ({
+        providers: [],
+        providerCatalog: {
+          registry: {
+            url: "http://127.0.0.1:5181",
+            profile: "default",
+            configured: true,
+            reachable: false,
+            error: "not reachable"
+          },
+          fallbackUsed: false,
+          providers: []
+        },
+        aiTasks: [],
+        appLauncher: null
+      }),
       updateExtraction: async () => {
         throw new Error("not used");
       },
@@ -2645,12 +2659,7 @@ function stubServices(): AppServices {
       createFileType: async () => {
         throw new Error("not used");
       },
-      updateProvider: async () => {
-        throw new Error("not used");
-      },
-      createProvider: async () => {
-        throw new Error("not used");
-      },
+      getRegistryStatus: async () => ({ fallbackUsed: false, providers: [] }),
       createAiTaskDefinition: async () => {
         throw new Error("not used");
       },
@@ -3003,7 +3012,7 @@ function captureRouteServices(): AppServices {
       }),
       listProviderHealth: async () => ({ providers: [] }),
       getSystemDiagnostics: async () => ({
-        api: { service: "memo-capture-api", version: "0.1.0", commitSha: "test-sha" },
+        api: { service: "memo-capture-api", version: "1.0.0", commitSha: "test-sha" },
         database: { ok: true },
         worker: null,
         providers: { providers: [] },
@@ -3162,6 +3171,27 @@ function captureRouteServices(): AppServices {
             updatedAt: "2026-05-29T00:00:00.000Z"
           }
         ],
+        providerCatalog: {
+          registry: {
+            url: "http://127.0.0.1:5181",
+            profile: "default",
+            configured: true,
+            reachable: true,
+            error: null
+          },
+          fallbackUsed: false,
+          providers: [
+            {
+              providerKey: "local-dev",
+              displayName: "Local development",
+              enabled: true,
+              adapterKey: "local-dev",
+              externalSend: false,
+              capabilities: [{ key: "llm.generateJson", displayName: "Generate JSON" }],
+              health: { status: "unknown" }
+            }
+          ]
+        },
         taskKinds: [
           {
             id: "task-kind-llm",
@@ -3285,6 +3315,27 @@ function captureRouteServices(): AppServices {
       deleteParserType: async (id: string) => ({ deleted: true, parserType: { id } }),
       updateExtraction: async () => ({ extraction: { projectConfidenceThreshold: 0.8 } }),
       updateTranscription: async () => ({ transcription: { maxRetryAttempts: 4 } }),
+      getRegistryStatus: async () => ({
+        registry: {
+          url: "http://127.0.0.1:5181",
+          profile: "default",
+          configured: true,
+          reachable: true,
+          error: null
+        },
+        fallbackUsed: false,
+        providers: [
+          {
+            providerKey: "local-dev",
+            displayName: "Local development",
+            enabled: true,
+            adapterKey: "local-dev",
+            externalSend: false,
+            capabilities: [{ key: "llm.generateJson", displayName: "Generate JSON" }],
+            health: { status: "unknown" }
+          }
+        ]
+      }),
       updateFileType: async () => {
         fileTypeCapabilityState = "inactive";
         return {
@@ -3317,32 +3368,6 @@ function captureRouteServices(): AppServices {
         };
       },
       deleteFileType: async (id: string) => ({ deleted: true, fileType: { id } }),
-      updateProvider: async () => ({
-        provider: {
-          id: "provider-1",
-          providerKind: "llm",
-          providerName: "local-dev",
-          enabled: true,
-          endpointConfigured: false,
-          modelName: "memo-capture-local-dev-expander-v1",
-          secretSource: "environment",
-          secretConfigured: true,
-          healthStatus: "unknown",
-          runtimeProvider: "local-dev",
-          runtimeModelName: "memo-capture-local-dev-expander-v1",
-          lastHealthCheckAt: null,
-          updatedAt: "2026-05-29T00:06:00.000Z"
-        }
-      }),
-      createProvider: async () => ({
-        provider: {
-          id: "provider-new",
-          providerKind: "llm",
-          providerName: "openai-compatible",
-          displayName: "OpenAI-compatible",
-          enabled: false
-        }
-      }),
       createProcessingHook: async (body: unknown) => ({
         processingHook: {
           hookKey: (body as { hookKey: string }).hookKey,

@@ -1,6 +1,6 @@
 [package]
 name = "memo-capture-desktop"
-version = "0.1.0"
+version = "1.0.0"
 description = "Memo Capture desktop shell"
 authors = ["Paul Marshall"]
 edition = "2021"

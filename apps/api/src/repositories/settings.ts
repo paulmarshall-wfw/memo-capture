@@ -671,75 +671,6 @@ export class SettingsRepository {
     return result.rows;
   }
 
-  async findProviderByKindAndName(providerKind: string, providerName: string): Promise<ProviderConfigRow | null> {
-    const result = await this.db.query<ProviderConfigRow>(
-      `select id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
-              secret_source, required_secret_env, external_send_enabled, runtime_provider_env, runtime_model_env,
-              runtime_endpoint_env, health_status, last_health_check_at, updated_at
-       from provider_configs
-       where lower(provider_kind) = lower($1)
-         and lower(provider_name) = lower($2)
-       limit 1`,
-      [providerKind, providerName]
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async createProvider(input: {
-    providerKind: string;
-    providerName: string;
-    displayName: string;
-    adapterKey: string;
-    enabled: boolean;
-    endpoint: string | null;
-    modelName: string | null;
-    requiredSecretEnv: string | null;
-    externalSendEnabled: boolean;
-    actorUserId: string;
-  }): Promise<ProviderConfigRow> {
-    const result = await this.db.query<ProviderConfigRow>(
-      `insert into provider_configs (
-         id,
-         provider_kind,
-         provider_name,
-         display_name,
-         adapter_key,
-         enabled,
-         endpoint,
-         model_name,
-         secret_source,
-         required_secret_env,
-         external_send_enabled,
-         runtime_provider_env,
-         runtime_model_env,
-         runtime_endpoint_env,
-         health_status,
-         created_by,
-         updated_by,
-         created_at,
-         updated_at
-       )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, 'environment', $9, $10, null, null, null, 'unknown', $11, $11, now(), now())
-       returning id, provider_kind, provider_name, display_name, adapter_key, enabled, endpoint, model_name,
-                 secret_source, required_secret_env, external_send_enabled, runtime_provider_env, runtime_model_env,
-                 runtime_endpoint_env, health_status, last_health_check_at, updated_at`,
-      [
-        randomUUID(),
-        input.providerKind,
-        input.providerName,
-        input.displayName,
-        input.adapterKey,
-        input.enabled,
-        nullIfBlank(input.endpoint),
-        nullIfBlank(input.modelName),
-        nullIfBlank(input.requiredSecretEnv),
-        input.externalSendEnabled,
-        input.actorUserId
-      ]
-    );
-    return requiredRow(result.rows[0], "provider create failed");
-  }
-
   async listTaskKinds(): Promise<TaskKindRow[]> {
     const result = await this.db.query<TaskKindRow>(
       `select id, kind_key, display_name, description, provider_kind, capability_key,
@@ -1198,50 +1129,6 @@ export class SettingsRepository {
        where ai_task_definitions.id = $1
        limit 1`,
       [taskDefinitionId]
-    );
-    return result.rows[0] ?? null;
-  }
-
-  async updateProvider(input: {
-    providerId: string;
-    displayName?: string | undefined;
-    enabled?: boolean | undefined;
-    endpoint?: string | null | undefined;
-    modelName?: string | null | undefined;
-    requiredSecretEnv?: string | null | undefined;
-    externalSendEnabled?: boolean | undefined;
-    actorUserId: string;
-  }): Promise<ProviderConfigRow | null> {
-    const result = await this.db.query<ProviderConfigRow>(
-      `update provider_configs
-       set
-         display_name = case when $2::boolean then $3::text else display_name end,
-         enabled = coalesce($4::boolean, enabled),
-         endpoint = case when $5::boolean then $6::text else endpoint end,
-         model_name = case when $7::boolean then $8::text else model_name end,
-         required_secret_env = case when $9::boolean then $10::text else required_secret_env end,
-         external_send_enabled = coalesce($11::boolean, external_send_enabled),
-         updated_by = $12,
-         updated_at = now()
-       where id = $1
-       returning id, provider_kind, provider_name, enabled, endpoint, model_name,
-                 display_name, adapter_key, secret_source, required_secret_env, external_send_enabled,
-                 runtime_provider_env, runtime_model_env, runtime_endpoint_env,
-                 health_status, last_health_check_at, updated_at`,
-      [
-        input.providerId,
-        input.displayName !== undefined,
-        input.displayName ?? null,
-        input.enabled ?? null,
-        input.endpoint !== undefined,
-        nullIfBlank(input.endpoint),
-        input.modelName !== undefined,
-        nullIfBlank(input.modelName),
-        input.requiredSecretEnv !== undefined,
-        nullIfBlank(input.requiredSecretEnv),
-        input.externalSendEnabled ?? null,
-        input.actorUserId
-      ]
     );
     return result.rows[0] ?? null;
   }
