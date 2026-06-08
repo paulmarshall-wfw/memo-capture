@@ -25,14 +25,7 @@ export class TargetAppRuntimeService {
 
   async getProviderCatalog(): Promise<RegistryProviderSnapshot & { fallbackUsed: boolean }> {
     const registry = await fetchRegistryProviders(this.config);
-    if (registry.registry.reachable && registry.providers.length > 0) {
-      return { ...registry, fallbackUsed: false };
-    }
-    return {
-      registry: registry.registry,
-      providers: await this.repositories.listLocalProviders(),
-      fallbackUsed: true
-    };
+    return { ...registry, fallbackUsed: false };
   }
 
   async listTaskSettings(): Promise<SharedTaskDefinition[]> {

@@ -14,8 +14,10 @@ See `.env.example` for the current non-secret template.
 - `MEMO_CAPTURE_APP_VERSION`: runtime version shown in diagnostics.
 - `MEMO_CAPTURE_COMMIT_SHA`: commit identity shown in diagnostics.
 - `INVOKE_PROVIDERS_REGISTRY_URL`: non-secret URL for the separate local invoke-providers registry service. Defaults to `http://127.0.0.1:5181`.
-- `INVOKE_PROVIDERS_PROFILE`: non-secret registry profile key selected for provider catalog lookups. Defaults to `default`.
+- `INVOKE_PROVIDERS_PROFILE`: non-secret registry profile key selected for provider catalog lookups. Defaults to `local-dev`, matching the local registry seed in `invoke-providers-for-tasks`.
 - `INVOKE_PROVIDERS_COMMIT_SHA`: shared provider runtime/library commit identity recorded on invoke task-run history. Defaults to `MEMO_CAPTURE_COMMIT_SHA`.
+
+Memo Capture does not fall back to its legacy local provider rows when the shared registry is unavailable or the selected profile is missing. The Providers page and provider-backed task readiness fail against the registry until `INVOKE_PROVIDERS_REGISTRY_URL` is reachable and `INVOKE_PROVIDERS_PROFILE` names a registered profile.
 
 ## Database
 

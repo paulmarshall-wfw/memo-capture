@@ -69,7 +69,7 @@ export function mapTaskRouteRow(task: AiTaskRouteRow): SharedTaskDefinition {
     enabled: task.route_enabled,
     requiredRuntimeKeys: [task.runtime_option_id]
   };
-  const selectedProviderKey = task.provider_key ?? task.provider_name;
+  const selectedProviderKey = normalizeRegistryProviderKey(task.provider_key ?? task.provider_name, task);
   if (selectedProviderKey !== null) {
     sharedTask.selectedProviderKey = selectedProviderKey;
   }
@@ -99,6 +99,25 @@ export function mapTaskRouteRow(task: AiTaskRouteRow): SharedTaskDefinition {
     sharedTask.prompt = prompt;
   }
   return sharedTask;
+}
+
+function normalizeRegistryProviderKey(
+  value: string | null,
+  task: Pick<AiTaskRouteRow, "provider_kind">
+): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (value === "local-dev" && task.provider_kind === "llm") {
+    return "deterministic-local-dev";
+  }
+  if (value === "openai-compatible") {
+    return "openai-compatible-local";
+  }
+  if (value === "whisper-cpp") {
+    return "whisper-cpp-local";
+  }
+  return value;
 }
 
 export function mapProcessingHookRow(

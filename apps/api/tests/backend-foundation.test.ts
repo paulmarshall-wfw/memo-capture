@@ -48,7 +48,9 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   const config = readApiConfig({
     MEMO_CAPTURE_AUTH_MODE: "local-dev",
     MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev"
+    LLM_PROVIDER: "local-dev",
+    INVOKE_PROVIDERS_REGISTRY_URL: "http://127.0.0.1:9",
+    INVOKE_PROVIDERS_PROFILE: "local-dev"
   });
   const db = new FakeDatabase();
   seedTaskSettings(db);
@@ -73,7 +75,7 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   ]);
   assert.equal(summary.taskKinds.find((kind) => kind.kindKey === "llm")?.promptFieldsEnabled, true);
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.prompt?.name, "work_item_expansion");
-  assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.runtimeReady, true);
+  assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.runtimeReady, false);
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.renderLocation, "work_item_detail");
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "custom-summary")?.displayOrder, 10);
   assert.deepEqual(summary.registeredTaskHooks.map((hook) => hook.hookKey), [
@@ -90,6 +92,41 @@ test("settings summary separates provider catalog from task-owned prompts and ca
     "default_noop"
   );
   assert.equal(summary.registeredTaskHooks.find((hook) => hook.hookKey === "custom-summary")?.taskUsageCount, 1);
+});
+
+test("settings summary and registry status return an empty registry-backed provider list when the shared registry is unavailable", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    INVOKE_PROVIDERS_REGISTRY_URL: "http://127.0.0.1:9",
+    INVOKE_PROVIDERS_PROFILE: "local-dev"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+
+  const summary = (await services.settings.getSummary()) as {
+    providerCatalog: {
+      fallbackUsed: boolean;
+      registry: { configured: boolean; reachable: boolean };
+      providers: Array<{ providerKey: string }>;
+    };
+  };
+  const registryStatus = (await services.settings.getRegistryStatus()) as {
+    fallbackUsed: boolean;
+    registry: { configured: boolean; reachable: boolean };
+    providers: Array<{ providerKey: string }>;
+  };
+
+  assert.equal(summary.providerCatalog.fallbackUsed, false);
+  assert.equal(summary.providerCatalog.registry.configured, true);
+  assert.equal(summary.providerCatalog.registry.reachable, false);
+  assert.deepEqual(summary.providerCatalog.providers.map((provider) => provider.providerKey), []);
+
+  assert.equal(registryStatus.fallbackUsed, false);
+  assert.equal(registryStatus.registry.configured, true);
+  assert.equal(registryStatus.registry.reachable, false);
+  assert.deepEqual(registryStatus.providers.map((provider) => provider.providerKey), []);
 });
 
 test("AI task creation derives task key and reports duplicate derived key conflicts", async () => {
@@ -2636,7 +2673,7 @@ function stubServices(): AppServices {
         providerCatalog: {
           registry: {
             url: "http://127.0.0.1:5181",
-            profile: "default",
+            profile: "local-dev",
             configured: true,
             reachable: false,
             error: "not reachable"
@@ -3174,7 +3211,7 @@ function captureRouteServices(): AppServices {
         providerCatalog: {
           registry: {
             url: "http://127.0.0.1:5181",
-            profile: "default",
+            profile: "local-dev",
             configured: true,
             reachable: true,
             error: null
@@ -3318,7 +3355,7 @@ function captureRouteServices(): AppServices {
       getRegistryStatus: async () => ({
         registry: {
           url: "http://127.0.0.1:5181",
-          profile: "default",
+          profile: "local-dev",
           configured: true,
           reachable: true,
           error: null

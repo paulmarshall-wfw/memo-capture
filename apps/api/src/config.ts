@@ -97,7 +97,7 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     },
     invokeProviders: {
       registryUrl: readStringEnv(env, "INVOKE_PROVIDERS_REGISTRY_URL", "http://127.0.0.1:5181"),
-      profile: readStringEnv(env, "INVOKE_PROVIDERS_PROFILE", "default"),
+      profile: readStringEnv(env, "INVOKE_PROVIDERS_PROFILE", "local-dev"),
       commitSha: readStringEnv(env, "INVOKE_PROVIDERS_COMMIT_SHA", runtime.commitSha)
     },
     llm: {
