@@ -205,6 +205,23 @@ export class AiExpansionService {
         modelName,
         latencyMs: null
       });
+      await recordInvokeTaskRun(this.db, this.config, {
+        taskRoute,
+        actor,
+        requestId,
+        workItem,
+        jobId: job.id,
+        providerName,
+        modelName,
+        promptVersion: prompt.active_version,
+        promptSnapshotId: prompt.active_prompt_version_id,
+        status: "failed",
+        errorClass: "adapter_failure",
+        errorMessage: message,
+        latencyMs: null,
+        validationMetadata: {},
+        outputSnapshot: {}
+      });
       throw error;
     }
     const validation = validateExpandedMemoOutput(output.parsed);
@@ -260,6 +277,42 @@ export class AiExpansionService {
           modelName: output.modelName,
           latencyMs: output.latencyMs,
           suggestionCount: 0
+        }
+      });
+      await new SettingsRepository(client).createInvokeTaskRun({
+        taskRunId: randomUUID(),
+        taskKey: taskRoute.task_key,
+        hookKey: taskRoute.hook_key,
+        providerKey: taskRoute.provider_key ?? output.providerName,
+        adapterKey: taskRoute.adapter_key,
+        model: output.modelName,
+        promptVersion: prompt.active_version,
+        promptSnapshotId: prompt.active_prompt_version_id,
+        status: "succeeded",
+        errorClass: null,
+        errorMessage: null,
+        readinessReasons: [],
+        validationMetadata: {
+          ok: true,
+          strictJson: true,
+          resultType: "expanded_memo"
+        },
+        latencyMs: output.latencyMs,
+        usageMetadata: {},
+        commitSha: this.config.invokeProviders.commitSha,
+        requestId,
+        correlationId: requestId,
+        actorUserId: actor.id,
+        workItemId: workItem.id,
+        sourceMemoId: workItem.sourceMemoId,
+        processingJobId: job.id,
+        inputSnapshot: {
+          promptName: prompt.name,
+          promptVersion: prompt.active_version,
+          workItemId: workItem.id
+        },
+        outputSnapshot: {
+          expandedWorkItem: validation.value.expandedWorkItem
         }
       });
       await new ProcessingJobRepository(client).markSucceeded(job.id);
@@ -379,6 +432,23 @@ export class AiExpansionService {
         modelName,
         latencyMs: null
       });
+      await recordInvokeTaskRun(this.db, this.config, {
+        taskRoute,
+        actor,
+        requestId,
+        workItem,
+        jobId: job.id,
+        providerName,
+        modelName,
+        promptVersion: prompt.active_version,
+        promptSnapshotId: prompt.active_prompt_version_id,
+        status: "failed",
+        errorClass: "adapter_failure",
+        errorMessage: message,
+        latencyMs: null,
+        validationMetadata: {},
+        outputSnapshot: {}
+      });
       throw error;
     }
 
@@ -418,6 +488,7 @@ export class AiExpansionService {
     }
 
     return this.db.transaction(async (client) => {
+      const taskRunId = randomUUID();
       await new AuditRepository(client).record({
         eventName: "ai_expansion.completed",
         actor,
@@ -437,13 +508,49 @@ export class AiExpansionService {
           persistedSuggestionCount: 0
         }
       });
+      await new SettingsRepository(client).createInvokeTaskRun({
+        taskRunId,
+        taskKey: taskRoute.task_key,
+        hookKey: taskRoute.hook_key,
+        providerKey: taskRoute.provider_key ?? output.providerName,
+        adapterKey: taskRoute.adapter_key,
+        model: output.modelName,
+        promptVersion: prompt.active_version,
+        promptSnapshotId: prompt.active_prompt_version_id,
+        status: "succeeded",
+        errorClass: null,
+        errorMessage: null,
+        readinessReasons: [],
+        validationMetadata: {
+          ok: true,
+          strictJson: true,
+          resultType: "suggested_work_items"
+        },
+        latencyMs: output.latencyMs,
+        usageMetadata: {},
+        commitSha: this.config.invokeProviders.commitSha,
+        requestId,
+        correlationId: requestId,
+        actorUserId: actor.id,
+        workItemId: workItem.id,
+        sourceMemoId: workItem.sourceMemoId,
+        processingJobId: job.id,
+        inputSnapshot: {
+          promptName: prompt.name,
+          promptVersion: prompt.active_version,
+          workItemId: workItem.id
+        },
+        outputSnapshot: {
+          suggestedWorkItemCount: validation.value.suggestedWorkItems.length
+        }
+      });
       await new ProcessingJobRepository(client).markSucceeded(job.id);
       return {
         suggestedWorkItems: validation.value.suggestedWorkItems.map((suggestion) => ({
           id: randomUUID(),
           parentWorkItemId: workItem.id,
           taskDefinitionId: taskRoute.id,
-          taskRunId: job.id,
+          taskRunId,
           title: suggestion.title,
           body: suggestion.body,
           tags: suggestion.tags,
@@ -770,6 +877,57 @@ function validateSuggestNewMemosTaskRoute(task: AiTaskRouteRow, config: ApiConfi
       `Suggested work items use ${task.provider_name}, but the AppLauncher LLM runtime selected ${config.llm.provider}.`
     );
   }
+}
+
+async function recordInvokeTaskRun(
+  db: Database,
+  config: ApiConfig,
+  input: {
+    taskRoute: AiTaskRouteRow;
+    actor: AppUserRecord;
+    requestId: string;
+    workItem: WorkItemRecord;
+    jobId: string;
+    providerName: string | null;
+    modelName: string | null;
+    promptVersion: number | null;
+    promptSnapshotId: string | null;
+    status: "succeeded" | "failed" | "skipped";
+    errorClass: string | null;
+    errorMessage: string | null;
+    latencyMs: number | null;
+    validationMetadata: Record<string, unknown>;
+    outputSnapshot: Record<string, unknown>;
+  }
+): Promise<void> {
+  await new SettingsRepository(db).createInvokeTaskRun({
+    taskRunId: randomUUID(),
+    taskKey: input.taskRoute.task_key,
+    hookKey: input.taskRoute.hook_key,
+    providerKey: input.taskRoute.provider_key ?? input.providerName,
+    adapterKey: input.taskRoute.adapter_key,
+    model: input.modelName,
+    promptVersion: input.promptVersion,
+    promptSnapshotId: input.promptSnapshotId,
+    status: input.status,
+    errorClass: input.errorClass,
+    errorMessage: input.errorMessage,
+    readinessReasons: [],
+    validationMetadata: input.validationMetadata,
+    latencyMs: input.latencyMs,
+    usageMetadata: {},
+    commitSha: config.invokeProviders.commitSha,
+    requestId: input.requestId,
+    correlationId: input.requestId,
+    actorUserId: input.actor.id,
+    workItemId: input.workItem.id,
+    sourceMemoId: input.workItem.sourceMemoId,
+    processingJobId: input.jobId,
+    inputSnapshot: {
+      workItemId: input.workItem.id
+    },
+    outputSnapshot: input.outputSnapshot
+  });
 }
 
 function validateExpandedMemoOutput(output: unknown):

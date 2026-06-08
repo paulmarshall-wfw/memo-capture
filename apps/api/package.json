@@ -14,6 +14,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@invoke-providers/adapters": "file:../../../invoke-providers-for-tasks/packages/adapters",
+    "@invoke-providers/client": "file:../../../invoke-providers-for-tasks/packages/client",
+    "@invoke-providers/core": "file:../../../invoke-providers-for-tasks/packages/core",
+    "@invoke-providers/react": "file:../../../invoke-providers-for-tasks/packages/react",
     "@memo-capture/config": "0.1.0",
     "@memo-capture/domain": "0.1.0",
     "exifr": "7.1.3",

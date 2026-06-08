@@ -314,6 +314,39 @@ function matchProtectedRoute(
       services.settings.createProvider(await readJsonBody(context.request), session.user, context.requestId);
   }
 
+  if (method === "GET" && pathname === "/api/settings/registry/status") {
+    return async () => services.settings.getRegistryStatus();
+  }
+
+  if (method === "POST" && pathname === "/api/settings/providers/refresh") {
+    return async () => services.settings.getRegistryStatus();
+  }
+
+  if (method === "GET" && pathname === "/api/settings/readiness") {
+    return async () => services.settings.getReadinessDiagnostics();
+  }
+
+  if (method === "POST" && pathname === "/api/settings/provider-diagnostics") {
+    return async (context) => services.settings.diagnoseProviderAdapter(await readJsonBody(context.request));
+  }
+
+  if (method === "GET" && pathname === "/api/settings/render-slots") {
+    return async () => services.settings.listRenderSlots();
+  }
+
+  const renderSlotActionsMatch = /^\/api\/settings\/render-slots\/([^/]+)\/actions$/.exec(pathname);
+  if (method === "GET" && renderSlotActionsMatch !== null) {
+    return async () => services.settings.getRenderSlotActions(decodeURIComponent(renderSlotActionsMatch[1] ?? ""));
+  }
+
+  if (method === "GET" && pathname === "/api/settings/task-runs") {
+    return async (context) => services.settings.listTaskRuns(context.url.searchParams);
+  }
+
+  if (method === "GET" && pathname === "/api/settings/task-runs/grouped") {
+    return async (context) => services.settings.groupTaskRuns(context.url.searchParams);
+  }
+
   if (method === "POST" && pathname === "/api/settings/task-kinds") {
     return async (context, session) =>
       services.settings.createTaskKind(await readJsonBody(context.request), session.user, context.requestId);

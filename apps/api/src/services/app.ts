@@ -133,6 +133,13 @@ export interface SettingsOperations {
   updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createProvider(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateProvider(providerId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
+  getRegistryStatus(): Promise<unknown>;
+  getReadinessDiagnostics(): Promise<unknown>;
+  diagnoseProviderAdapter(body: unknown): Promise<unknown>;
+  listRenderSlots(): Promise<unknown>;
+  getRenderSlotActions(slot: string): Promise<unknown>;
+  listTaskRuns(query: URLSearchParams): Promise<unknown>;
+  groupTaskRuns(query: URLSearchParams): Promise<unknown>;
   createTaskKind(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTaskKind(taskKindId: string, body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   createProcessingHook(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;

@@ -69,7 +69,7 @@ test("settings summary separates provider catalog from task-owned prompts and ca
 
   assert.equal(summary.providers[0]?.providerName, "local-dev");
   assert.deepEqual(summary.providers[0]?.capabilities.map((capability) => capability.capabilityKey), [
-    "structured-generation"
+    "llm.generateJson"
   ]);
   assert.equal(summary.taskKinds.find((kind) => kind.kindKey === "llm")?.promptFieldsEnabled, true);
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.prompt?.name, "work_item_expansion");
@@ -3738,6 +3738,7 @@ class FakeDatabase implements Database {
   readonly projectTags: Record<string, unknown>[] = [];
   readonly suppressedTags: Record<string, unknown>[] = [];
   readonly aiSuggestions: Record<string, unknown>[] = [];
+  readonly invokeTaskRuns: Record<string, unknown>[] = [];
   readonly stagedWorkflowImports: Record<string, unknown>[] = [];
   readonly workflowActivationHistory: Record<string, unknown>[] = [];
   activeWorkflow: Record<string, unknown> | null = null;
@@ -4230,6 +4231,9 @@ class FakeDatabase implements Database {
           task_definition_id: values[0],
           provider_config_id: createDisabledRoute ? null : values[1],
           model_name: createDisabledRoute ? null : values[2],
+          registry_profile_key: null,
+          provider_key: null,
+          provider_model_override: createDisabledRoute ? null : values[2],
           enabled: createDisabledRoute ? false : values[3] ?? false,
           updated_by: createDisabledRoute ? values[1] : values[4],
           updated_at: "2026-05-29T00:00:00.000Z"
@@ -4240,6 +4244,13 @@ class FakeDatabase implements Database {
         }
         if (values[6] === true) {
           existing.model_name = values[2] === "" ? null : values[2];
+          existing.provider_model_override = values[2] === "" ? null : values[2];
+        }
+        if (values[10] === true) {
+          existing.registry_profile_key = values[7] === "" ? null : values[7];
+        }
+        if (values[11] === true) {
+          existing.provider_key = values[8] === "" ? null : values[8];
         }
         if (values[3] !== null) {
           existing.enabled = values[3];
@@ -4247,6 +4258,51 @@ class FakeDatabase implements Database {
         existing.updated_by = values[4];
       }
       return rows([]);
+    }
+
+    if (text.includes("insert into invoke_task_runs")) {
+      const row = {
+        id: values[0],
+        task_key: values[1],
+        hook_key: values[2],
+        provider_key: values[3],
+        adapter_key: values[4],
+        model: values[5],
+        prompt_version: values[6],
+        prompt_snapshot_id: values[7],
+        status: values[8],
+        error_class: values[9],
+        error_message: values[10],
+        readiness_reasons: JSON.parse(String(values[11] ?? "[]")),
+        validation_metadata: JSON.parse(String(values[12] ?? "{}")),
+        latency_ms: values[13],
+        usage_metadata: JSON.parse(String(values[14] ?? "{}")),
+        commit_sha: values[15],
+        request_id: values[16],
+        correlation_id: values[17],
+        actor_user_id: values[18],
+        work_item_id: values[19],
+        source_memo_id: values[20],
+        processing_job_id: values[21],
+        input_snapshot: JSON.parse(String(values[22] ?? "{}")),
+        output_snapshot: JSON.parse(String(values[23] ?? "{}")),
+        created_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.invokeTaskRuns.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("from invoke_task_runs")) {
+      const [taskKey, hookKey, providerKey, status, workItemId, limit] = values;
+      const filtered = this.invokeTaskRuns.filter(
+        (row) =>
+          (taskKey === null || row.task_key === taskKey) &&
+          (hookKey === null || row.hook_key === hookKey) &&
+          (providerKey === null || row.provider_key === providerKey) &&
+          (status === null || row.status === status) &&
+          (workItemId === null || row.work_item_id === workItemId)
+      );
+      return rows(filtered.slice(0, Number(limit ?? 50)) as Row[]);
     }
 
     if (text.includes("from ai_suggestions") && text.includes("where id = $1")) {
@@ -5239,6 +5295,9 @@ function buildFakeAiTaskRouteRow(
     runtime_endpoint_env: definition.runtime_endpoint_env ?? null,
     route_enabled: route?.enabled ?? false,
     route_model_name: route?.model_name ?? null,
+    registry_profile_key: route?.registry_profile_key ?? null,
+    provider_key: route?.provider_key ?? null,
+    provider_model_override: route?.provider_model_override ?? null,
     provider_config_id: route?.provider_config_id ?? null,
     provider_kind: provider?.provider_kind ?? null,
     provider_name: provider?.provider_name ?? null,

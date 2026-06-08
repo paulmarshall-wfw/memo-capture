@@ -547,6 +547,26 @@ interface SettingsSummary {
     } | null;
     updatedAt: string;
   }[];
+  providerCatalog?: {
+    registry: {
+      url: string;
+      profile: string;
+      configured: boolean;
+      reachable: boolean;
+      error: string | null;
+    };
+    fallbackUsed: boolean;
+    providers: Array<{
+      providerKey: string;
+      displayName: string;
+      enabled: boolean;
+      adapterKey: string;
+      externalSend: boolean;
+      requiredSecretRef?: string;
+      capabilities: Array<{ key: string; displayName: string }>;
+      health?: { status: string; checkedAt?: string };
+    }>;
+  };
   providerCapabilities: {
     id: string;
     providerConfigId: string;
@@ -588,9 +608,12 @@ interface SettingsSummary {
     runtimeModelEnv: string;
     runtimeEndpointEnv: string | null;
     selectedProviderId: string | null;
+    registryProfileKey?: string | null;
+    registryProviderKey?: string | null;
     selectedProviderName: string | null;
     selectedProviderDisplayName: string | null;
     selectedModelName: string | null;
+    providerModelOverride?: string | null;
     providerAdapterKey: string | null;
     providerExternalSendEnabled: boolean;
     providerSecretEnv: string | null;
@@ -599,6 +622,7 @@ interface SettingsSummary {
     runtimeEndpointConfigured: boolean;
     runtimeReady: boolean;
     unavailableReason: string | null;
+    readinessReasons?: Array<{ code?: string; message: string }>;
     prompt: PromptSummary | null;
     updatedAt: string;
   }[];
@@ -616,6 +640,21 @@ interface SettingsSummary {
     };
     restartRequiredAfterChange: boolean;
   } | null;
+  invokeProviders?: {
+    registry: {
+      url: string;
+      profile: string;
+      configured: boolean;
+      reachable: boolean;
+      error: string | null;
+    };
+    profile: string;
+    commitSha: string;
+    diagnostics?: {
+      readyTaskCount: number;
+      blockedTaskCount: number;
+    };
+  };
   registeredTaskHooks: {
     hookKey: string;
     displayName: string;
@@ -6194,6 +6233,36 @@ export function App() {
                           ? "none"
                           : settingsSummary.appLauncher?.secretEnvironmentNames.join(", ")}
                       </p>
+                    </div>
+                  </article>
+                  <article className="settings-row provider-dev-panel">
+                    <div>
+                      <div className="batch-title">
+                        <strong>Shared provider registry</strong>
+                        <span>
+                          {settingsSummary.providerCatalog?.registry.reachable
+                            ? "Reachable"
+                            : settingsSummary.providerCatalog?.fallbackUsed
+                              ? "Using local fallback"
+                              : "Unavailable"}
+                        </span>
+                      </div>
+                      <p>
+                        URL {settingsSummary.providerCatalog?.registry.url ?? "not configured"}; profile{" "}
+                        {settingsSummary.providerCatalog?.registry.profile ?? "not configured"}; providers{" "}
+                        {settingsSummary.providerCatalog?.providers.length ?? 0}
+                      </p>
+                      {settingsSummary.providerCatalog?.registry.error ? (
+                        <p>{settingsSummary.providerCatalog.registry.error}</p>
+                      ) : null}
+                      <div className="chip-row">
+                        {(settingsSummary.providerCatalog?.providers ?? []).slice(0, 8).map((provider) => (
+                          <span className="tag-chip" key={provider.providerKey}>
+                            {provider.displayName} · {provider.enabled ? "enabled" : "disabled"} ·{" "}
+                            {provider.capabilities.map((capability) => capability.key).join(", ") || "no capabilities"}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </article>
                   <article className="settings-row provider-task-row">

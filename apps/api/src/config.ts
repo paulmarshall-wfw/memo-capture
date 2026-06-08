@@ -27,6 +27,7 @@ export interface ApiConfig {
   databaseUrl: string;
   migrationsDirectory: string | null;
   objectStorage: ObjectStorageConfig;
+  invokeProviders: InvokeProvidersConfig;
   llm: LlmProviderConfig;
   transcription: TranscriptionProviderConfig;
   whisperCpp: WhisperCppConfig;
@@ -38,6 +39,12 @@ export interface ApiConfig {
 export interface ObjectStorageConfig {
   bucket: string;
   localRoot: string;
+}
+
+export interface InvokeProvidersConfig {
+  registryUrl: string;
+  profile: string;
+  commitSha: string;
 }
 
 export type TranscriptionProviderMode = "disabled" | "local-dev" | "whisper-cpp";
@@ -87,6 +94,11 @@ export function readApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     objectStorage: {
       bucket: readStringEnv(env, "OBJECT_STORAGE_BUCKET", "memo-capture"),
       localRoot: resolveLocalRoot(readStringEnv(env, "OBJECT_STORAGE_LOCAL_ROOT", ".memo-capture/object-storage"))
+    },
+    invokeProviders: {
+      registryUrl: readStringEnv(env, "INVOKE_PROVIDERS_REGISTRY_URL", "http://127.0.0.1:5181"),
+      profile: readStringEnv(env, "INVOKE_PROVIDERS_PROFILE", "default"),
+      commitSha: readStringEnv(env, "INVOKE_PROVIDERS_COMMIT_SHA", runtime.commitSha)
     },
     llm: {
       provider: readLlmProvider(env),

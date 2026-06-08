@@ -116,6 +116,9 @@ export interface AiTaskRouteRow extends Record<string, unknown> {
   runtime_endpoint_env: string | null;
   route_enabled: boolean;
   route_model_name: string | null;
+  registry_profile_key: string | null;
+  provider_key: string | null;
+  provider_model_override: string | null;
   provider_config_id: string | null;
   provider_kind: string | null;
   provider_name: string | null;
@@ -138,6 +141,34 @@ export interface AiTaskRouteRow extends Record<string, unknown> {
   active_context_config: Record<string, unknown> | null;
   prompt_retention_policy: string | null;
   updated_at: Date | string;
+}
+
+export interface InvokeTaskRunRow extends Record<string, unknown> {
+  id: string;
+  task_key: string;
+  hook_key: string;
+  provider_key: string | null;
+  adapter_key: string | null;
+  model: string | null;
+  prompt_version: number | null;
+  prompt_snapshot_id: string | null;
+  status: string;
+  error_class: string | null;
+  error_message: string | null;
+  readiness_reasons: unknown;
+  validation_metadata: unknown;
+  latency_ms: number | null;
+  usage_metadata: unknown;
+  commit_sha: string | null;
+  request_id: string | null;
+  correlation_id: string | null;
+  actor_user_id: string | null;
+  work_item_id: string | null;
+  source_memo_id: string | null;
+  processing_job_id: string | null;
+  input_snapshot: unknown;
+  output_snapshot: unknown;
+  created_at: Date | string;
 }
 
 export interface PromptDefinitionRow extends Record<string, unknown> {
@@ -179,6 +210,9 @@ const aiTaskRouteSelectSql = `
     ai_task_definitions.runtime_endpoint_env,
     coalesce(ai_task_routes.enabled, false) as route_enabled,
     ai_task_routes.model_name as route_model_name,
+    ai_task_routes.registry_profile_key,
+    ai_task_routes.provider_key,
+    ai_task_routes.provider_model_override,
     provider_configs.id as provider_config_id,
     provider_configs.provider_kind,
     provider_configs.provider_name,
@@ -1047,17 +1081,32 @@ export class SettingsRepository {
   async updateAiTaskRoute(input: {
     taskDefinitionId: string;
     providerConfigId?: string | null | undefined;
+    registryProfileKey?: string | null | undefined;
+    providerKey?: string | null | undefined;
     modelName?: string | null | undefined;
     enabled?: boolean | undefined;
     actorUserId: string;
   }): Promise<AiTaskRouteRow | null> {
     await this.db.query(
-      `insert into ai_task_routes (task_definition_id, provider_config_id, model_name, enabled, updated_by, updated_at)
-       values ($1, $2::uuid, $3::text, coalesce($4::boolean, true), $5, now())
+      `insert into ai_task_routes (
+         task_definition_id,
+         provider_config_id,
+         model_name,
+         enabled,
+         updated_by,
+         registry_profile_key,
+         provider_key,
+         provider_model_override,
+         updated_at
+       )
+       values ($1, $2::uuid, $3::text, coalesce($4::boolean, true), $5, $8::text, $9::text, $10::text, now())
        on conflict (task_definition_id) do update
        set
          provider_config_id = case when $6::boolean then $2::uuid else ai_task_routes.provider_config_id end,
          model_name = case when $7::boolean then nullif($3::text, '') else ai_task_routes.model_name end,
+         registry_profile_key = case when $11::boolean then nullif($8::text, '') else ai_task_routes.registry_profile_key end,
+         provider_key = case when $12::boolean then nullif($9::text, '') else ai_task_routes.provider_key end,
+         provider_model_override = case when $7::boolean then nullif($10::text, '') else ai_task_routes.provider_model_override end,
          enabled = coalesce($4::boolean, ai_task_routes.enabled),
          updated_by = $5,
          updated_at = now()`,
@@ -1068,7 +1117,12 @@ export class SettingsRepository {
         input.enabled ?? null,
         input.actorUserId,
         input.providerConfigId !== undefined,
-        input.modelName !== undefined
+        input.modelName !== undefined,
+        input.registryProfileKey ?? null,
+        input.providerKey ?? null,
+        input.modelName ?? null,
+        input.registryProfileKey !== undefined,
+        input.providerKey !== undefined
       ]
     );
     return this.findAiTaskRouteById(input.taskDefinitionId);
@@ -1383,6 +1437,125 @@ export class SettingsRepository {
       [input.promptDefinitionId, input.actorUserId]
     );
     return this.getPromptById(input.promptDefinitionId);
+  }
+
+  async createInvokeTaskRun(input: {
+    taskRunId: string;
+    taskKey: string;
+    hookKey: string;
+    providerKey: string | null;
+    adapterKey: string | null;
+    model: string | null;
+    promptVersion: number | null;
+    promptSnapshotId: string | null;
+    status: string;
+    errorClass: string | null;
+    errorMessage: string | null;
+    readinessReasons: unknown[];
+    validationMetadata: Record<string, unknown>;
+    latencyMs: number | null;
+    usageMetadata: Record<string, unknown>;
+    commitSha: string | null;
+    requestId: string | null;
+    correlationId: string | null;
+    actorUserId: string | null;
+    workItemId: string | null;
+    sourceMemoId: string | null;
+    processingJobId: string | null;
+    inputSnapshot: Record<string, unknown>;
+    outputSnapshot: Record<string, unknown>;
+  }): Promise<InvokeTaskRunRow> {
+    const result = await this.db.query<InvokeTaskRunRow>(
+      `insert into invoke_task_runs (
+         id,
+         task_key,
+         hook_key,
+         provider_key,
+         adapter_key,
+         model,
+         prompt_version,
+         prompt_snapshot_id,
+         status,
+         error_class,
+         error_message,
+         readiness_reasons,
+         validation_metadata,
+         latency_ms,
+         usage_metadata,
+         commit_sha,
+         request_id,
+         correlation_id,
+         actor_user_id,
+         work_item_id,
+         source_memo_id,
+         processing_job_id,
+         input_snapshot,
+         output_snapshot,
+         created_at
+       )
+       values (
+         $1, $2, $3, $4, $5, $6, $7::integer, $8::uuid, $9, $10, $11, $12::jsonb, $13::jsonb, $14::integer,
+         $15::jsonb, $16, $17, $18, $19::uuid, $20::uuid, $21::uuid, $22::uuid, $23::jsonb, $24::jsonb, now()
+       )
+       returning *`,
+      [
+        input.taskRunId,
+        input.taskKey,
+        input.hookKey,
+        input.providerKey,
+        input.adapterKey,
+        input.model,
+        input.promptVersion,
+        input.promptSnapshotId,
+        input.status,
+        input.errorClass,
+        input.errorMessage,
+        JSON.stringify(input.readinessReasons),
+        JSON.stringify(input.validationMetadata),
+        input.latencyMs,
+        JSON.stringify(input.usageMetadata),
+        input.commitSha,
+        input.requestId,
+        input.correlationId,
+        input.actorUserId,
+        input.workItemId,
+        input.sourceMemoId,
+        input.processingJobId,
+        JSON.stringify(input.inputSnapshot),
+        JSON.stringify(input.outputSnapshot)
+      ]
+    );
+    return requiredRow(result.rows[0], "invoke task run insert failed");
+  }
+
+  async listInvokeTaskRuns(input: {
+    taskKey?: string | null;
+    hookKey?: string | null;
+    providerKey?: string | null;
+    status?: string | null;
+    workItemId?: string | null;
+    limit: number;
+  }): Promise<InvokeTaskRunRow[]> {
+    const result = await this.db.query<InvokeTaskRunRow>(
+      `select *
+       from invoke_task_runs
+       where ($1::text is null or task_key = $1::text)
+         and ($2::text is null or hook_key = $2::text)
+         and ($3::text is null or provider_key = $3::text)
+         and ($4::text is null or status = $4::text)
+         and ($5::uuid is null or work_item_id = $5::uuid)
+       order by created_at desc
+       limit $6::integer`,
+      [
+        input.taskKey ?? null,
+        input.hookKey ?? null,
+        input.providerKey ?? null,
+        input.status ?? null,
+        input.workItemId ?? null,
+        input.limit
+      ]
+    );
+    return result.rows;
   }
 }
 

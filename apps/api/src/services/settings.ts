@@ -13,6 +13,8 @@ import {
   type ProviderConfigRow
 } from "../repositories/settings.js";
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
+import { createTargetAppRuntimeService } from "./invoke-providers/runtime.js";
+import { normalizeCapabilityKey } from "./invoke-providers/mapping.js";
 import {
   DEFAULT_LLM_SYSTEM_MESSAGE,
   DEFAULT_LLM_SYSTEM_MESSAGES_BY_HOOK,
@@ -36,6 +38,7 @@ export class SettingsService {
 
   async getSummary(): Promise<Record<string, unknown>> {
     const settings = new SettingsRepository(this.db);
+    const runtimeService = createTargetAppRuntimeService(this.db, this.config);
     const [
       mediaTypes,
       parserTypes,
@@ -47,7 +50,10 @@ export class SettingsService {
       taskKinds,
       aiTasks,
       processingHooks,
-      prompts
+      prompts,
+      providerCatalog,
+      readinessDiagnostics,
+      hookRegistryState
     ] = await Promise.all([
       settings.listMediaTypes(),
       settings.listParserTypes(),
@@ -59,8 +65,14 @@ export class SettingsService {
       settings.listTaskKinds(),
       settings.listAiTaskRoutes(),
       settings.listProcessingHooks(),
-      settings.listPrompts()
+      settings.listPrompts(),
+      runtimeService.getProviderCatalog(),
+      runtimeService.getReadinessDiagnostics(),
+      runtimeService.getHookRegistryState()
     ]);
+    const readinessByTaskKey = new Map(
+      readinessDiagnostics.tasks.map((entry) => [entry.taskKey, entry])
+    );
 
     const serializedExtraction =
       extraction === null
@@ -86,11 +98,22 @@ export class SettingsService {
             updatedAt: toIso(transcription.updated_at)
           },
       providers: providers.map((provider) => serializeProvider(provider, this.config, providerCapabilities)),
+      providerCatalog: {
+        registry: providerCatalog.registry,
+        fallbackUsed: providerCatalog.fallbackUsed,
+        providers: providerCatalog.providers
+      },
       providerCapabilities: providerCapabilities.map(serializeProviderCapability),
       taskKinds: taskKinds.map(serializeTaskKind),
-      aiTasks: aiTasks.map((task) => serializeAiTaskRoute(task, this.config)),
+      aiTasks: aiTasks.map((task) => serializeAiTaskRoute(task, this.config, readinessByTaskKey.get(task.task_key))),
       appLauncher: serializeAppLauncherRuntimeOptions(providers, this.config),
-      registeredTaskHooks: serializeRegisteredTaskHooks(processingHooks),
+      invokeProviders: {
+        registry: providerCatalog.registry,
+        profile: this.config.invokeProviders.profile,
+        commitSha: this.config.invokeProviders.commitSha,
+        diagnostics: readinessDiagnostics
+      },
+      registeredTaskHooks: serializeRegisteredTaskHooks(processingHooks, hookRegistryState),
       prompts: prompts.map(serializePrompt),
       auth: {
         mode: this.config.authMode,
@@ -101,6 +124,77 @@ export class SettingsService {
           this.config.oidc.jwksUrl.trim() !== ""
       }
     };
+  }
+
+  async getRegistryStatus(): Promise<Record<string, unknown>> {
+    const runtimeService = createTargetAppRuntimeService(this.db, this.config);
+    const providerCatalog = await runtimeService.getProviderCatalog();
+    return {
+      registry: providerCatalog.registry,
+      fallbackUsed: providerCatalog.fallbackUsed,
+      providers: providerCatalog.providers
+    };
+  }
+
+  async getReadinessDiagnostics(): Promise<Record<string, unknown>> {
+    return await createTargetAppRuntimeService(this.db, this.config).getReadinessDiagnostics();
+  }
+
+  async diagnoseProviderAdapter(body: unknown): Promise<Record<string, unknown>> {
+    const input = parseAdapterDiagnosticBody(body);
+    return await createTargetAppRuntimeService(this.db, this.config).diagnoseAdapter(input);
+  }
+
+  async listRenderSlots(): Promise<Record<string, unknown>> {
+    return await createTargetAppRuntimeService(this.db, this.config).listRenderSlots();
+  }
+
+  async getRenderSlotActions(slot: string): Promise<Record<string, unknown>> {
+    return await createTargetAppRuntimeService(this.db, this.config).getRenderSlotActions(slot);
+  }
+
+  async listTaskRuns(query: URLSearchParams): Promise<Record<string, unknown>> {
+    const filters: {
+      taskKey?: string | null;
+      hookKey?: string | null;
+      providerKey?: string | null;
+      status?: string | null;
+      workItemId?: string | null;
+      limit?: number;
+    } = {};
+    const taskKey = query.get("task_key");
+    const hookKey = query.get("hook_key");
+    const providerKey = query.get("provider_key");
+    const status = query.get("status");
+    const workItemId = query.get("work_item_id");
+    const limit = parseQueryLimit(query.get("limit"));
+    if (taskKey !== null) {
+      filters.taskKey = taskKey;
+    }
+    if (hookKey !== null) {
+      filters.hookKey = hookKey;
+    }
+    if (providerKey !== null) {
+      filters.providerKey = providerKey;
+    }
+    if (status !== null) {
+      filters.status = status;
+    }
+    if (workItemId !== null) {
+      filters.workItemId = workItemId;
+    }
+    if (limit !== undefined) {
+      filters.limit = limit;
+    }
+    return await createTargetAppRuntimeService(this.db, this.config).listTaskRuns(filters);
+  }
+
+  async groupTaskRuns(query: URLSearchParams): Promise<Record<string, unknown>> {
+    const groupBy = query.get("group_by");
+    if (groupBy !== "taskKey" && groupBy !== "hookKey" && groupBy !== "providerKey" && groupBy !== "status") {
+      throw new HttpError(400, "invalid_request", "group_by must be taskKey, hookKey, providerKey, or status.");
+    }
+    return await createTargetAppRuntimeService(this.db, this.config).groupTaskRuns(groupBy);
   }
 
   async updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<Record<string, unknown>> {
@@ -1071,7 +1165,7 @@ function serializeTaskKind(row: {
     displayName: row.display_name,
     description: row.description,
     providerKind: row.provider_kind,
-    capabilityKey: row.capability_key,
+    capabilityKey: normalizeCapabilityKey(row.capability_key),
     promptFieldsEnabled: row.prompt_fields_enabled,
     enabled: row.enabled,
     active: row.active,
@@ -1083,19 +1177,26 @@ function serializeProviderCapability(row: ProviderCapabilityRow): Record<string,
   return {
     id: row.id,
     providerConfigId: row.provider_config_id,
-    capabilityKey: row.capability_key,
+    capabilityKey: normalizeCapabilityKey(row.capability_key),
     enabled: row.enabled,
     updatedAt: toIso(row.updated_at)
   };
 }
 
-function serializeRegisteredTaskHooks(hooks: ProcessingHookRow[]): Array<Record<string, unknown>> {
-  return hooks.map(serializeRegisteredTaskHook);
+function serializeRegisteredTaskHooks(
+  hooks: ProcessingHookRow[],
+  runtimeState?: { hooks?: Array<{ hookKey: string; implementationStatus: string; usageCount: number }> }
+): Array<Record<string, unknown>> {
+  const stateByHook = new Map((runtimeState?.hooks ?? []).map((hook) => [hook.hookKey, hook]));
+  return hooks.map((hook) => serializeRegisteredTaskHook(hook, stateByHook.get(hook.hook_key)));
 }
 
-function serializeRegisteredTaskHook(hook: ProcessingHookRow): Record<string, unknown> {
-  const implemented = isHookImplemented(hook.hook_key);
-  const taskUsageCount = toInteger(hook.task_usage_count);
+function serializeRegisteredTaskHook(
+  hook: ProcessingHookRow,
+  runtimeState?: { implementationStatus: string; usageCount: number } | undefined
+): Record<string, unknown> {
+  const implemented = runtimeState === undefined ? isHookImplemented(hook.hook_key) : runtimeState.implementationStatus === "implemented";
+  const taskUsageCount = runtimeState === undefined ? toInteger(hook.task_usage_count) : runtimeState.usageCount;
   return {
     hookKey: hook.hook_key,
     displayName: humanizeKey(hook.hook_key),
@@ -1139,7 +1240,7 @@ function serializeProvider(
     capabilities: capabilities
       .filter((capability) => capability.provider_config_id === provider.id)
       .map((capability) => ({
-        capabilityKey: capability.capability_key,
+        capabilityKey: normalizeCapabilityKey(capability.capability_key),
         enabled: capability.enabled
       })),
     secretConfigured: provider.secret_source === "environment" && secretConfigured(requiredSecretEnv, config),
@@ -1166,7 +1267,11 @@ function serializeProvider(
   };
 }
 
-function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<string, unknown> {
+function serializeAiTaskRoute(
+  task: AiTaskRouteRow,
+  config: ApiConfig,
+  sharedReadiness?: { ready: boolean; reasons: Array<{ message: string }> } | undefined
+): Record<string, unknown> {
   const runtime = runtimeForTaskRoute(task, config);
   const providerName = task.provider_name ?? task.default_provider_name;
   const selectedModelName = task.route_model_name ?? task.provider_model_name ?? task.default_model_name;
@@ -1179,7 +1284,7 @@ function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<s
     task.task_kind_provider_kind === null ||
     task.provider_kind === null ||
     task.provider_kind === task.task_kind_provider_kind;
-  const runtimeReady =
+  const legacyRuntimeReady =
     runtime.provider !== "disabled" &&
     providerName !== null &&
     runtime.provider === providerName &&
@@ -1188,7 +1293,7 @@ function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<s
     secretReady &&
     hookImplemented &&
     routeEnabled;
-  const unavailableReason =
+  const legacyUnavailableReason =
     !hookImplemented
       ? "No app logic is registered for this hook."
       : !routeEnabled
@@ -1229,17 +1334,21 @@ function serializeAiTaskRoute(task: AiTaskRouteRow, config: ApiConfig): Record<s
     runtimeModelEnv: task.runtime_model_env,
     runtimeEndpointEnv: task.runtime_endpoint_env,
     selectedProviderId: task.provider_config_id,
+    registryProfileKey: task.registry_profile_key,
+    registryProviderKey: task.provider_key,
     selectedProviderName: providerName,
     selectedProviderDisplayName: task.provider_display_name ?? providerName,
     selectedModelName,
+    providerModelOverride: task.provider_model_override,
     providerAdapterKey: task.adapter_key,
     providerExternalSendEnabled: task.external_send_enabled === true,
     providerSecretEnv: requiredSecretEnv,
     runtimeProvider: runtime.provider,
     runtimeModelName: runtime.modelName,
     runtimeEndpointConfigured: runtime.endpoint.trim() !== "",
-    runtimeReady,
-    unavailableReason,
+    runtimeReady: sharedReadiness?.ready ?? legacyRuntimeReady,
+    unavailableReason: sharedReadiness?.reasons[0]?.message ?? legacyUnavailableReason,
+    readinessReasons: sharedReadiness?.reasons ?? [],
     prompt:
       task.prompt_definition_id === null
         ? null
@@ -1391,9 +1500,31 @@ function parseAiTaskRouteBody(body: unknown) {
   }
   return {
     providerConfigId: record.providerConfigId === undefined ? undefined : optionalString(record.providerConfigId, "providerConfigId"),
+    registryProfileKey: record.registryProfileKey === undefined ? undefined : optionalString(record.registryProfileKey, "registryProfileKey"),
+    providerKey: record.providerKey === undefined ? undefined : optionalString(record.providerKey, "providerKey"),
     modelName: record.modelName === undefined ? undefined : optionalString(record.modelName, "modelName"),
     enabled
   };
+}
+
+function parseAdapterDiagnosticBody(body: unknown) {
+  const record = parseObject(body);
+  return {
+    providerKey: assertNonEmptyString(record.providerKey, "providerKey"),
+    taskKey: assertNonEmptyString(record.taskKey, "taskKey"),
+    input: record.input
+  };
+}
+
+function parseQueryLimit(value: string | null): number | undefined {
+  if (value === null || value.trim() === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) {
+    throw new HttpError(400, "invalid_request", "limit must be an integer.");
+  }
+  return parsed;
 }
 
 function parseOptionalBoolean(value: unknown, field: string): boolean | undefined {
