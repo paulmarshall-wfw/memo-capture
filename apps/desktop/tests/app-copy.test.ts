@@ -106,6 +106,18 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.doesNotMatch(appSource, /Enable dev expander/);
   assert.match(appSource, /Suggested work item rejected/);
   assert.doesNotMatch(appSource, />\s*Dismiss\s*</);
+  assert.match(appSource, /photoAttachmentCount: number/);
+  assert.match(appSource, /photo-attachment-indicator/);
+  assert.match(appSource, /attached photos/);
+  assert.match(appSource, /selectedItem\.photoAttachmentCount > 0/);
+  assert.match(appSource, />\s*Photos\s*</);
+  assert.match(appSource, /photos-modal/);
+  assert.match(appSource, /photos-gallery-arrow/);
+  assert.match(appSource, /\/photo-attachments/);
+  assert.match(appSource, /\/api\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}\/download/);
+  assert.match(appSource, /URL\.revokeObjectURL\(photo\.objectUrl\)/);
+  assert.match(appSource, /event\.key === "Escape"/);
+  assert.match(appSource, /event\.key === "ArrowLeft" \|\| event\.key === "ArrowRight"/);
   assert.match(appSource, /Suppressed Tags/);
   assert.match(appSource, /Suppress \$\{tag\} suggestions/);
   assert.match(appSource, /Restore \$\{tag\.displayName\} suggestions/);

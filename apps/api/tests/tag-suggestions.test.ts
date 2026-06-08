@@ -20,6 +20,7 @@ test("tag suggestions are ranked into strong, related, and weak rows without sel
     workflowItemVersion: 1,
     acceptedSnapshotId: null,
     acceptedUnexportedChanges: false,
+    photoAttachmentCount: 0,
     originalFileModifiedAt: "2026-05-28T23:45:00.000Z",
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
@@ -103,6 +104,7 @@ test("tag suggestions exclude globally suppressed candidate and keyword tags", (
     workflowItemVersion: 1,
     acceptedSnapshotId: null,
     acceptedUnexportedChanges: false,
+    photoAttachmentCount: 0,
     originalFileModifiedAt: "2026-05-28T23:45:00.000Z",
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
@@ -172,6 +174,7 @@ test("tag suggestions do not add text-derived tags outside the candidate lexicon
     workflowItemVersion: 1,
     acceptedSnapshotId: null,
     acceptedUnexportedChanges: false,
+    photoAttachmentCount: 0,
     originalFileModifiedAt: "2026-05-28T23:45:00.000Z",
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"

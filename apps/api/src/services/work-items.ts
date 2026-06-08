@@ -10,6 +10,7 @@ import {
   type TagSuggestionCandidate
 } from "../repositories/tags.js";
 import { extractKeywords } from "./keywords.js";
+import { WorkItemArtifactRepository, type WorkItemPhotoAttachmentRecord } from "../repositories/photo-imports.js";
 import { AcceptedSnapshotRepository, WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { WorkflowRepository } from "../repositories/workflows.js";
 import { assertNonEmptyString, HttpError, optionalString } from "./errors.js";
@@ -45,6 +46,21 @@ export class WorkItemService {
 
   async findById(workItemId: string): Promise<WorkItemRecord | null> {
     return new WorkItemRepository(this.db).findById(workItemId);
+  }
+
+  async listPhotoAttachments(workItemId: string): Promise<{
+    workItemId: string;
+    photos: WorkItemPhotoAttachmentRecord[];
+  }> {
+    const workItem = await new WorkItemRepository(this.db).findById(workItemId);
+    if (workItem === null) {
+      throw new HttpError(404, "not_found", "work_item was not found.");
+    }
+
+    return {
+      workItemId,
+      photos: await new WorkItemArtifactRepository(this.db).listPhotoAttachments(workItemId)
+    };
   }
 
   async getTagSuggestions(workItemId: string): Promise<TagSuggestionResponse> {

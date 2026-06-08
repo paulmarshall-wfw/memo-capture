@@ -618,6 +618,12 @@ function matchProtectedRoute(
       services.diagnostics.getWorkItemDiagnostics(decodeURIComponent(workItemDiagnosticsMatch[1] ?? ""));
   }
 
+  const workItemPhotoAttachmentsMatch = /^\/api\/work-items\/([^/]+)\/photo-attachments$/.exec(pathname);
+  if (method === "GET" && workItemPhotoAttachmentsMatch !== null) {
+    return async () =>
+      services.workItems.listPhotoAttachments(decodeURIComponent(workItemPhotoAttachmentsMatch[1] ?? ""));
+  }
+
   const workItemTagSuggestionsMatch = /^\/api\/work-items\/([^/]+)\/tag-suggestions$/.exec(pathname);
   if (method === "GET" && workItemTagSuggestionsMatch !== null) {
     return async () =>

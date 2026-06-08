@@ -25,8 +25,11 @@ export class PhotoPreprocessingService {
 
   async runPreprocessJob(input: { sourceMemoId: string; jobId: string; actorUserId: string | null }): Promise<void> {
     const photoImports = new PhotoImportRepository(this.db);
-    const photoImport = await photoImports.markPreprocessing(input.sourceMemoId);
+    let photoImport = await photoImports.markPreprocessing(input.sourceMemoId);
     if (photoImport === null) {
+      photoImport = await photoImports.findBySourceMemoId(input.sourceMemoId);
+    }
+    if (photoImport === null || photoImport.status !== "preprocessing") {
       throw new PhotoPreprocessingJobError(
         "photo_import_not_available",
         "Photo import is not available for preprocessing.",

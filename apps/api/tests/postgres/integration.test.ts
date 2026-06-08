@@ -5,7 +5,9 @@ import { createPgDatabase } from "../../src/db/postgres.js";
 import type { Logger } from "../../src/logger.js";
 import { AuditRepository } from "../../src/repositories/audit.js";
 import { ProcessingJobRepository } from "../../src/repositories/jobs.js";
+import { WorkItemArtifactRepository } from "../../src/repositories/photo-imports.js";
 import { UserRepository } from "../../src/repositories/users.js";
+import { WorkItemRepository } from "../../src/repositories/work-items.js";
 import { WorkflowRepository } from "../../src/repositories/workflows.js";
 import { WorkflowService } from "../../src/services/workflows.js";
 import { hashBundle } from "../../src/services/workflow-runtime.js";
@@ -287,6 +289,114 @@ test("photo import schema seeds active image intake and accepts photo rows", asy
        where status in ('available', 'preprocessing', 'preprocessing_failed')`
     );
     assert.equal(visible.rows.some((row) => row.id === photoImportId && row.status === "available"), true);
+  } finally {
+    await db.close();
+  }
+});
+
+test("work item photo attachments are counted and listed in real Postgres", async () => {
+  const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
+  const userId = "10000000-0000-4000-8000-000000000601";
+  const projectId = "10000000-0000-4000-8000-000000000602";
+  const sourceMemoId = "10000000-0000-4000-8000-000000000603";
+  const workItemId = "10000000-0000-4000-8000-000000000604";
+  const originalArtifactId = "10000000-0000-4000-8000-000000000605";
+  const thumbnailArtifactId = "10000000-0000-4000-8000-000000000606";
+  const nonPhotoArtifactId = "10000000-0000-4000-8000-000000000607";
+  const photoImportId = "10000000-0000-4000-8000-000000000608";
+
+  try {
+    await db.query(
+      `insert into app_users (id, oidc_issuer, oidc_subject, first_seen_at, last_seen_at)
+       values ($1, 'test', 'photo-attachment-user', now(), now())`,
+      [userId]
+    );
+    await db.query(
+      `insert into projects (id, name, slug)
+       values ($1, 'Postgres Photo Attachments', 'postgres-photo-attachments')`,
+      [projectId]
+    );
+    await db.query(
+      `insert into artifacts (
+         id,
+         object_key,
+         original_filename,
+         mime_type,
+         byte_size,
+         content_hash,
+         artifact_kind,
+         bucket
+       )
+       values
+         ($1, 'postgres-photo-attachments/original.jpg', 'original.jpg', 'image/jpeg', 42, 'photo-attachment-original', 'original_photo_file', 'memo-capture'),
+         ($2, 'postgres-photo-attachments/thumb.jpg', 'thumb.jpg', 'image/jpeg', 12, 'photo-attachment-thumb', 'derived_photo_thumbnail', 'memo-capture'),
+         ($3, 'postgres-photo-attachments/audio.m4a', 'audio.m4a', 'audio/mp4', 9, 'photo-attachment-audio', 'original_audio_file', 'memo-capture')`,
+      [originalArtifactId, thumbnailArtifactId, nonPhotoArtifactId]
+    );
+    await db.query(
+      `insert into source_memos (
+         id,
+         source_type,
+         primary_artifact_id,
+         content_hash,
+         updated_at
+       )
+       values ($1, 'form', $2, 'photo-attachment-source', now())`,
+      [sourceMemoId, originalArtifactId]
+    );
+    await db.query(
+      `insert into work_items (
+         id,
+         source_memo_id,
+         project_id,
+         title,
+         body,
+         workflow_state
+       )
+       values ($1, $2, $3, 'Postgres photo memo', 'Body', 'memo')`,
+      [workItemId, sourceMemoId, projectId]
+    );
+    await db.query(
+      `insert into photo_imports (
+         id,
+         source_memo_id,
+         original_artifact_id,
+         thumbnail_artifact_id,
+         status,
+         original_filename,
+         content_hash,
+         captured_at,
+         camera_make,
+         camera_model,
+         created_by
+       )
+       values ($1, $2, $3, $4, 'attached', 'camera-original.jpg', 'photo-attachment-original', '2026-05-28T08:30:00Z', 'Nikon', 'Z8', $5)`,
+      [photoImportId, sourceMemoId, originalArtifactId, thumbnailArtifactId, userId]
+    );
+    await db.query(
+      `insert into work_item_artifacts (work_item_id, artifact_id, relationship)
+       values
+         ($1, $2, 'photo_attachment'),
+         ($1, $3, 'source_audio')`,
+      [workItemId, originalArtifactId, nonPhotoArtifactId]
+    );
+
+    const workItem = await new WorkItemRepository(db).findById(workItemId);
+    assert.equal(workItem?.photoAttachmentCount, 1);
+
+    const photos = await new WorkItemArtifactRepository(db).listPhotoAttachments(workItemId);
+    assert.deepEqual(photos, [
+      {
+        originalArtifactId,
+        thumbnailArtifactId,
+        originalFilename: "camera-original.jpg",
+        mimeType: "image/jpeg",
+        byteSize: 42,
+        capturedAt: "2026-05-28T08:30:00.000Z",
+        cameraMake: "Nikon",
+        cameraModel: "Z8"
+      }
+    ]);
   } finally {
     await db.close();
   }

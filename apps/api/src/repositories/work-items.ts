@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { BodyFormat, WorkItemState } from "@memo-capture/domain";
 import type { Queryable } from "../db/types.js";
 import { mapWorkItem, type WorkItemRow } from "./rows.js";
+import { WorkItemArtifactRepository } from "./photo-imports.js";
 
 export interface WorkItemCreateInput {
   sourceMemoId: string;
@@ -49,7 +50,7 @@ export class WorkItemRepository {
        limit $1`,
       [limit, states]
     );
-    return result.rows.map(mapWorkItem);
+    return this.withPhotoAttachmentCounts(result.rows.map(mapWorkItem));
   }
 
   async countByStates(states: string[]): Promise<number> {
@@ -92,7 +93,12 @@ export class WorkItemRepository {
        group by work_items.id, source_memos.original_file_modified_at`,
       [workItemId]
     );
-    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+    const row = result.rows[0];
+    if (row === undefined) {
+      return null;
+    }
+    const [workItem] = await this.withPhotoAttachmentCounts([mapWorkItem(row)]);
+    return workItem ?? null;
   }
 
   async findFirstBySourceMemoId(sourceMemoId: string): Promise<WorkItemRecord | null> {
@@ -122,7 +128,12 @@ export class WorkItemRepository {
        limit 1`,
       [sourceMemoId]
     );
-    return result.rows[0] === undefined ? null : mapWorkItem(result.rows[0]);
+    const row = result.rows[0];
+    if (row === undefined) {
+      return null;
+    }
+    const [workItem] = await this.withPhotoAttachmentCounts([mapWorkItem(row)]);
+    return workItem ?? null;
   }
 
   async create(input: WorkItemCreateInput): Promise<WorkItemRecord> {
@@ -377,6 +388,20 @@ export class WorkItemRepository {
 
     const row = result.rows[0];
     return row === undefined ? null : await this.findById(row.id);
+  }
+
+  private async withPhotoAttachmentCounts(workItems: WorkItemRecord[]): Promise<WorkItemRecord[]> {
+    if (workItems.length === 0) {
+      return workItems;
+    }
+
+    const counts = await new WorkItemArtifactRepository(this.db).countPhotoAttachmentsForWorkItems(
+      workItems.map((workItem) => workItem.id)
+    );
+    return workItems.map((workItem) => ({
+      ...workItem,
+      photoAttachmentCount: counts.get(workItem.id) ?? 0
+    }));
   }
 }
 

@@ -38,6 +38,17 @@ export interface PhotoImportRecord {
   updatedAt: string;
 }
 
+export interface WorkItemPhotoAttachmentRecord {
+  originalArtifactId: string;
+  thumbnailArtifactId: string | null;
+  originalFilename: string | null;
+  mimeType: string;
+  byteSize: number;
+  capturedAt: string | null;
+  cameraMake: string | null;
+  cameraModel: string | null;
+}
+
 interface PhotoImportRow extends Record<string, unknown> {
   id: string;
   source_memo_id: string;
@@ -248,6 +259,67 @@ export class WorkItemArtifactRepository {
        on conflict do nothing`,
       [input.workItemId, input.artifactId, input.relationship]
     );
+  }
+
+  async countPhotoAttachmentsForWorkItems(workItemIds: string[]): Promise<Map<string, number>> {
+    if (workItemIds.length === 0) {
+      return new Map();
+    }
+
+    const result = await this.db.query<{ work_item_id: string; count: number | string }>(
+      `select work_item_id, count(*) as count
+       from work_item_artifacts
+       where work_item_id = any($1::uuid[])
+         and relationship = 'photo_attachment'
+       group by work_item_id`,
+      [workItemIds]
+    );
+    return new Map(
+      result.rows.map((row) => [
+        row.work_item_id,
+        typeof row.count === "number" ? row.count : Number.parseInt(row.count, 10)
+      ])
+    );
+  }
+
+  async listPhotoAttachments(workItemId: string): Promise<WorkItemPhotoAttachmentRecord[]> {
+    const result = await this.db.query<{
+      original_artifact_id: string;
+      thumbnail_artifact_id: string | null;
+      original_filename: string | null;
+      mime_type: string;
+      byte_size: number | string;
+      captured_at: Date | string | null;
+      camera_make: string | null;
+      camera_model: string | null;
+    }>(
+      `select
+         artifacts.id as original_artifact_id,
+         photo_imports.thumbnail_artifact_id,
+         coalesce(photo_imports.original_filename, artifacts.original_filename) as original_filename,
+         artifacts.mime_type,
+         artifacts.byte_size,
+         photo_imports.captured_at,
+         photo_imports.camera_make,
+         photo_imports.camera_model
+       from work_item_artifacts
+       join artifacts on artifacts.id = work_item_artifacts.artifact_id
+       left join photo_imports on photo_imports.original_artifact_id = artifacts.id
+       where work_item_artifacts.work_item_id = $1
+         and work_item_artifacts.relationship = 'photo_attachment'
+       order by photo_imports.captured_at asc nulls last, artifacts.created_at asc`,
+      [workItemId]
+    );
+    return result.rows.map((row) => ({
+      originalArtifactId: row.original_artifact_id,
+      thumbnailArtifactId: row.thumbnail_artifact_id,
+      originalFilename: row.original_filename,
+      mimeType: row.mime_type,
+      byteSize: typeof row.byte_size === "number" ? row.byte_size : Number.parseInt(row.byte_size, 10),
+      capturedAt: row.captured_at == null ? null : toIso(row.captured_at),
+      cameraMake: row.camera_make,
+      cameraModel: row.camera_model
+    }));
   }
 }
 

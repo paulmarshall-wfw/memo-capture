@@ -14,6 +14,7 @@ import { HttpError } from "../src/services/errors.js";
 import { countIncompatibleActiveWorkflowDependentJobs } from "../src/services/workflows.js";
 import { createApiServer } from "../src/server.js";
 import { WorkItemRepository } from "../src/repositories/work-items.js";
+import { WorkItemArtifactRepository } from "../src/repositories/photo-imports.js";
 import { WorkflowRepository } from "../src/repositories/workflows.js";
 import { AuditRepository } from "../src/repositories/audit.js";
 import { ObjectStorageService } from "../src/services/object-storage.js";
@@ -1736,12 +1737,88 @@ test("audio transcription parser finalization queues transcription jobs", async 
   assert.equal(db.workItems[0]?.contributor_id, db.contributors[0]?.id);
 });
 
+test("photo parser finalization keeps new photos in preprocessing until the worker finishes", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    OBJECT_STORAGE_LOCAL_ROOT: "/private/tmp/memo-capture-test-storage"
+  });
+  const db = new FakeDatabase();
+  seedMediaParserRegistry(db);
+  db.mediaTypes.push({
+    id: "media-image",
+    media_key: "image",
+    display_name: "Image",
+    description: "Image files",
+    capability_state: "active",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  db.parserTypes.push({
+    id: "parser-photo-preprocess",
+    parser_key: "photo-preprocess",
+    display_name: "Photo preprocessing",
+    description: "Photo preprocessing parser",
+    media_key: "image",
+    capability_state: "active",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  db.fileTypes.push({
+    id: "file-type-jpg",
+    extension: ".jpg",
+    media_kind: "image",
+    capability_state: "active",
+    parser_key: "photo-preprocess",
+    updated_at: "2026-05-29T00:00:00.000Z"
+  });
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+  const body = Buffer.from("photo bytes", "utf8");
+  const contentHash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
+
+  const uploadSession = await services.imports.createUploadSession(
+    {
+      machineId: "machine-1",
+      watchFolderId: "watch-1",
+      sourceType: "watched_photo_file",
+      originalFilename: "memo.jpg",
+      originalPath: "/watched/memo.jpg",
+      originalFileModifiedAt,
+      mimeType: "image/jpeg",
+      byteSize: body.byteLength,
+      contentHash,
+      contributorText: "Photo Contributor"
+    },
+    session.user,
+    "request-1"
+  );
+  await services.imports.uploadSessionArtifact(uploadSession.sessionId, body);
+
+  const finalized = await services.imports.finalizeUploadSession(
+    uploadSession.sessionId,
+    { machineId: "machine-1", archivePlanned: true },
+    session.user,
+    "request-2"
+  );
+
+  assert.equal(finalized.workItemId, null);
+  assert.equal(finalized.initialWorkflowState, null);
+  assert.equal(finalized.processingJobs.length, 1);
+  assert.equal(db.processingJobs[0]?.job_kind, "preprocess_photo");
+  assert.equal(db.workItems.length, 0);
+  assert.equal(db.photoImports[0]?.status, "preprocessing");
+  assert.equal(db.photoImports[0]?.contributor_text, "Photo Contributor");
+  assert.equal(db.photoImports[0]?.contributor_id, db.contributors[0]?.id);
+});
+
 test("work item repository exposes and orders by original file modified time", async () => {
   let capturedSql = "";
   const queryable: Queryable = {
     query: async <Row extends Record<string, unknown> = Record<string, unknown>>(
       text: string
     ): Promise<QueryResult<Row>> => {
+      if (text.includes("from work_item_artifacts")) {
+        return rows([]);
+      }
       capturedSql = text;
       return rows([
         {
@@ -1790,6 +1867,110 @@ test("work item repository exposes and orders by original file modified time", a
   assert.match(capturedSql, /work_items\.created_at desc/);
   assert.equal(workItems[0]?.originalFileModifiedAt, "2026-05-29T03:00:00.000Z");
   assert.equal(workItems[1]?.originalFileModifiedAt, "2026-05-29T01:00:00.000Z");
+});
+
+test("work item repository includes photo attachment counts and metadata", async () => {
+  const db = new FakeDatabase();
+  seedWorkItemRow({
+    db,
+    workItemId: "00000000-0000-4000-8000-000000000201",
+    title: "Photo memo"
+  });
+  seedWorkItemRow({
+    db,
+    sourceMemoId: "00000000-0000-4000-8000-000000000102",
+    workItemId: "00000000-0000-4000-8000-000000000202",
+    title: "Plain memo"
+  });
+  db.artifacts.push(
+    {
+      id: "00000000-0000-4000-8000-000000000401",
+      artifact_kind: "original_photo_file",
+      object_key: "photos/original-a.jpg",
+      bucket: "memo-capture",
+      original_filename: "original-a.jpg",
+      mime_type: "image/jpeg",
+      byte_size: 42,
+      content_hash: "photo-a",
+      layout_version: "v1",
+      created_by: null,
+      created_at: "2026-05-29T00:02:00.000Z"
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000402",
+      artifact_kind: "original_audio_file",
+      object_key: "audio/original.m4a",
+      bucket: "memo-capture",
+      original_filename: "original.m4a",
+      mime_type: "audio/mp4",
+      byte_size: 12,
+      content_hash: "audio",
+      layout_version: "v1",
+      created_by: null,
+      created_at: "2026-05-29T00:01:00.000Z"
+    }
+  );
+  db.workItemArtifacts.push(
+    {
+      work_item_id: "00000000-0000-4000-8000-000000000201",
+      artifact_id: "00000000-0000-4000-8000-000000000401",
+      relationship: "photo_attachment",
+      created_at: "2026-05-29T00:03:00.000Z"
+    },
+    {
+      work_item_id: "00000000-0000-4000-8000-000000000201",
+      artifact_id: "00000000-0000-4000-8000-000000000402",
+      relationship: "source_audio",
+      created_at: "2026-05-29T00:04:00.000Z"
+    }
+  );
+  db.photoImports.push({
+    id: "00000000-0000-4000-8000-000000000501",
+    source_memo_id: "00000000-0000-4000-8000-000000000101",
+    original_artifact_id: "00000000-0000-4000-8000-000000000401",
+    thumbnail_artifact_id: "00000000-0000-4000-8000-000000000601",
+    status: "attached",
+    original_filename: "camera-a.jpg",
+    content_hash: "photo-a",
+    contributor_text: null,
+    contributor_id: null,
+    captured_at: "2026-05-28T08:30:00.000Z",
+    camera_make: "Nikon",
+    camera_model: "Z8",
+    gps_latitude: null,
+    gps_longitude: null,
+    preprocessing_error_code: null,
+    preprocessing_error_message: null,
+    attached_work_item_id: "00000000-0000-4000-8000-000000000201",
+    attached_at: "2026-05-29T00:05:00.000Z",
+    created_at: "2026-05-29T00:00:00.000Z",
+    updated_at: "2026-05-29T00:05:00.000Z"
+  });
+
+  const list = await new WorkItemRepository(db).list();
+  const photoMemo = list.find((workItem) => workItem.id === "00000000-0000-4000-8000-000000000201");
+  const plainMemo = list.find((workItem) => workItem.id === "00000000-0000-4000-8000-000000000202");
+  assert.equal(photoMemo?.photoAttachmentCount, 1);
+  assert.equal(plainMemo?.photoAttachmentCount, 0);
+
+  const detail = await new WorkItemRepository(db).findById("00000000-0000-4000-8000-000000000201");
+  assert.equal(detail?.photoAttachmentCount, 1);
+
+  const photos = await new WorkItemArtifactRepository(db).listPhotoAttachments(
+    "00000000-0000-4000-8000-000000000201"
+  );
+  assert.deepEqual(photos, [
+    {
+      originalArtifactId: "00000000-0000-4000-8000-000000000401",
+      thumbnailArtifactId: "00000000-0000-4000-8000-000000000601",
+      originalFilename: "camera-a.jpg",
+      mimeType: "image/jpeg",
+      byteSize: 42,
+      capturedAt: "2026-05-28T08:30:00.000Z",
+      cameraMake: "Nikon",
+      cameraModel: "Z8"
+    }
+  ]);
 });
 
 test("watched imports reject active file types when media type is unsupported", async () => {
@@ -1912,6 +2093,16 @@ test("basic protected capture routes expose session, catalog, work items, and fo
     assert.equal(workItemDetail.response.status, 200);
     assert.equal(workItemDetail.body.workItem.title, "Captured memo");
     assert.equal(workItemDetail.body.workItem.originalFileModifiedAt, originalFileModifiedAt);
+    assert.equal(workItemDetail.body.workItem.photoAttachmentCount, 1);
+
+    const photoAttachments = await authedJson(baseUrl, "/api/work-items/work-item-1/photo-attachments");
+    assert.equal(photoAttachments.response.status, 200);
+    assert.equal(photoAttachments.body.workItemId, "work-item-1");
+    assert.equal(photoAttachments.body.photos[0].thumbnailArtifactId, "artifact-photo-thumb");
+    assert.equal(photoAttachments.body.photos[0].originalFilename, "memo-photo.jpg");
+
+    const missingPhotoAttachments = await authedJson(baseUrl, "/api/work-items/missing/photo-attachments");
+    assert.equal(missingPhotoAttachments.response.status, 404);
 
     const tagSuggestions = await authedJson(baseUrl, "/api/work-items/work-item-1/tag-suggestions");
     assert.equal(tagSuggestions.response.status, 200);
@@ -2502,6 +2693,9 @@ function stubServices(): AppServices {
     workItems: {
       list: async () => [],
       findById: async () => null,
+      listPhotoAttachments: async () => {
+        throw new HttpError(404, "not_found", "work_item was not found.");
+      },
       getTagSuggestions: async () => ({ workItemId: "missing", suggestions: { strong: [], related: [], weak: [] } }),
       recoverTranscript: async () => {
         throw new Error("not used");
@@ -2555,6 +2749,7 @@ function captureRouteServices(): AppServices {
     workflowItemVersion: 1,
     acceptedSnapshotId: null,
     acceptedUnexportedChanges: false,
+    photoAttachmentCount: 1,
     originalFileModifiedAt,
     createdAt: "2026-05-29T00:00:00.000Z",
     updatedAt: "2026-05-29T00:00:00.000Z"
@@ -3431,6 +3626,26 @@ function captureRouteServices(): AppServices {
     workItems: {
       list: async () => [workItem],
       findById: async (workItemId: string) => (workItemId === workItem.id ? workItem : null),
+      listPhotoAttachments: async (workItemId: string) => {
+        if (workItemId !== workItem.id) {
+          throw new HttpError(404, "not_found", "work_item was not found.");
+        }
+        return {
+          workItemId,
+          photos: [
+            {
+              originalArtifactId: "artifact-photo-original",
+              thumbnailArtifactId: "artifact-photo-thumb",
+              originalFilename: "memo-photo.jpg",
+              mimeType: "image/jpeg",
+              byteSize: 42,
+              capturedAt: "2026-05-28T08:30:00.000Z",
+              cameraMake: "Nikon",
+              cameraModel: "Z8"
+            }
+          ]
+        };
+      },
       getTagSuggestions: async () => ({
         workItemId: workItem.id,
         suggestions: {
@@ -3510,6 +3725,8 @@ class FakeDatabase implements Database {
   readonly sourceMemoArtifacts: Record<string, unknown>[] = [];
   readonly artifacts: Record<string, unknown>[] = [];
   readonly workItems: Record<string, unknown>[] = [];
+  readonly workItemArtifacts: Record<string, unknown>[] = [];
+  readonly photoImports: Record<string, unknown>[] = [];
   readonly projects: Record<string, unknown>[] = [];
   readonly contributors: Record<string, unknown>[] = [];
   readonly importEvents: Record<string, unknown>[] = [];
@@ -4138,6 +4355,117 @@ class FakeDatabase implements Database {
       return rows(artifact === undefined ? [] : [artifact as Row]);
     }
 
+    if (text.includes("insert into photo_imports")) {
+      const row = {
+        id: values[0],
+        source_memo_id: values[1],
+        original_artifact_id: values[2],
+        import_event_id: values[3],
+        status: "available",
+        original_filename: values[4],
+        content_hash: values[5],
+        contributor_text: values[6],
+        contributor_id: values[7],
+        captured_at: null,
+        camera_make: null,
+        camera_model: null,
+        gps_latitude: null,
+        gps_longitude: null,
+        preprocessing_error_code: null,
+        preprocessing_error_message: null,
+        attached_work_item_id: null,
+        attached_at: null,
+        created_by: values[8],
+        created_at: "2026-05-29T00:00:00.000Z",
+        updated_at: "2026-05-29T00:00:00.000Z"
+      };
+      this.photoImports.push(row);
+      return rows([row] as unknown as Row[]);
+    }
+
+    if (text.includes("from photo_imports") && text.includes("where source_memo_id =")) {
+      const row = this.photoImports.find((candidate) => candidate.source_memo_id === values[0]);
+      return rows(row === undefined ? [] : [row as Row]);
+    }
+
+    if (text.includes("update photo_imports") && text.includes("status = 'preprocessing'")) {
+      const row = this.photoImports.find(
+        (candidate) =>
+          candidate.source_memo_id === values[0] &&
+          (candidate.status === "available" || candidate.status === "preprocessing_failed")
+      );
+      if (row !== undefined) {
+        row.status = "preprocessing";
+        row.preprocessing_error_code = null;
+        row.preprocessing_error_message = null;
+        row.updated_at = "2026-05-29T00:01:00.000Z";
+      }
+      return rows(row === undefined ? [] : [row as Row]);
+    }
+
+    if (text.includes("insert into work_item_artifacts")) {
+      const existing = this.workItemArtifacts.find(
+        (row) => row.work_item_id === values[0] && row.artifact_id === values[1] && row.relationship === values[2]
+      );
+      if (existing === undefined) {
+        this.workItemArtifacts.push({
+          work_item_id: values[0],
+          artifact_id: values[1],
+          relationship: values[2],
+          created_at: "2026-05-29T00:00:00.000Z"
+        });
+      }
+      return rows([]);
+    }
+
+    if (text.includes("from work_item_artifacts") && text.includes("count(*) as count")) {
+      const ids = new Set(Array.isArray(values[0]) ? values[0].map(String) : []);
+      const counts = new Map<string, number>();
+      for (const link of this.workItemArtifacts) {
+        const workItemId = String(link.work_item_id);
+        if (ids.has(workItemId) && link.relationship === "photo_attachment") {
+          counts.set(workItemId, (counts.get(workItemId) ?? 0) + 1);
+        }
+      }
+      return rows(
+        [...counts.entries()].map(([workItemId, count]) => ({
+          work_item_id: workItemId,
+          count
+        })) as unknown as Row[]
+      );
+    }
+
+    if (text.includes("from work_item_artifacts") && text.includes("join artifacts")) {
+      const workItemId = values[0];
+      const attachmentRows = this.workItemArtifacts
+          .filter((link) => link.work_item_id === workItemId && link.relationship === "photo_attachment")
+          .flatMap((link) => {
+            const artifact = this.artifacts.find((candidate) => candidate.id === link.artifact_id);
+            if (artifact === undefined) {
+              return [];
+            }
+            const photoImport = this.photoImports.find(
+              (candidate) => candidate.original_artifact_id === artifact.id
+            );
+            return {
+              original_artifact_id: artifact.id,
+              thumbnail_artifact_id: photoImport?.thumbnail_artifact_id ?? null,
+              original_filename: photoImport?.original_filename ?? artifact.original_filename,
+              mime_type: artifact.mime_type,
+              byte_size: artifact.byte_size,
+              captured_at: photoImport?.captured_at ?? null,
+              camera_make: photoImport?.camera_make ?? null,
+              camera_model: photoImport?.camera_model ?? null,
+              created_at: artifact.created_at
+            };
+          })
+          .sort((left, right) =>
+            String(left.captured_at ?? "9999").localeCompare(String(right.captured_at ?? "9999")) ||
+            String(left.created_at).localeCompare(String(right.created_at))
+          );
+      return rows(attachmentRows as unknown as Row[]);
+    }
+
     if (text.includes("delete from projects")) {
       const projectId = String(values[0]);
       if (this.workItems.some((item) => item.project_id === projectId)) {
@@ -4398,6 +4726,21 @@ class FakeDatabase implements Database {
         session.finalized_at = "2026-05-29T00:00:00.000Z";
       }
       return rows([]);
+    }
+
+    if (text.includes("from work_items") && text.includes("where (cardinality")) {
+      const limit = typeof values[0] === "number" ? values[0] : Number.parseInt(String(values[0] ?? "100"), 10);
+      const states = new Set(Array.isArray(values[1]) ? values[1].map(String) : []);
+      return rows(
+        this.workItems
+          .filter((row) => states.size === 0 || states.has(String(row.workflow_state)))
+          .map((row) => withTagAvailability(row))
+          .sort((left, right) =>
+            String(right.original_file_modified_at ?? "").localeCompare(String(left.original_file_modified_at ?? "")) ||
+            String(right.created_at ?? "").localeCompare(String(left.created_at ?? ""))
+          )
+          .slice(0, limit) as Row[]
+      );
     }
 
     if (text.includes("from work_items") && text.includes("where work_items.source_memo_id =")) {

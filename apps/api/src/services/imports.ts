@@ -498,6 +498,10 @@ async function finalizeWatchedPhotoImport(input: {
     contributorId: contributor?.id ?? null,
     createdBy: input.actor.id
   });
+  await requireValue(
+    await photoImports.markPreprocessing(sourceMemo.id),
+    "Photo import should enter preprocessing before the worker claims it."
+  );
   const preprocessJob = await jobs.create({
     jobKind: "preprocess_photo",
     sourceMemoId: sourceMemo.id,

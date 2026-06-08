@@ -6,6 +6,7 @@ import type { AiSuggestionRecord } from "../repositories/ai-suggestions.js";
 import type { AppUserRecord } from "../repositories/rows.js";
 import { UserRepository } from "../repositories/users.js";
 import { ArtifactService } from "./artifacts.js";
+import type { WorkItemPhotoAttachmentRecord } from "../repositories/photo-imports.js";
 import type { WorkItemRecord } from "../repositories/work-items.js";
 import { AuthService } from "./auth.js";
 import { AiExpansionService } from "./ai-expansion.js";
@@ -199,6 +200,10 @@ export interface DiagnosticsOperations {
 export interface WorkItemOperations {
   list(input?: { bucketId?: string | null }): Promise<WorkItemRecord[]>;
   findById(workItemId: string): Promise<WorkItemRecord | null>;
+  listPhotoAttachments(workItemId: string): Promise<{
+    workItemId: string;
+    photos: WorkItemPhotoAttachmentRecord[];
+  }>;
   getTagSuggestions(workItemId: string): Promise<TagSuggestionResponse>;
   update(
     workItemId: string,

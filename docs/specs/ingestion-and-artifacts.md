@@ -117,7 +117,7 @@ Rules:
 - Raw file blobs are not stored in Postgres.
 - Original imported files are permanent managed artifacts unless a future explicit deletion feature is introduced.
 
-Current implementation note: authenticated artifact playback/download is exposed through `GET /api/artifacts/{artifactId}/download`; the desktop UI fetches audio with the bearer token and plays a local object URL.
+Current implementation note: authenticated artifact playback/download is exposed through `GET /api/artifacts/{artifactId}/download`; the desktop UI fetches audio with the bearer token and plays a local object URL. Work item API responses include `photoAttachmentCount`, and `GET /api/work-items/{workItemId}/photo-attachments` returns attached-photo metadata only. The desktop work queue shows a compact photo indicator for attached photos, and the detail panel opens a read-only Photos modal that fetches thumbnails, or originals when thumbnails are unavailable, through the authenticated artifact download route.
 
 Object key layout includes a numbered layout version:
 

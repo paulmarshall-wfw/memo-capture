@@ -21,8 +21,11 @@ import type {
 } from "state-workflow-runtime";
 import {
   AlertTriangle,
+  Camera,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleSlash,
   Copy,
   Download,
@@ -137,9 +140,25 @@ interface WorkItem {
   workflowItemVersion: number;
   acceptedSnapshotId: string | null;
   acceptedUnexportedChanges: boolean;
+  photoAttachmentCount: number;
   originalFileModifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface WorkItemPhotoAttachment {
+  originalArtifactId: string;
+  thumbnailArtifactId: string | null;
+  originalFilename: string | null;
+  mimeType: string;
+  byteSize: number;
+  capturedAt: string | null;
+  cameraMake: string | null;
+  cameraModel: string | null;
+}
+
+interface WorkItemPhotoAttachmentView extends WorkItemPhotoAttachment {
+  objectUrl: string;
 }
 
 interface PhotoImport {
@@ -1491,6 +1510,14 @@ export function App() {
   const [photoMemoDraft, setPhotoMemoDraft] = useState<PhotoMemoDraft>(defaultPhotoMemoDraft);
   const [photoMemoSaving, setPhotoMemoSaving] = useState(false);
   const [photoThumbnailUrls, setPhotoThumbnailUrls] = useState<Record<string, string>>({});
+  const [photoViewer, setPhotoViewer] = useState<{ workItemId: string; title: string } | null>(null);
+  const [photoViewerLoadState, setPhotoViewerLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [photoViewerError, setPhotoViewerError] = useState<string | null>(null);
+  const [photoViewerPhotos, setPhotoViewerPhotos] = useState<WorkItemPhotoAttachmentView[]>([]);
+  const [photoGalleryScrollState, setPhotoGalleryScrollState] = useState({
+    canScrollLeft: false,
+    canScrollRight: false
+  });
   const [rowActionsByItemId, setRowActionsByItemId] = useState<Record<string, AllowedWorkflowAction[]>>({});
   const [projects, setProjects] = useState<Project[]>([]);
   const [contributors, setContributors] = useState<Contributor[]>([]);
@@ -1582,6 +1609,8 @@ export function App() {
   const nextProjectDraftId = useRef(1);
   const projectListRef = useRef<HTMLDivElement | null>(null);
   const workItemRowButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const photoGalleryRef = useRef<HTMLDivElement | null>(null);
+  const photoModalRef = useRef<HTMLElement | null>(null);
   const watchScanInFlightRef = useRef(false);
   const activeBucketIdRef = useRef<string | null>(null);
 
@@ -1902,6 +1931,76 @@ export function App() {
       cancelled = true;
     };
   }, [accessToken, photoImports]);
+
+  useEffect(() => {
+    if (accessToken === null || photoViewer === null) {
+      setPhotoViewerLoadState("idle");
+      setPhotoViewerError(null);
+      setPhotoViewerPhotos((current) => {
+        current.forEach((photo) => URL.revokeObjectURL(photo.objectUrl));
+        return [];
+      });
+      return;
+    }
+
+    const token = accessToken;
+    const workItemId = photoViewer.workItemId;
+    let cancelled = false;
+    const createdUrls: string[] = [];
+    setPhotoViewerLoadState("loading");
+    setPhotoViewerError(null);
+    setPhotoViewerPhotos((current) => {
+      current.forEach((photo) => URL.revokeObjectURL(photo.objectUrl));
+      return [];
+    });
+    setPhotoGalleryScrollState({ canScrollLeft: false, canScrollRight: false });
+
+    async function loadPhotoAttachments() {
+      try {
+        const response = await authedJson<{ workItemId: string; photos: WorkItemPhotoAttachment[] }>(
+          token,
+          `/api/work-items/${encodeURIComponent(workItemId)}/photo-attachments`
+        );
+        const photos = await Promise.all(
+          response.photos.map(async (photo) => {
+            const artifactId = photo.thumbnailArtifactId ?? photo.originalArtifactId;
+            const artifactResponse = await authedFetch(
+              token,
+              `/api/artifacts/${encodeURIComponent(artifactId)}/download`
+            );
+            const objectUrl = URL.createObjectURL(await artifactResponse.blob());
+            createdUrls.push(objectUrl);
+            return { ...photo, objectUrl };
+          })
+        );
+        if (cancelled) {
+          createdUrls.forEach((url) => URL.revokeObjectURL(url));
+          return;
+        }
+        setPhotoViewerPhotos(photos);
+        setPhotoViewerLoadState("ready");
+        window.requestAnimationFrame(updatePhotoGalleryScrollState);
+      } catch (error) {
+        createdUrls.forEach((url) => URL.revokeObjectURL(url));
+        if (!cancelled) {
+          setPhotoViewerLoadState("error");
+          setPhotoViewerError(error instanceof Error ? error.message : "Unable to load attached photos.");
+        }
+      }
+    }
+
+    void loadPhotoAttachments();
+    return () => {
+      cancelled = true;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [accessToken, photoViewer]);
+
+  useEffect(() => {
+    if (photoViewer !== null) {
+      photoModalRef.current?.focus();
+    }
+  }, [photoViewer]);
 
   useEffect(() => {
     setWatchedFolders(readWatchedFolderSettings());
@@ -4193,6 +4292,52 @@ export function App() {
     });
   }
 
+  function openPhotoViewer(workItem: WorkItem) {
+    setPhotoViewer({ workItemId: workItem.id, title: workItem.title });
+  }
+
+  function closePhotoViewer() {
+    setPhotoViewer(null);
+  }
+
+  function updatePhotoGalleryScrollState() {
+    const gallery = photoGalleryRef.current;
+    if (gallery === null) {
+      setPhotoGalleryScrollState({ canScrollLeft: false, canScrollRight: false });
+      return;
+    }
+
+    setPhotoGalleryScrollState({
+      canScrollLeft: gallery.scrollLeft > 1,
+      canScrollRight: gallery.scrollLeft + gallery.clientWidth < gallery.scrollWidth - 1
+    });
+  }
+
+  function scrollPhotoGallery(direction: "left" | "right") {
+    const gallery = photoGalleryRef.current;
+    if (gallery === null) {
+      return;
+    }
+
+    gallery.scrollBy({
+      left: direction === "left" ? -gallery.clientWidth : gallery.clientWidth,
+      behavior: "smooth"
+    });
+    window.setTimeout(updatePhotoGalleryScrollState, 220);
+  }
+
+  function handlePhotoModalKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePhotoViewer();
+      return;
+    }
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      scrollPhotoGallery(event.key === "ArrowLeft" ? "left" : "right");
+    }
+  }
+
   async function copyText(value: string, label: string) {
     await navigator.clipboard.writeText(value);
     setStatusMessage(`${label} copied.`);
@@ -4547,6 +4692,16 @@ export function App() {
                       <div className="item-title-line">
                         <FileText size={18} />
                         <h2>{item.title}</h2>
+                        {item.photoAttachmentCount > 0 ? (
+                          <span
+                            className="photo-attachment-indicator"
+                            aria-label={`${item.photoAttachmentCount} attached photos`}
+                            title={`${item.photoAttachmentCount} attached photos`}
+                          >
+                            <Camera size={14} aria-hidden="true" />
+                            <span>{item.photoAttachmentCount}</span>
+                          </span>
+                        ) : null}
                         <p>{item.body}</p>
                       </div>
                     </div>
@@ -4721,29 +4876,41 @@ export function App() {
                   {selectedItem.acceptedUnexportedChanges ? <span>Accepted changes pending export</span> : null}
                 </div>
 
-                <div className="detail-actions detail-header-actions">
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={!hasDraftChanges || saveState === "saving"}
-                    onClick={() => void saveDraft()}
-                  >
-                    {saveState === "saving" ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
-                    Save
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={!hasDraftChanges}
-                    onClick={() => setDraft(createDraft(selectedItem))}
-                  >
-                    Reset
-                  </button>
-                  {saveState === "saved" ? (
-                    <span className="inline-status">
-                      <Check size={16} />
-                      Saved
-                    </span>
+                <div className="detail-action-bar detail-header-actions">
+                  <div className="detail-actions">
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={!hasDraftChanges || saveState === "saving"}
+                      onClick={() => void saveDraft()}
+                    >
+                      {saveState === "saving" ? <RefreshCcw className="spin" size={18} /> : <Save size={18} />}
+                      Save
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={!hasDraftChanges}
+                      onClick={() => setDraft(createDraft(selectedItem))}
+                    >
+                      Reset
+                    </button>
+                    {saveState === "saved" ? (
+                      <span className="inline-status">
+                        <Check size={16} />
+                        Saved
+                      </span>
+                    ) : null}
+                  </div>
+                  {selectedItem.photoAttachmentCount > 0 ? (
+                    <button
+                      className="secondary-button detail-photo-action"
+                      type="button"
+                      onClick={() => openPhotoViewer(selectedItem)}
+                    >
+                      <Camera size={18} />
+                      Photos
+                    </button>
                   ) : null}
                 </div>
 
@@ -7221,6 +7388,105 @@ export function App() {
             </section>
           </div>
         ) : null}
+
+        {photoViewer === null ? null : (
+          <div className="modal-backdrop" role="presentation">
+            <section
+              className="review-modal photos-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="photos-modal-title"
+              tabIndex={-1}
+              ref={photoModalRef}
+              onKeyDown={handlePhotoModalKeyDown}
+            >
+              <header className="review-modal-header">
+                <div className="photos-modal-title">
+                  <h2 id="photos-modal-title">Photos</h2>
+                  <span>{photoViewer.title}</span>
+                </div>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title="Close photos"
+                  aria-label="Close photos"
+                  onClick={closePhotoViewer}
+                >
+                  <X size={18} />
+                </button>
+              </header>
+              <div className="review-modal-body photos-modal-body">
+                {photoViewerLoadState === "loading" ? (
+                  <div className="empty-detail inline-empty">
+                    <RefreshCcw className="spin" size={22} />
+                    <span>Loading photos</span>
+                  </div>
+                ) : null}
+                {photoViewerLoadState === "error" ? (
+                  <div className="status-banner warning">
+                    <AlertTriangle size={18} />
+                    <span>{photoViewerError ?? "Unable to load attached photos."}</span>
+                  </div>
+                ) : null}
+                {photoViewerLoadState === "ready" && photoViewerPhotos.length === 0 ? (
+                  <div className="empty-detail inline-empty">
+                    <Camera size={22} />
+                    <span>No attached photos</span>
+                  </div>
+                ) : null}
+                {photoViewerPhotos.length === 0 ? null : (
+                  <div className="photos-gallery-shell">
+                    <button
+                      className="photos-gallery-arrow"
+                      type="button"
+                      title="Previous photos"
+                      aria-label="Previous photos"
+                      disabled={!photoGalleryScrollState.canScrollLeft}
+                      onClick={() => scrollPhotoGallery("left")}
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                    <div
+                      className="photos-gallery"
+                      ref={photoGalleryRef}
+                      tabIndex={0}
+                      onScroll={updatePhotoGalleryScrollState}
+                    >
+                      {photoViewerPhotos.map((photo) => (
+                        <figure className="photos-gallery-tile" key={photo.originalArtifactId}>
+                          <img
+                            src={photo.objectUrl}
+                            alt={photo.originalFilename ?? "Attached photo"}
+                            onLoad={updatePhotoGalleryScrollState}
+                          />
+                          <figcaption>
+                            <strong>{photo.originalFilename ?? "Attached photo"}</strong>
+                            <span>
+                              {photo.capturedAt === null ? "No captured date" : formatDate(photo.capturedAt)}
+                            </span>
+                            <span>
+                              {[photo.cameraMake, photo.cameraModel].filter(Boolean).join(" ") || photo.mimeType}
+                            </span>
+                          </figcaption>
+                        </figure>
+                      ))}
+                    </div>
+                    <button
+                      className="photos-gallery-arrow"
+                      type="button"
+                      title="Next photos"
+                      aria-label="Next photos"
+                      disabled={!photoGalleryScrollState.canScrollRight}
+                      onClick={() => scrollPhotoGallery("right")}
+                    >
+                      <ChevronRight size={20} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
 
         {pendingWorkflowAction === null ? null : (
           <div className="modal-backdrop" role="presentation">

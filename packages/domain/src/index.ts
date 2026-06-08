@@ -258,6 +258,7 @@ export interface WorkItem {
   workflowItemVersion: number;
   acceptedSnapshotId: string | null;
   acceptedUnexportedChanges: boolean;
+  photoAttachmentCount: number;
   originalFileModifiedAt: string | null;
   createdAt: string;
   updatedAt: string;
