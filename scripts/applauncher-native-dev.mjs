@@ -65,6 +65,13 @@ const baseEnv = {
   LLM_PROVIDER: process.env.LLM_PROVIDER ?? "disabled",
   LLM_MODEL: process.env.LLM_MODEL ?? "memo-capture-local-dev-expander-v1",
   OPENAI_COMPATIBLE_API_KEY: openAiCompatibleApiKey(),
+  LOCAL_OPENAI_COMPATIBLE_API_KEY: process.env.LOCAL_OPENAI_COMPATIBLE_API_KEY ?? openAiCompatibleApiKey(),
+  INVOKE_PROVIDERS_CODEX_CLI_BINARY:
+    process.env.INVOKE_PROVIDERS_CODEX_CLI_BINARY ?? process.env.CODEX_CLI_EXECUTABLE ?? "codex",
+  CODEX_CLI_EXECUTABLE: process.env.CODEX_CLI_EXECUTABLE ?? process.env.INVOKE_PROVIDERS_CODEX_CLI_BINARY ?? "codex",
+  CODEX_CLI_MODEL: process.env.CODEX_CLI_MODEL ?? "",
+  CODEX_CLI_PROFILE: process.env.CODEX_CLI_PROFILE ?? "",
+  CODEX_CLI_EXTRA_ARGS: process.env.CODEX_CLI_EXTRA_ARGS ?? "",
   TRANSCRIPTION_PROVIDER: "whisper-cpp",
   TRANSCRIPTION_MODEL: "base.en",
   WHISPER_CPP_MODE: "cli",

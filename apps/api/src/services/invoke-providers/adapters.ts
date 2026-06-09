@@ -1,5 +1,6 @@
 import type { ApiConfig } from "../../config.js";
 import type { SharedProviderConfig } from "./types.js";
+import { isSecretAvailable } from "./secrets.js";
 
 export interface AdapterCatalogEntry {
   adapterKey: string;
@@ -39,6 +40,15 @@ export function diagnoseAdapterRegistration(adapterKey: string, config: ApiConfi
           : config.whisperCpp.modelPath.trim() === ""
             ? "WHISPER_CPP_MODEL_PATH is not configured."
             : null
+    };
+  }
+  if (adapterKey === "codex-cli") {
+    return {
+      adapterKey,
+      configured: isSecretAvailable("INVOKE_PROVIDERS_CODEX_CLI_BINARY", config),
+      reason: isSecretAvailable("INVOKE_PROVIDERS_CODEX_CLI_BINARY", config)
+        ? null
+        : "Codex CLI binary is not configured for this API process."
     };
   }
   if (adapterKey === "apple-vision-ocr" || adapterKey === "paddleocr-local") {

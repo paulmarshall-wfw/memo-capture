@@ -17,6 +17,7 @@ import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
 import { fetchRegistryProfile, fetchRegistryProfiles, fetchRegistryProviders } from "./invoke-providers/registry.js";
 import { createTargetAppRuntimeService } from "./invoke-providers/runtime.js";
 import { normalizeCapabilityKey } from "./invoke-providers/mapping.js";
+import { isSecretAvailable } from "./invoke-providers/secrets.js";
 import type { SharedProviderConfig, SharedRegistryProfile } from "./invoke-providers/types.js";
 import {
   DEFAULT_LLM_SYSTEM_MESSAGE,
@@ -391,10 +392,14 @@ export class SettingsService {
       }
       const registryProvider = await resolveRegistryProviderForTaskRoute(settings, current, input, this.config);
       await validateAiTaskRouteUpdate(settings, current, input, this.config);
+      const providerConfig =
+        registryProvider.provider === null
+          ? null
+          : await findEnabledProviderConfigForRegistryProvider(settings, registryProvider.provider);
       const task = await settings.updateAiTaskRoute({
         taskDefinitionId,
         ...input,
-        providerConfigId: input.providerKey === undefined ? undefined : null,
+        providerConfigId: input.providerKey === undefined ? undefined : providerConfig?.id ?? null,
         registryProfileKey: registryProvider.registryProfileKey,
         providerKey: registryProvider.providerKey,
         actorUserId: actor.id
@@ -511,10 +516,14 @@ export class SettingsService {
         throw new HttpError(404, "not_found", "ai_task_definition was not found.");
       }
       await validateAiTaskRouteUpdate(settings, refreshed, input, this.config);
+      const providerConfig =
+        registryProvider.provider === null
+          ? null
+          : await findEnabledProviderConfigForRegistryProvider(settings, registryProvider.provider);
       const task = await settings.updateAiTaskRoute({
         taskDefinitionId,
         ...input,
-        providerConfigId: input.providerKey === undefined ? undefined : null,
+        providerConfigId: input.providerKey === undefined ? undefined : providerConfig?.id ?? null,
         registryProfileKey: registryProvider.registryProfileKey,
         providerKey: registryProvider.providerKey,
         actorUserId: actor.id
@@ -1587,13 +1596,7 @@ function runtimeForTaskRoute(
 }
 
 function secretConfigured(requiredSecretEnv: string | null, config: ApiConfig): boolean {
-  if (requiredSecretEnv === null || requiredSecretEnv.trim() === "") {
-    return true;
-  }
-  if (requiredSecretEnv === "OPENAI_COMPATIBLE_API_KEY") {
-    return config.llm.openAiCompatibleApiKey.trim() !== "";
-  }
-  return false;
+  return isSecretAvailable(requiredSecretEnv ?? undefined, config);
 }
 
 function parseExtractionBody(body: unknown) {
@@ -1819,12 +1822,78 @@ async function validateAiTaskRouteUpdate(
   if (!selection.provider.enabled) {
     throw new HttpError(409, "provider_disabled", "Task route cannot be enabled with a disabled provider.");
   }
-  const requiredSecretEnv = selection.provider.requiredSecretRef ?? null;
+  const providerConfig = await requireEnabledProviderConfigForRegistryProvider(settings, selection.provider);
+  const requiredSecretEnv = selection.provider.requiredSecretRef ?? providerConfig.required_secret_env ?? null;
   if (!secretConfigured(requiredSecretEnv, config)) {
     throw new HttpError(409, "provider_secret_missing", "Task route cannot be enabled until the required secret is configured.", {
       requiredSecretEnv
     });
   }
+}
+
+async function findEnabledProviderConfigForRegistryProvider(
+  settings: SettingsRepository,
+  provider: SharedProviderConfig
+): Promise<ProviderConfigRow | null> {
+  const providerName = runtimeProviderNameForRegistryProvider(provider);
+  if (providerName === null) {
+    return null;
+  }
+  return await settings.findEnabledProvider(providerConfigKindForRegistryProvider(provider.providerKind), providerName);
+}
+
+async function requireEnabledProviderConfigForRegistryProvider(
+  settings: SettingsRepository,
+  provider: SharedProviderConfig
+): Promise<ProviderConfigRow> {
+  const providerConfig = await findEnabledProviderConfigForRegistryProvider(settings, provider);
+  if (providerConfig !== null) {
+    return providerConfig;
+  }
+  throw new HttpError(
+    409,
+    "provider_adapter_unavailable",
+    "Task route cannot be enabled until the selected provider has a supported Memo Capture adapter.",
+    {
+      providerKey: provider.providerKey,
+      adapterKey: provider.adapterKey
+    }
+  );
+}
+
+function providerConfigKindForRegistryProvider(providerKind: SharedProviderConfig["providerKind"]): string {
+  return providerKind === "stt" ? "transcription" : providerKind;
+}
+
+function runtimeProviderNameForRegistryProvider(provider: SharedProviderConfig): string | null {
+  const adapterKey = provider.adapterKey;
+  const providerKey = provider.providerKey;
+  if (
+    adapterKey === "local-dev" ||
+    adapterKey === "deterministic-llm" ||
+    adapterKey === "deterministic-local-dev" ||
+    providerKey === "local-dev" ||
+    providerKey === "deterministic-local-dev"
+  ) {
+    return "local-dev";
+  }
+  if (
+    adapterKey === "openai-compatible" ||
+    adapterKey === "openai-compatible-local" ||
+    adapterKey === "openai-compatible-cloud" ||
+    providerKey === "openai-compatible" ||
+    providerKey === "openai-compatible-local" ||
+    providerKey === "openai-compatible-cloud"
+  ) {
+    return "openai-compatible";
+  }
+  if (adapterKey === "whisper-cpp" || adapterKey === "whisper-cpp-local" || providerKey === "whisper-cpp-local") {
+    return "whisper-cpp";
+  }
+  if (adapterKey === "codex-cli" || providerKey === "codex-cli-local") {
+    return "codex-cli";
+  }
+  return null;
 }
 
 async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository, config: ApiConfig) {
@@ -1856,6 +1925,10 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     throw new HttpError(400, "invalid_request", "taskKind must reference an active configured task kind.");
   }
   const routeEnabled = parseOptionalBoolean(record.enabled, "enabled") ?? false;
+  const providerConfig =
+    registryProvider.provider === null
+      ? null
+      : await findEnabledProviderConfigForRegistryProvider(settings, registryProvider.provider);
   return {
     taskKey,
     displayName,
@@ -1870,7 +1943,7 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     taskKindId: taskKindRow.id,
     implemented: isHookImplemented(hookKey),
     promptDefinitionId: null,
-    providerConfigId: null,
+    providerConfigId: providerConfig?.id ?? null,
     registryProfileKey: registryProvider.registryProfileKey,
     providerKey: registryProvider.providerKey,
     routeModelName:

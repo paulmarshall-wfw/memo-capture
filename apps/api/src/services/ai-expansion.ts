@@ -11,6 +11,7 @@ import { SourceMemoRepository } from "../repositories/source-memos.js";
 import { TagRepository } from "../repositories/tags.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { HttpError } from "./errors.js";
+import { isSecretAvailable } from "./invoke-providers/secrets.js";
 import { WorkflowHookScheduler } from "./workflow-hooks.js";
 import {
   createLlmProvider,
@@ -134,8 +135,7 @@ export class AiExpansionService {
     if (providerName === null) {
       throw new HttpError(409, "llm_provider_not_enabled", "No LLM provider is selected for memo expansion.");
     }
-    const modelName =
-      taskRoute.route_model_name ?? taskRoute.provider_model_name ?? taskRoute.default_model_name ?? this.config.llm.modelName;
+    const modelName = modelNameForTaskRoute(taskRoute, this.config);
     const endpoint = this.config.llm.endpoint || (taskRoute.endpoint ?? "");
     const provider = createLlmProvider(this.config.llm, providerName, modelName, this.config.llm.provider, endpoint);
 
@@ -361,8 +361,7 @@ export class AiExpansionService {
     if (providerName === null) {
       throw new HttpError(409, "llm_provider_not_enabled", "No LLM provider is selected for suggested work items.");
     }
-    const modelName =
-      taskRoute.route_model_name ?? taskRoute.provider_model_name ?? taskRoute.default_model_name ?? this.config.llm.modelName;
+    const modelName = modelNameForTaskRoute(taskRoute, this.config);
     const endpoint = this.config.llm.endpoint || (taskRoute.endpoint ?? "");
     const provider = createLlmProvider(this.config.llm, providerName, modelName, this.config.llm.provider, endpoint);
 
@@ -828,8 +827,11 @@ function validateMemoExpansionTaskRoute(task: AiTaskRouteRow, config: ApiConfig)
   if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm" || task.provider_kind !== "llm") {
     throw new HttpError(409, "llm_provider_unavailable", "Memo expansion requires an LLM task route and provider.");
   }
-  if (task.required_secret_env === "OPENAI_COMPATIBLE_API_KEY" && config.llm.openAiCompatibleApiKey.trim() === "") {
-    throw new HttpError(409, "llm_secret_missing", "OpenAI-compatible LLM API key is not configured.");
+  if (!isSecretAvailable(task.required_secret_env ?? undefined, config)) {
+    throw new HttpError(409, "llm_secret_missing", "Configured LLM provider secret is not configured.");
+  }
+  if (task.provider_name === "codex-cli") {
+    return;
   }
   if (config.llm.provider === "disabled") {
     throw new HttpError(
@@ -860,8 +862,11 @@ function validateSuggestNewMemosTaskRoute(task: AiTaskRouteRow, config: ApiConfi
   if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm" || task.provider_kind !== "llm") {
     throw new HttpError(409, "llm_provider_unavailable", "Suggested work items require an LLM task route and provider.");
   }
-  if (task.required_secret_env === "OPENAI_COMPATIBLE_API_KEY" && config.llm.openAiCompatibleApiKey.trim() === "") {
-    throw new HttpError(409, "llm_secret_missing", "OpenAI-compatible LLM API key is not configured.");
+  if (!isSecretAvailable(task.required_secret_env ?? undefined, config)) {
+    throw new HttpError(409, "llm_secret_missing", "Configured LLM provider secret is not configured.");
+  }
+  if (task.provider_name === "codex-cli") {
+    return;
   }
   if (config.llm.provider === "disabled") {
     throw new HttpError(
@@ -877,6 +882,29 @@ function validateSuggestNewMemosTaskRoute(task: AiTaskRouteRow, config: ApiConfi
       `Suggested work items use ${task.provider_name}, but the AppLauncher LLM runtime selected ${config.llm.provider}.`
     );
   }
+}
+
+export function modelNameForTaskRoute(task: AiTaskRouteRow, config: ApiConfig): string {
+  if (task.provider_name === "codex-cli") {
+    const explicitModel = (task.provider_model_override ?? task.route_model_name)?.trim() ?? "";
+    if (explicitModel !== "" && !isMemoCaptureInternalModel(explicitModel, task, config)) {
+      return explicitModel;
+    }
+    return process.env.CODEX_CLI_MODEL?.trim() ?? "";
+  }
+  return task.provider_model_override ??
+    task.route_model_name ??
+    task.provider_model_name ??
+    task.default_model_name ??
+    config.llm.modelName;
+}
+
+function isMemoCaptureInternalModel(value: string, task: AiTaskRouteRow, config: ApiConfig): boolean {
+  return (
+    value === "memo-capture-local-dev-expander-v1" ||
+    value === task.default_model_name ||
+    value === config.llm.modelName
+  );
 }
 
 async function recordInvokeTaskRun(

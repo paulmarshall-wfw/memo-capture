@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { LlmProviderConfig, LlmProviderMode } from "../config.js";
 import { HttpError } from "./errors.js";
 
@@ -84,6 +86,10 @@ export function createLlmProvider(
   runtimeProvider: LlmProviderMode = config.provider,
   endpoint = config.endpoint
 ): LlmProvider {
+  if (providerName === "codex-cli") {
+    return new CodexCliLlmProvider(modelName);
+  }
+
   if (runtimeProvider === "disabled") {
     throw new HttpError(
       409,
@@ -105,10 +111,11 @@ export function createLlmProvider(
   }
 
   if (providerName === "openai-compatible") {
+    const resolvedEndpoint = endpoint || config.endpoint;
     return new OpenAiCompatibleLlmProvider({
       modelName: modelName || config.modelName,
-      endpoint: endpoint || config.endpoint,
-      apiKey: config.openAiCompatibleApiKey
+      endpoint: resolvedEndpoint,
+      apiKey: openAiCompatibleApiKey(config.openAiCompatibleApiKey, resolvedEndpoint)
     });
   }
 
@@ -288,6 +295,252 @@ class OpenAiCompatibleLlmProvider implements LlmProvider {
       latencyMs: Date.now() - startedAt
     };
   }
+}
+
+function openAiCompatibleApiKey(configuredApiKey: string, endpoint: string): string {
+  const localApiKey = envValue("LOCAL_OPENAI_COMPATIBLE_API_KEY");
+  if (localApiKey !== undefined) {
+    return localApiKey;
+  }
+  if (configuredApiKey.trim() !== "") {
+    return configuredApiKey;
+  }
+  return isLocalOpenAiCompatibleEndpoint(endpoint) ? "local-openai-compatible" : "";
+}
+
+function isLocalOpenAiCompatibleEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint);
+    return url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+class CodexCliLlmProvider implements LlmProvider {
+  constructor(private readonly modelName: string) {}
+
+  async generateWorkItemExpansion(context: WorkItemExpansionContext): Promise<LlmStructuredOutput> {
+    const startedAt = Date.now();
+    const prompt = buildWorkItemExpansionPrompt(context);
+    const systemMessage = context.prompt.contextConfig.systemMessage.trim();
+    const modelName = codexCliModelName(this.modelName);
+    const rawText = await runCodexCli({
+      binaryPath: codexCliBinaryPath(),
+      args: buildCodexExecArgs({
+        model: modelName,
+        profile: envValue("CODEX_CLI_PROFILE"),
+        extraArgs: codexCliExtraArgs()
+      }),
+      prompt: buildCodexCliPrompt({
+        systemMessage,
+        userPrompt: prompt,
+        input: {
+          workItemId: context.workItem.id,
+          sourceMemoId: context.sourceMemo?.id ?? null
+        }
+      }),
+      timeoutMs: 300000
+    });
+
+    return {
+      rawText,
+      parsed: parseCodexCliJson(rawText),
+      providerName: "codex-cli-local",
+      modelName: modelName ?? "codex-cli",
+      latencyMs: Date.now() - startedAt
+    };
+  }
+}
+
+interface CodexCliRunOptions {
+  binaryPath: string;
+  args: string[];
+  prompt: string;
+  timeoutMs: number;
+}
+
+const maxCodexCliErrorMessageLength = 600;
+
+async function runCodexCli(options: CodexCliRunOptions): Promise<string> {
+  const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(options.binaryPath, options.args, { windowsHide: true });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      settled = true;
+      child.kill("SIGTERM");
+      reject(new HttpError(502, "codex_cli_timeout", `Codex CLI timed out after ${options.timeoutMs}ms.`));
+    }, options.timeoutMs);
+
+    captureStream(child, "stdout", (chunk) => {
+      stdout += chunk;
+    });
+    captureStream(child, "stderr", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      reject(new HttpError(502, "codex_cli_spawn_failed", `Codex CLI failed to start: ${error.message}`));
+    });
+    child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(
+          new HttpError(
+            502,
+            "codex_cli_failed",
+            `Codex CLI exited with code ${code ?? "unknown"}: ${summarizeCodexCliFailure(stderr, stdout)}`
+          )
+        );
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+    child.stdin.end(options.prompt);
+  });
+  const output = stdout.trim();
+  if (output === "") {
+    throw new HttpError(502, "codex_cli_empty_output", stderr.trim() || "Codex CLI returned empty output.");
+  }
+  return output;
+}
+
+export function summarizeCodexCliFailure(stderr: string, stdout: string): string {
+  const output = normalizeProcessOutput(`${stderr}\n${stdout}`);
+  if (output === "") {
+    return "Codex CLI failed without returning diagnostic output.";
+  }
+
+  const structuredMessage = extractStructuredErrorMessage(output);
+  if (structuredMessage !== null) {
+    return appendModelHint(truncateForStatus(structuredMessage));
+  }
+
+  const diagnosticLine =
+    output
+      .split("\n")
+      .find((line) => /\b(error|failed|invalid|unsupported|auth required)\b/i.test(line)) ?? output;
+  return appendModelHint(truncateForStatus(diagnosticLine));
+}
+
+function normalizeProcessOutput(value: string): string {
+  return value
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function extractStructuredErrorMessage(output: string): string | null {
+  const messageMatches = [...output.matchAll(/"message"\s*:\s*"((?:\\"|[^"])*)"/g)]
+    .map((match) => match[1])
+    .filter((message): message is string => message !== undefined)
+    .map((message) => message.replace(/\\"/g, '"'));
+  return (
+    messageMatches.find((message) => /\b(model|auth|invalid|failed|unsupported|required)\b/i.test(message)) ??
+    messageMatches[0] ??
+    null
+  );
+}
+
+function appendModelHint(message: string): string {
+  if (/model .*not supported|unsupported .*model|invalid model/i.test(message)) {
+    return `${message} Check the task model override or CODEX_CLI_MODEL.`;
+  }
+  return message;
+}
+
+function truncateForStatus(value: string): string {
+  if (value.length <= maxCodexCliErrorMessageLength) {
+    return value;
+  }
+  return `${value.slice(0, maxCodexCliErrorMessageLength - 3).trimEnd()}...`;
+}
+
+function captureStream(
+  child: ChildProcessWithoutNullStreams,
+  streamName: "stdout" | "stderr",
+  onChunk: (chunk: string) => void
+): void {
+  child[streamName].setEncoding("utf8");
+  child[streamName].on("data", (chunk) => {
+    onChunk(String(chunk));
+  });
+}
+
+function buildCodexExecArgs(input: {
+  model: string | undefined;
+  profile: string | undefined;
+  extraArgs: string[] | undefined;
+}): string[] {
+  return [
+    "exec",
+    "--color",
+    "never",
+    "--sandbox",
+    "read-only",
+    ...(input.model === undefined ? [] : ["--model", input.model]),
+    ...(input.profile === undefined ? [] : ["--profile", input.profile]),
+    ...(input.extraArgs ?? []),
+    "-"
+  ];
+}
+
+function buildCodexCliPrompt(input: {
+  systemMessage: string;
+  userPrompt: string;
+  input: Record<string, unknown>;
+}): string {
+  return [
+    input.systemMessage === "" ? null : `System instructions:\n${input.systemMessage}`,
+    `User instructions:\n${input.userPrompt}`,
+    "Output contract:\nReturn only valid JSON.",
+    `Input:\n${JSON.stringify(input.input, null, 2)}`
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
+}
+
+function parseCodexCliJson(output: string): unknown {
+  try {
+    return JSON.parse(output);
+  } catch (error) {
+    throw new HttpError(
+      502,
+      "codex_cli_invalid_json",
+      `Codex CLI output was not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+function codexCliBinaryPath(): string {
+  return envValue("INVOKE_PROVIDERS_CODEX_CLI_BINARY") ?? envValue("CODEX_CLI_EXECUTABLE") ?? "codex";
+}
+
+function codexCliModelName(modelName: string): string | undefined {
+  return modelName.trim() === "" ? envValue("CODEX_CLI_MODEL") : modelName;
+}
+
+function codexCliExtraArgs(): string[] | undefined {
+  const extraArgs = envValue("CODEX_CLI_EXTRA_ARGS");
+  return extraArgs === undefined ? undefined : extraArgs.split(/\s+/).filter((part) => part !== "");
+}
+
+function envValue(key: string): string | undefined {
+  const value = process.env[key]?.trim();
+  return value === undefined || value === "" ? undefined : value;
 }
 
 function buildStructuredResponseFormat(hookKey: string): JsonSchemaResponseFormat {
