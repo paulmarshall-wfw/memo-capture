@@ -50,8 +50,6 @@ export class SettingsService {
       fileTypes,
       extraction,
       transcription,
-      providers,
-      providerCapabilities,
       taskKinds,
       aiTasks,
       processingHooks,
@@ -65,8 +63,6 @@ export class SettingsService {
       settings.listFileTypes(),
       settings.getExtractionSettings(),
       settings.getTranscriptionSettings(),
-      settings.listProviders(),
-      settings.listProviderCapabilities(),
       settings.listTaskKinds(),
       settings.listAiTaskRoutes(),
       settings.listProcessingHooks(),
@@ -102,17 +98,13 @@ export class SettingsService {
             runtimeModelName: this.config.transcription.modelName,
             updatedAt: toIso(transcription.updated_at)
           },
-      providers: providers.map((provider) => serializeProvider(provider, this.config, providerCapabilities)),
       providerCatalog: {
         registry: providerRegistry.registry,
-        fallbackUsed: false,
         providers: providerRegistry.providers
       },
       providerRegistry: providerRegistry.settings,
-      providerCapabilities: providerCapabilities.map(serializeProviderCapability),
       taskKinds: taskKinds.map(serializeTaskKind),
       aiTasks: aiTasks.map((task) => serializeAiTaskRoute(task, effectiveConfig, readinessByTaskKey.get(task.task_key))),
-      appLauncher: serializeAppLauncherRuntimeOptions(providers, this.config),
       invokeProviders: {
         registry: providerRegistry.registry,
         profile: registryResolution.activeProfileKey ?? "",
@@ -141,7 +133,6 @@ export class SettingsService {
     );
     return {
       registry: providerCatalog.registry,
-      fallbackUsed: false,
       providers: providerCatalog.providers,
       providerRegistry: providerCatalog.settings
     };
@@ -398,8 +389,16 @@ export class SettingsService {
       if (current === null) {
         throw new HttpError(404, "not_found", "ai_task_definition was not found.");
       }
+      const registryProvider = await resolveRegistryProviderForTaskRoute(settings, current, input, this.config);
       await validateAiTaskRouteUpdate(settings, current, input, this.config);
-      const task = await settings.updateAiTaskRoute({ taskDefinitionId, ...input, actorUserId: actor.id });
+      const task = await settings.updateAiTaskRoute({
+        taskDefinitionId,
+        ...input,
+        providerConfigId: input.providerKey === undefined ? undefined : null,
+        registryProfileKey: registryProvider.registryProfileKey,
+        providerKey: registryProvider.providerKey,
+        actorUserId: actor.id
+      });
       if (task === null) {
         throw new HttpError(404, "not_found", "ai_task_definition was not found.");
       }
@@ -438,25 +437,15 @@ export class SettingsService {
       if (current === null) {
         throw new HttpError(404, "not_found", "ai_task_definition was not found.");
       }
-      const provider =
-        input.providerConfigId === undefined
-          ? current.provider_config_id === null
-            ? null
-            : await settings.findProviderById(current.provider_config_id)
-          : input.providerConfigId === null || input.providerConfigId.trim() === ""
-            ? null
-            : await settings.findProviderById(input.providerConfigId);
-      if (input.providerConfigId !== undefined && input.providerConfigId !== null && provider === null) {
-        throw new HttpError(400, "invalid_request", "providerConfigId must reference a configured provider.");
-      }
+      const registryProvider = await resolveRegistryProviderForTaskRoute(settings, current, input, this.config);
       const hookKey = input.hookKey ?? current.hook_key;
       if (input.hookKey !== undefined && input.hookKey !== current.hook_key) {
         await ensureProcessingHookExists(settings, input.hookKey);
       }
       const taskKindRow =
-        provider === null
+        registryProvider.provider === null
           ? await settings.findTaskKindByKey(current.task_kind)
-          : await findTaskKindForProvider(settings, provider.provider_kind);
+          : await findTaskKindForProvider(settings, registryProvider.provider.providerKind);
       if (taskKindRow === null || !taskKindRow.active) {
         throw new HttpError(400, "invalid_request", "Selected provider kind does not have an active task mapping.");
       }
@@ -522,7 +511,14 @@ export class SettingsService {
         throw new HttpError(404, "not_found", "ai_task_definition was not found.");
       }
       await validateAiTaskRouteUpdate(settings, refreshed, input, this.config);
-      const task = await settings.updateAiTaskRoute({ taskDefinitionId, ...input, actorUserId: actor.id });
+      const task = await settings.updateAiTaskRoute({
+        taskDefinitionId,
+        ...input,
+        providerConfigId: input.providerKey === undefined ? undefined : null,
+        registryProfileKey: registryProvider.registryProfileKey,
+        providerKey: registryProvider.providerKey,
+        actorUserId: actor.id
+      });
       if (task === null) {
         throw new HttpError(404, "not_found", "ai_task_definition was not found.");
       }
@@ -585,7 +581,7 @@ export class SettingsService {
     actor: AppUserRecord,
     requestId: string
   ): Promise<Record<string, unknown>> {
-    const input = await parseCreateAiTaskBody(body, new SettingsRepository(this.db));
+    const input = await parseCreateAiTaskBody(body, new SettingsRepository(this.db), this.config);
     return this.db.transaction(async (client) => {
       const settings = new SettingsRepository(client);
       const audit = new AuditRepository(client);
@@ -1447,24 +1443,12 @@ function serializeAiTaskRoute(
   sharedReadiness?: { ready: boolean; reasons: Array<{ message: string }> } | undefined
 ): Record<string, unknown> {
   const runtime = runtimeForTaskRoute(task, config);
-  const providerName = task.provider_name ?? task.default_provider_name;
-  const selectedModelName = task.route_model_name ?? task.provider_model_name ?? task.default_model_name;
-  const providerEnabled = task.provider_enabled === true;
+  const providerName = task.provider_key;
+  const selectedModelName = task.provider_model_override ?? task.route_model_name ?? task.default_model_name;
   const hookImplemented = isHookImplemented(task.hook_key);
   const routeEnabled = task.route_enabled;
-  const requiredSecretEnv = task.required_secret_env;
-  const secretReady = secretConfigured(requiredSecretEnv, config);
-  const providerKindReady =
-    task.task_kind_provider_kind === null ||
-    task.provider_kind === null ||
-    task.provider_kind === task.task_kind_provider_kind;
   const legacyRuntimeReady =
-    runtime.provider !== "disabled" &&
     providerName !== null &&
-    runtime.provider === providerName &&
-    providerEnabled &&
-    providerKindReady &&
-    secretReady &&
     hookImplemented &&
     routeEnabled;
   const legacyUnavailableReason =
@@ -1474,17 +1458,7 @@ function serializeAiTaskRoute(
         ? "Task route is disabled."
         : providerName === null
           ? "No provider is selected."
-        : !providerEnabled
-          ? "Selected provider is disabled."
-          : !providerKindReady
-            ? `Selected provider kind ${task.provider_kind ?? "unknown"} is not compatible with ${task.task_kind}.`
-            : runtime.provider === "disabled"
-              ? `${runtime.label} runtime is disabled in AppLauncher.`
-              : runtime.provider !== providerName
-                ? `AppLauncher ${runtime.label} runtime selected ${runtime.provider}, but Settings route selects ${providerName}.`
-                : !secretReady
-                  ? `Required secret ${requiredSecretEnv ?? "provider secret"} is not configured.`
-                  : null;
+          : null;
 
   return {
     id: task.id,
@@ -1507,16 +1481,15 @@ function serializeAiTaskRoute(
     runtimeProviderEnv: task.runtime_provider_env,
     runtimeModelEnv: task.runtime_model_env,
     runtimeEndpointEnv: task.runtime_endpoint_env,
-    selectedProviderId: task.provider_config_id,
     registryProfileKey: task.registry_profile_key,
     registryProviderKey: task.provider_key,
     selectedProviderName: providerName,
-    selectedProviderDisplayName: task.provider_display_name ?? providerName,
+    selectedProviderDisplayName: providerName,
     selectedModelName,
     providerModelOverride: task.provider_model_override,
-    providerAdapterKey: task.adapter_key,
-    providerExternalSendEnabled: task.external_send_enabled === true,
-    providerSecretEnv: requiredSecretEnv,
+    providerAdapterKey: null,
+    providerExternalSendEnabled: false,
+    providerSecretEnv: null,
     runtimeProvider: runtime.provider,
     runtimeModelName: runtime.modelName,
     runtimeEndpointConfigured: runtime.endpoint.trim() !== "",
@@ -1673,7 +1646,6 @@ function parseAiTaskRouteBody(body: unknown) {
     throw new HttpError(400, "invalid_request", "enabled must be a boolean.");
   }
   return {
-    providerConfigId: record.providerConfigId === undefined ? undefined : optionalString(record.providerConfigId, "providerConfigId"),
     registryProfileKey: record.registryProfileKey === undefined ? undefined : optionalString(record.registryProfileKey, "registryProfileKey"),
     providerKey: record.providerKey === undefined ? undefined : optionalString(record.providerKey, "providerKey"),
     modelName: record.modelName === undefined ? undefined : optionalString(record.modelName, "modelName"),
@@ -1744,11 +1716,70 @@ async function validateTaskKindEnablement(
   );
 }
 
+async function resolveRegistryProviderForTaskRoute(
+  settings: SettingsRepository,
+  current: Pick<AiTaskRouteRow, "registry_profile_key" | "provider_key"> | null,
+  input: {
+    registryProfileKey?: string | null | undefined;
+    providerKey?: string | null | undefined;
+  },
+  config: ApiConfig
+): Promise<{
+  registryProfileKey: string | null;
+  providerKey: string | null;
+  provider: SharedProviderConfig | null;
+}> {
+  const registrySettings = await settings.getProviderRegistrySettings();
+  const resolution = resolveProviderRegistryProfile(config, registrySettings);
+  const providerKey =
+    input.providerKey === undefined
+      ? nullIfBlank(current?.provider_key ?? null)
+      : nullIfBlank(input.providerKey);
+  const registryProfileKey =
+    input.registryProfileKey === undefined
+      ? nullIfBlank(current?.registry_profile_key ?? null) ?? resolution.activeProfileKey
+      : nullIfBlank(input.registryProfileKey) ?? resolution.activeProfileKey;
+  if (providerKey === null) {
+    return { registryProfileKey, providerKey, provider: null };
+  }
+  if (registryProfileKey === null) {
+    throw new HttpError(
+      400,
+      "provider_registry_profile_missing",
+      "A provider registry profile is required before selecting a provider."
+    );
+  }
+  const registry = await loadProviderRegistryState(
+    configWithProviderRegistryProfile(config, registryProfileKey),
+    {
+      ...resolution,
+      activeProfileKey: registryProfileKey
+    }
+  );
+  if (registry.settings.status !== "ready") {
+    throw new HttpError(
+      409,
+      "provider_registry_unavailable",
+      registry.settings.error ?? "Provider registry is not ready.",
+      { registryProfileKey }
+    );
+  }
+  const provider = registry.providers.find((candidate) => candidate.providerKey === providerKey) ?? null;
+  if (provider === null) {
+    throw new HttpError(400, "invalid_request", "providerKey must reference a provider in the active registry profile.", {
+      providerKey,
+      registryProfileKey
+    });
+  }
+  return { registryProfileKey, providerKey, provider };
+}
+
 async function validateAiTaskRouteUpdate(
   settings: SettingsRepository,
   current: AiTaskRouteRow,
   input: {
-    providerConfigId?: string | null | undefined;
+    registryProfileKey?: string | null | undefined;
+    providerKey?: string | null | undefined;
     modelName?: string | null | undefined;
     enabled?: boolean | undefined;
   },
@@ -1761,68 +1792,61 @@ async function validateAiTaskRouteUpdate(
   if (!isHookImplemented(current.hook_key)) {
     throw new HttpError(409, "ai_task_hook_not_implemented", "Task route cannot be enabled until app hook logic exists.");
   }
-  const providerConfigId =
-    input.providerConfigId === undefined ? current.provider_config_id : input.providerConfigId;
-  if (providerConfigId === null || providerConfigId.trim() === "") {
+  const selection = await resolveRegistryProviderForTaskRoute(settings, current, input, config);
+  if (selection.providerKey === null) {
     throw new HttpError(409, "ai_task_provider_missing", "Task route cannot be enabled without a provider.");
   }
-  const provider = await settings.findProviderById(providerConfigId);
-  if (provider === null) {
-    throw new HttpError(400, "invalid_request", "providerConfigId must reference a configured provider.");
+  if (selection.provider === null) {
+    throw new HttpError(400, "invalid_request", "providerKey must reference an enabled registry provider.");
   }
   const requiredProviderKind = current.task_kind_provider_kind ?? current.task_kind;
-  if (provider.provider_kind !== requiredProviderKind) {
+  if (selection.provider.providerKind !== requiredProviderKind) {
     throw new HttpError(400, "provider_incompatible", "Selected provider kind is not compatible with this task kind.", {
-      providerKind: provider.provider_kind,
+      providerKind: selection.provider.providerKind,
       requiredProviderKind
     });
   }
   const capabilityKey = current.task_kind_capability_key;
-  if (capabilityKey !== null && !(await settings.providerHasCapability(provider.id, capabilityKey))) {
+  if (
+    capabilityKey !== null &&
+    !selection.provider.capabilities.some((capability) => capability.key === normalizeCapabilityKey(capabilityKey))
+  ) {
     throw new HttpError(400, "provider_incompatible", "Selected provider does not expose the task capability.", {
-      providerConfigId: provider.id,
+      providerKey: selection.provider.providerKey,
       capabilityKey
     });
   }
-  if (!provider.enabled) {
+  if (!selection.provider.enabled) {
     throw new HttpError(409, "provider_disabled", "Task route cannot be enabled with a disabled provider.");
   }
-  const requiredSecretEnv = provider.required_secret_env;
+  const requiredSecretEnv = selection.provider.requiredSecretRef ?? null;
   if (!secretConfigured(requiredSecretEnv, config)) {
     throw new HttpError(409, "provider_secret_missing", "Task route cannot be enabled until the required secret is configured.", {
       requiredSecretEnv
     });
   }
-  const runtime = runtimeForTaskRoute(current, config);
-  if (runtime.provider === "disabled") {
-    throw new HttpError(409, "task_runtime_disabled", `Task route cannot be enabled while the ${runtime.label} runtime is disabled.`);
-  }
-  if (runtime.provider !== provider.provider_name) {
-    throw new HttpError(409, "task_runtime_mismatch", `Task route cannot be enabled until the ${runtime.label} runtime provider matches Settings.`, {
-      runtimeProvider: runtime.provider,
-      selectedProvider: provider.provider_name
-    });
-  }
 }
 
-async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository) {
+async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository, config: ApiConfig) {
   const record = parseObject(body);
   const displayName = assertNonEmptyString(record.displayName, "displayName");
   const taskKey = deriveTaskKey(displayName);
   const hookKey = parseConfigKey(record.hookKey ?? taskKey, "hookKey");
   await ensureProcessingHookExists(settings, hookKey);
-  const providerConfigId =
-    record.providerConfigId === undefined ? null : optionalString(record.providerConfigId, "providerConfigId");
-  const provider =
-    providerConfigId === null || providerConfigId.trim() === "" ? null : await settings.findProviderById(providerConfigId);
-  if (providerConfigId !== null && provider === null) {
-    throw new HttpError(400, "invalid_request", "providerConfigId must reference a configured provider.");
-  }
+  const registryProfileKey =
+    record.registryProfileKey === undefined ? undefined : optionalString(record.registryProfileKey, "registryProfileKey");
+  const providerKey = record.providerKey === undefined ? undefined : optionalString(record.providerKey, "providerKey");
+  const registryProvider = await resolveRegistryProviderForTaskRoute(
+    settings,
+    null,
+    { registryProfileKey, providerKey },
+    config
+  );
   const taskKind =
     record.taskKind === undefined
-      ? provider === null
+      ? registryProvider.provider === null
         ? "llm"
-        : (await findTaskKindForProvider(settings, provider.provider_kind))?.kind_key
+        : (await findTaskKindForProvider(settings, registryProvider.provider.providerKind))?.kind_key
       : parseConfigKey(record.taskKind, "taskKind");
   if (taskKind === undefined) {
     throw new HttpError(400, "invalid_request", "Selected provider kind does not have an active task mapping.");
@@ -1846,8 +1870,13 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     taskKindId: taskKindRow.id,
     implemented: isHookImplemented(hookKey),
     promptDefinitionId: null,
-    providerConfigId,
-    routeModelName: record.modelName === undefined ? provider?.model_name ?? null : optionalString(record.modelName, "modelName"),
+    providerConfigId: null,
+    registryProfileKey: registryProvider.registryProfileKey,
+    providerKey: registryProvider.providerKey,
+    routeModelName:
+      record.modelName === undefined
+        ? registryProvider.provider?.model ?? null
+        : optionalString(record.modelName, "modelName"),
     routeEnabled,
     promptsEnabled:
       parseOptionalBoolean(record.promptsEnabled ?? record.promptFieldsEnabled, "promptsEnabled") ??

@@ -4,18 +4,23 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-07T03:40:20Z
+- Created timestamp UTC: 2026-06-09T04:11:07Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: checkpoint the LM Studio OpenAI-compatible runtime repair and continuity docs.
+- Session scope: checkpoint registry-only provider source-of-truth work for Settings Tasks provider selection and task routing.
 
 ### Checkpoint Status
 
-- Git HEAD: `11ff2d3`
+- Git HEAD: `4ff14e4`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `docs/completed-tasks.md`
+  - `apps/api/src/repositories/settings.ts`
+  - `apps/api/src/services/invoke-providers/runtime.ts`
+  - `apps/api/src/services/settings.ts`
+  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/desktop/src/App.tsx`
+  - `apps/desktop/tests/app-copy.test.ts`
   - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
@@ -25,89 +30,84 @@
   - None
 - Canonical files described:
   - `docs/completed-tasks.md`
-  - `docs/env.md`
+  - `docs/design/memo-capture-design-learnings.md`
   - `handoff.md`
-  - `scripts/applauncher-native-dev.mjs`
 - Last verification:
-  - command: `node --check scripts/applauncher-native-dev.mjs`; `git diff --check`; live `/api/settings` readiness check
+  - command: `npm run typecheck`; `npm test` with local-listener permission; `git diff --check`
   - result: passed
-  - timestamp UTC: 2026-06-07T03:40:20Z
+  - timestamp UTC: 2026-06-09T04:11:07Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: `HEAD 11ff2d3` contains the native LM Studio dummy-key fallback and env-doc update; the current dirty tree is only this requested ledger/handoff refresh.
-- Next checkpoint action: commit or leave the continuity docs dirty intentionally.
+- Safe-to-continue basis: `HEAD 4ff14e4` is current; all dirty files are intentionally in scope for the registry-only provider routing update, and typecheck/tests/diff whitespace checks passed.
+- Next checkpoint action: review diff, then commit or continue with the deferred schema cleanup plan.
 
 ## 2. Executive Summary
 
-Memo Capture's local LM Studio route is now usable through the existing OpenAI-compatible provider without manually injecting a dummy key into the native helper launch.
+Memo Capture Settings now treats the provider registry as the provider source of truth for task routing.
 
 Complete now:
 
-- `scripts/applauncher-native-dev.mjs` supplies `OPENAI_COMPATIBLE_API_KEY=lm-studio` only when:
-  - `LLM_PROVIDER=openai-compatible`
-  - `LLM_ENDPOINT=http://127.0.0.1:1234/v1`
-  - no non-empty `OPENAI_COMPATIBLE_API_KEY` was injected
-- `docs/env.md` documents that native-helper local LM Studio fallback.
-- The app was relaunched after the patch.
-- Live `/api/settings` showed the LM Studio-backed `openai-compatible` provider with `secretConfigured: true`.
-- Live `/api/settings` showed both work-item AI tasks runtime-ready:
-  - `expand memo`
-  - `suggest memos`
+- The Tasks provider dropdown is populated from `providerCatalog.providers`, not local `provider_configs` rows.
+- Task create/save sends `registryProfileKey` and `providerKey`, not local provider IDs.
+- `/api/settings` no longer exposes the old local `providers`, `providerCapabilities`, or `fallbackUsed` settings shape.
+- Task route validation resolves the selected provider from the active provider registry profile and checks provider kind, required capability, enabled state, and required secret.
+- Runtime diagnostics no longer carries the always-false `fallbackUsed` flag.
+- Tests now enforce that the desktop Tasks path does not reference `providerConfigId`, `selectedProviderId`, or `fallbackUsed`.
 
 Incomplete now:
 
-- Local LLM prompt/output quality still needs normal product review. The default system messages are schema-safe but light on quality guidance.
-- No new native `.app` rebuild was run for this script/docs-only correction.
+- Historical `provider_config_id` database columns and related compatibility repository/test paths still exist. They should be removed in a future schema cleanup migration once the registry-only path has settled.
 
-Safe to continue: yes, from `HEAD 11ff2d3` plus the intentionally dirty continuity docs.
+Safe to continue: yes, from `HEAD 4ff14e4` plus the intentionally dirty registry-only provider changes.
 
 Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
 
 ## 3. Current Objective
 
-Immediate goal: continue testing Memo Capture AI actions through LM Studio and tune task prompts/model choice if output quality is not acceptable.
+Immediate goal: finish and review the registry-only provider routing slice so Tasks configuration shows all enabled registry providers and no longer depends on local provider rows.
 
 Intended finished state:
 
-- The native AppLauncher path starts Memo Capture with a runtime-ready local LM Studio provider.
-- Task buttons are enabled when LM Studio is selected and reachable.
-- `expand memo` and `suggest memos` continue returning valid structured JSON.
+- Provider registry records are the only source of provider options in Settings.
+- Task routing persists registry profile/provider keys.
+- Local provider config rows are not part of user-facing Tasks configuration.
+- Automated tests guard the registry-only behavior.
 
-Definition of done for the current workstream:
+Definition of done:
 
-- Native helper no longer fails readiness solely because the local LM Studio dummy key was not injected.
-- Runtime readiness is green in `/api/settings`.
-- Continuity docs accurately describe the current checkpoint.
+- `npm run typecheck` passes.
+- `npm test` passes.
+- `git diff --check` passes.
+- Handoff records the remaining historical-column cleanup.
 
 ## 4. Current State
 
 ### Working
 
-- Current committed checkpoint is `11ff2d3` on `main`.
-- Native helper local LM Studio fallback is committed.
-- `docs/env.md` documents the fallback.
-- Live API readiness after relaunch showed:
-  - provider `openai-compatible`
-  - display name `LM Studio`
-  - runtime provider `openai-compatible`
-  - runtime model `openai/gpt-oss-20b`
-  - `secretConfigured: true`
-  - `expand memo` `runtimeReady: true`
-  - `suggest memos` `runtimeReady: true`
+- Desktop Tasks provider selectors use registry provider options built from `settingsSummary.providerCatalog.providers`.
+- Task draft state tracks `registryProviderKey`.
+- Task create/update requests include `registryProfileKey` and `providerKey`.
+- API task route parsing no longer accepts `providerConfigId` as a request field.
+- API settings summary omits local `providers`, `providerCapabilities`, `appLauncher` runtime-option summary, and `fallbackUsed`.
+- API route validation uses provider registry snapshots and no longer requires legacy AppLauncher runtime provider equality for enabling registry-backed tasks.
+- Backend and desktop tests pass after updates.
 
 ### Partially Working
 
-- The default system prompt is good for JSON compliance because the adapter also sends `response_format: json_schema`.
-- The default system prompt is not yet strong product guidance for local model quality. It should probably add concise instructions to preserve user intent, avoid invented facts, keep tags relevant, and only suggest distinct follow-up memos.
+- The repository still retains legacy local provider table plumbing for compatibility and historical migrations:
+  - `ai_task_routes.provider_config_id`
+  - `provider_capabilities.provider_config_id`
+  - repository methods such as `findProviderById` and `providerHasCapability`
+  - fake database rows and tests that seed historical provider data
+- These are no longer the intended source of truth for Tasks provider selection, but removing them requires a dedicated schema cleanup.
 
 ### Not Working Yet
 
-- No current repo evidence shows a remaining `OPENAI_COMPATIBLE_API_KEY` readiness failure after the fallback relaunch.
+- Historical `provider_config_id` columns have not been removed from the database schema or compatibility code.
 
 ### Not Yet Verified
 
-- Full `npm run verify` was not rerun after the script/docs-only fallback.
-- Native UI button state was not rechecked visually after the final continuity-doc refresh.
-- Prompt-quality evaluation against `openai/gpt-oss-20b` remains unscored.
+- Real Postgres migration cleanup for dropping historical provider columns has not been designed or run.
+- Native UI visual smoke was not rerun after the registry-only UI change; automated desktop copy/type tests passed.
 
 ## 5. Active Constraints
 
@@ -115,74 +115,69 @@ Definition of done for the current workstream:
 - Do not commit, tag, release, publish, install dependencies, delete files, or mutate unrelated app/browser state unless explicitly requested.
 - Never use `latest`; always use numbered versions.
 - Read `docs/design/memo-capture-design-learnings.md` before architecture, schema, workflow, ingestion, AI, or export work.
-- Keep provider secrets out of manifests and source control.
-- Keep AppLauncher provider/runtime options generic; do not add app-specific task wiring to AppLauncher.
-- For local LM Studio, `OPENAI_COMPATIBLE_API_KEY=lm-studio` is a local dummy value, not a real credential.
-- For non-local OpenAI-compatible endpoints, require a real injected secret; do not extend the dummy-key fallback beyond `http://127.0.0.1:1234/v1`.
+- Providers catalog is registry-only for user-facing configuration.
+- Tasks own routing/prompt configuration and must use registry provider keys, not local provider IDs.
+- Preserve app-owned task hooks and workflow behavior while changing provider plumbing.
+- Deleting historical `provider_config_id` columns is deferred; do it as a deliberate migration/code cleanup, not as an incidental edit.
 
 ## 6. Commands and Verification
 
-Most recent passed checks:
+Passed in this session:
 
 ```bash
-node --check scripts/applauncher-native-dev.mjs
+npm run typecheck
+npm test
 git diff --check
 ```
 
-Live readiness check performed after relaunch:
+Notes:
 
-```bash
-GET /api/settings
-```
-
-Confirmed result:
-
-- `openai-compatible` provider `secretConfigured: true`
-- `expand memo` `runtimeReady: true`
-- `suggest memos` `runtimeReady: true`
+- `npm test` needs permission to bind local `127.0.0.1` test servers for API and provider-registry tests.
+- A sandboxed `npm test` run failed only because those local listeners were blocked with `listen EPERM`; the elevated rerun passed.
+- Handoff helper scripts were not present under `scripts/`, so freshness was updated manually from Git/status facts.
 
 Useful next checks:
 
 ```bash
 git status --short
 git diff --check
-node --check scripts/applauncher-native-dev.mjs
-node --test --import tsx apps/api/tests/llm-prompt.test.ts
+npm run typecheck
+npm test
 ```
 
-For broader validation before committing more app behavior:
+For future database cleanup:
 
 ```bash
-npm run typecheck
 npm run test:postgres
 npm run verify
 ```
 
 ## 7. Files to Open First
 
-- `scripts/applauncher-native-dev.mjs`: native helper fallback for local LM Studio key injection.
-- `docs/env.md`: runtime env contract and local LM Studio notes.
-- `apps/api/src/services/llm.ts`: OpenAI-compatible adapter, task system messages, and `json_schema` response format.
-- `apps/api/src/services/ai-expansion.ts`: task/provider readiness checks and work-item task invocation path.
-- `apps/desktop/src/App.tsx`: task button readiness rendering and tooltip display.
-- `docs/completed-tasks.md`: append-only completion history.
+- `apps/desktop/src/App.tsx`: registry-only Tasks provider dropdowns, draft state, task create/save payloads.
+- `apps/api/src/services/settings.ts`: settings summary shape, task route parsing, registry provider validation.
+- `apps/api/src/repositories/settings.ts`: current compatibility writes for `ai_task_routes.provider_config_id`, and future cleanup target.
+- `apps/api/src/services/invoke-providers/runtime.ts`: provider catalog/readiness diagnostics without `fallbackUsed`.
+- `apps/api/tests/backend-foundation.test.ts`: registry-backed task route tests and fake database compatibility harness.
+- `apps/desktop/tests/app-copy.test.ts`: source checks that block local provider fallback vocabulary in the desktop Tasks path.
 
 ## 8. Next Actions
 
 Next:
 
-- Test `expand memo` and `suggest memos` in the native UI now that `/api/settings` reports both runtime-ready.
-- If local-model output quality is weak, tune task-owned System messages in Settings before changing adapter code.
-- For prompt tuning, keep the JSON shape in the system message and add quality constraints such as preserving user intent, avoiding invented facts, using relevant tags, and returning empty suggestions when there are no distinct follow-up memos.
+- Review the registry-only provider diff for accidental removal of still-needed compatibility behavior.
+- Commit the current registry-only provider routing slice if acceptable.
+- Launch or smoke the app UI if visual confirmation of the Tasks dropdown is required.
 
 Blocked:
 
-- None known for the local LM Studio readiness issue.
+- None known for the six-provider dropdown issue.
 
 Later:
 
-- If the native AppLauncher secret path is fixed upstream, consider removing or narrowing the helper fallback after verifying secrets are delivered to native executable launches.
+- Create a deliberate schema/code cleanup to remove historical `provider_config_id` columns and related local-provider compatibility paths.
+- Include Postgres migration tests for that cleanup before merging it.
 
 ## 9. Ready-Made Prompt for Starting a New Thread
 
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `11ff2d3`, with only `docs/completed-tasks.md` and `handoff.md` intentionally dirty after the continuity refresh. The local LM Studio readiness issue was fixed in `scripts/applauncher-native-dev.mjs` by supplying the documented dummy `OPENAI_COMPATIBLE_API_KEY=lm-studio` only when the selected OpenAI-compatible endpoint is `http://127.0.0.1:1234/v1` and no key was injected. Before editing, review `scripts/applauncher-native-dev.mjs`, `docs/env.md`, `apps/api/src/services/llm.ts`, and `apps/api/src/services/ai-expansion.ts`. Continue by testing the native UI task buttons and tuning task-owned System messages if local-model output quality is weak. Distinguish confirmed runtime readiness from new prompt-quality recommendations.
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `4ff14e4` with intentional dirty files for the registry-only provider routing slice. Review `apps/desktop/src/App.tsx`, `apps/api/src/services/settings.ts`, `apps/api/src/repositories/settings.ts`, `apps/api/src/services/invoke-providers/runtime.ts`, `apps/api/tests/backend-foundation.test.ts`, and `apps/desktop/tests/app-copy.test.ts` before editing. Continue by reviewing or committing the registry-only provider source-of-truth changes. Do not reintroduce local provider fallback in Settings Tasks. Remember that deleting historical `provider_config_id` database columns is deferred and must be handled as a deliberate migration/code cleanup with Postgres verification.

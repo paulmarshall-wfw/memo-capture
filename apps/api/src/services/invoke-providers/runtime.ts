@@ -23,9 +23,8 @@ export class TargetAppRuntimeService {
     this.repositories = new MemoCaptureRuntimeRepositories(db, config);
   }
 
-  async getProviderCatalog(): Promise<RegistryProviderSnapshot & { fallbackUsed: boolean }> {
-    const registry = await fetchRegistryProviders(this.config);
-    return { ...registry, fallbackUsed: false };
+  async getProviderCatalog(): Promise<RegistryProviderSnapshot> {
+    return await fetchRegistryProviders(this.config);
   }
 
   async listTaskSettings(): Promise<SharedTaskDefinition[]> {
@@ -54,7 +53,7 @@ export class TargetAppRuntimeService {
   }
 
   async getReadinessDiagnostics() {
-    const [{ providers, registry, fallbackUsed }, tasks, hooks] = await Promise.all([
+    const [{ providers, registry }, tasks, hooks] = await Promise.all([
       this.getProviderCatalog(),
       this.repositories.listTasks(),
       this.repositories.listHooks()
@@ -65,7 +64,6 @@ export class TargetAppRuntimeService {
     return {
       registry: {
         ...registry,
-        fallbackUsed,
         providerCount: providers.length
       },
       adapters: listConfiguredAdapters(providers, this.config),

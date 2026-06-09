@@ -58,7 +58,8 @@ test("settings summary separates provider catalog from task-owned prompts and ca
   const services = createAppServicesFromDatabase(config, db);
 
   const summary = (await services.settings.getSummary()) as {
-    providers: Array<{ providerName: string; capabilities: Array<{ capabilityKey: string }> }>;
+    providers?: unknown;
+    providerCatalog: { providers: Array<{ providerKey: string }> };
     taskKinds: Array<{ kindKey: string; capabilityKey: string; promptFieldsEnabled: boolean }>;
     aiTasks: Array<{
       taskKey: string;
@@ -70,10 +71,8 @@ test("settings summary separates provider catalog from task-owned prompts and ca
     registeredTaskHooks: Array<{ hookKey: string; implemented: boolean; status: string; taskUsageCount: number }>;
   };
 
-  assert.equal(summary.providers[0]?.providerName, "local-dev");
-  assert.deepEqual(summary.providers[0]?.capabilities.map((capability) => capability.capabilityKey), [
-    "llm.generateJson"
-  ]);
+  assert.equal(summary.providers, undefined);
+  assert.deepEqual(summary.providerCatalog.providers.map((provider) => provider.providerKey), []);
   assert.equal(summary.taskKinds.find((kind) => kind.kindKey === "llm")?.promptFieldsEnabled, true);
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.prompt?.name, "work_item_expansion");
   assert.equal(summary.aiTasks.find((task) => task.taskKey === "memo-expansion")?.runtimeReady, false);
@@ -107,24 +106,28 @@ test("settings summary and registry status return an empty registry-backed provi
   const services = createAppServicesFromDatabase(config, db);
 
   const summary = (await services.settings.getSummary()) as {
+    providerRegistry: {
+      status: string;
+      error: string | null;
+      providerCount: number;
+    };
     providerCatalog: {
-      fallbackUsed: boolean;
       registry: { configured: boolean; reachable: boolean };
       providers: Array<{ providerKey: string }>;
     };
   };
   const registryStatus = (await services.settings.getRegistryStatus()) as {
-    fallbackUsed: boolean;
     registry: { configured: boolean; reachable: boolean };
     providers: Array<{ providerKey: string }>;
   };
 
-  assert.equal(summary.providerCatalog.fallbackUsed, false);
+  assert.equal(summary.providerRegistry.status, "error");
+  assert.equal(summary.providerRegistry.providerCount, 0);
+  assert.match(summary.providerRegistry.error ?? "", /fetch failed/i);
   assert.equal(summary.providerCatalog.registry.configured, true);
   assert.equal(summary.providerCatalog.registry.reachable, false);
   assert.deepEqual(summary.providerCatalog.providers.map((provider) => provider.providerKey), []);
 
-  assert.equal(registryStatus.fallbackUsed, false);
   assert.equal(registryStatus.registry.configured, true);
   assert.equal(registryStatus.registry.reachable, false);
   assert.deepEqual(registryStatus.providers.map((provider) => provider.providerKey), []);
@@ -484,234 +487,254 @@ test("settings allow additional task kinds and task definitions can use them", a
 });
 
 test("AI task route enablement blocks unimplemented hooks and incompatible providers", async () => {
-  const config = readApiConfig({
-    MEMO_CAPTURE_AUTH_MODE: "local-dev",
-    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev"
+  await withDefaultProviderRegistry(async (registry) => {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    const services = createAppServicesFromDatabase(config, db);
+    const session = await services.auth.createLocalDevSession();
+
+    await assert.rejects(
+      () =>
+        services.settings.updateAiTaskRoute(
+          "task-custom",
+          {
+            registryProfileKey: "local-dev",
+            providerKey: "local-dev",
+            enabled: true
+          },
+          session.user,
+          "request-enable-unimplemented"
+        ),
+      (error: unknown) =>
+        error instanceof HttpError &&
+        error.statusCode === 409 &&
+        error.code === "ai_task_hook_not_implemented"
+    );
+
+    await assert.rejects(
+      () =>
+        services.settings.updateAiTaskRoute(
+          "task-memo-expansion",
+          {
+            registryProfileKey: "local-dev",
+            providerKey: "whisper-cpp",
+            enabled: true
+          },
+          session.user,
+          "request-enable-incompatible"
+        ),
+      (error: unknown) =>
+        error instanceof HttpError && error.statusCode === 400 && error.code === "provider_incompatible"
+    );
   });
-  const db = new FakeDatabase();
-  seedTaskSettings(db);
-  const services = createAppServicesFromDatabase(config, db);
-  const session = await services.auth.createLocalDevSession();
-
-  await assert.rejects(
-    () =>
-      services.settings.updateAiTaskRoute(
-        "task-custom",
-        {
-          providerConfigId: "provider-local-dev",
-          enabled: true
-        },
-        session.user,
-        "request-enable-unimplemented"
-      ),
-    (error: unknown) =>
-      error instanceof HttpError &&
-      error.statusCode === 409 &&
-      error.code === "ai_task_hook_not_implemented"
-  );
-
-  await assert.rejects(
-    () =>
-      services.settings.updateAiTaskRoute(
-        "task-memo-expansion",
-        {
-          providerConfigId: "provider-whisper",
-          enabled: true
-        },
-        session.user,
-        "request-enable-incompatible"
-      ),
-    (error: unknown) =>
-      error instanceof HttpError && error.statusCode === 400 && error.code === "provider_incompatible"
-  );
 });
 
 test("AI task route enablement uses generic LLM runtime rather than task key", async () => {
-  const config = readApiConfig({
-    MEMO_CAPTURE_AUTH_MODE: "local-dev",
-    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev"
+  await withDefaultProviderRegistry(async (registry) => {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    const services = createAppServicesFromDatabase(config, db);
+    const session = await services.auth.createLocalDevSession();
+
+    const created = (await services.settings.createAiTaskDefinition(
+      {
+        displayName: "Concise expansion",
+        hookKey: "memo-expansion",
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
+        modelName: "memo-capture-local-dev-expander-v1",
+        enabled: true
+      },
+      session.user,
+      "request-create-concise-expansion"
+    )) as { aiTask: { taskKey: string; hookKey: string; routeEnabled: boolean; runtimeReady: boolean } };
+
+    assert.equal(created.aiTask.taskKey, "concise-expansion");
+    assert.equal(created.aiTask.hookKey, "memo-expansion");
+    assert.equal(created.aiTask.routeEnabled, true);
+    assert.equal(created.aiTask.runtimeReady, true);
+
+    const second = (await services.settings.createAiTaskDefinition(
+      {
+        displayName: "Detailed expansion",
+        hookKey: "memo-expansion",
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
+        modelName: "memo-capture-local-dev-expander-v1",
+        enabled: true
+      },
+      session.user,
+      "request-create-detailed-expansion"
+    )) as { aiTask: { taskKey: string; hookKey: string; routeEnabled: boolean; runtimeReady: boolean } };
+
+    assert.equal(second.aiTask.taskKey, "detailed-expansion");
+    assert.equal(second.aiTask.hookKey, "memo-expansion");
+    assert.equal(second.aiTask.routeEnabled, true);
+    assert.equal(second.aiTask.runtimeReady, true);
   });
-  const db = new FakeDatabase();
-  seedTaskSettings(db);
-  const services = createAppServicesFromDatabase(config, db);
-  const session = await services.auth.createLocalDevSession();
-
-  const created = (await services.settings.createAiTaskDefinition(
-    {
-      displayName: "Concise expansion",
-      hookKey: "memo-expansion",
-      providerConfigId: "provider-local-dev",
-      modelName: "memo-capture-local-dev-expander-v1",
-      enabled: true
-    },
-    session.user,
-    "request-create-concise-expansion"
-  )) as { aiTask: { taskKey: string; hookKey: string; routeEnabled: boolean; runtimeReady: boolean } };
-
-  assert.equal(created.aiTask.taskKey, "concise-expansion");
-  assert.equal(created.aiTask.hookKey, "memo-expansion");
-  assert.equal(created.aiTask.routeEnabled, true);
-  assert.equal(created.aiTask.runtimeReady, true);
-
-  const second = (await services.settings.createAiTaskDefinition(
-    {
-      displayName: "Detailed expansion",
-      hookKey: "memo-expansion",
-      providerConfigId: "provider-local-dev",
-      modelName: "memo-capture-local-dev-expander-v1",
-      enabled: true
-    },
-    session.user,
-    "request-create-detailed-expansion"
-  )) as { aiTask: { taskKey: string; hookKey: string; routeEnabled: boolean; runtimeReady: boolean } };
-
-  assert.equal(second.aiTask.taskKey, "detailed-expansion");
-  assert.equal(second.aiTask.hookKey, "memo-expansion");
-  assert.equal(second.aiTask.routeEnabled, true);
-  assert.equal(second.aiTask.runtimeReady, true);
 });
 
-test("disabled generic LLM runtime blocks LLM task enablement", async () => {
-  const config = readApiConfig({
-    MEMO_CAPTURE_AUTH_MODE: "local-dev",
-    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "disabled"
-  });
-  const db = new FakeDatabase();
-  seedTaskSettings(db);
-  const services = createAppServicesFromDatabase(config, db);
-  const session = await services.auth.createLocalDevSession();
+test("disabled legacy LLM runtime does not override registry provider task enablement", async () => {
+  await withDefaultProviderRegistry(async (registry) => {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      LLM_PROVIDER: "disabled",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    const services = createAppServicesFromDatabase(config, db);
+    const session = await services.auth.createLocalDevSession();
 
-  await assert.rejects(
-    () =>
-      services.settings.createAiTaskDefinition(
-        {
-          displayName: "Disabled runtime expansion",
-          hookKey: "memo-expansion",
-          providerConfigId: "provider-local-dev",
-          enabled: true
-        },
-        session.user,
-        "request-create-disabled-runtime-expansion"
-      ),
-    (error: unknown) =>
-      error instanceof HttpError &&
-      error.statusCode === 409 &&
-      error.code === "task_runtime_disabled"
-  );
+    const created = (await services.settings.createAiTaskDefinition(
+      {
+        displayName: "Disabled runtime expansion",
+        hookKey: "memo-expansion",
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
+        enabled: true
+      },
+      session.user,
+      "request-create-disabled-runtime-expansion"
+    )) as { aiTask: { routeEnabled: boolean; runtimeReady: boolean } };
+
+    assert.equal(created.aiTask.routeEnabled, true);
+    assert.equal(created.aiTask.runtimeReady, true);
+  });
 });
 
 test("AI task display name updates do not change the derived task key", async () => {
-  const config = readApiConfig({
-    MEMO_CAPTURE_AUTH_MODE: "local-dev",
-    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev"
+  await withDefaultProviderRegistry(async (registry) => {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    const services = createAppServicesFromDatabase(config, db);
+    const session = await services.auth.createLocalDevSession();
+
+    const updated = (await services.settings.updateAiTaskDefinition(
+      "task-memo-expansion",
+      {
+        displayName: "Renamed expansion",
+        hookKey: "memo-expansion",
+        renderLocation: "export_page",
+        displayOrder: 30,
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
+        enabled: true
+      },
+      session.user,
+      "request-rename-expansion-task"
+    )) as { aiTask: { taskKey: string; displayName: string; renderLocation: string; displayOrder: number } };
+
+    assert.equal(updated.aiTask.displayName, "Renamed expansion");
+    assert.equal(updated.aiTask.taskKey, "memo-expansion");
+    assert.equal(updated.aiTask.renderLocation, "export_page");
+    assert.equal(updated.aiTask.displayOrder, 30);
   });
-  const db = new FakeDatabase();
-  seedTaskSettings(db);
-  const services = createAppServicesFromDatabase(config, db);
-  const session = await services.auth.createLocalDevSession();
-
-  const updated = (await services.settings.updateAiTaskDefinition(
-    "task-memo-expansion",
-    {
-      displayName: "Renamed expansion",
-      hookKey: "memo-expansion",
-      renderLocation: "export_page",
-      displayOrder: 30,
-      providerConfigId: "provider-local-dev",
-      enabled: true
-    },
-    session.user,
-    "request-rename-expansion-task"
-  )) as { aiTask: { taskKey: string; displayName: string; renderLocation: string; displayOrder: number } };
-
-  assert.equal(updated.aiTask.displayName, "Renamed expansion");
-  assert.equal(updated.aiTask.taskKey, "memo-expansion");
-  assert.equal(updated.aiTask.renderLocation, "export_page");
-  assert.equal(updated.aiTask.displayOrder, 30);
 });
 
 test("AI task updates save prompt fields and task definitions can be deleted", async () => {
-  const config = readApiConfig({
-    MEMO_CAPTURE_AUTH_MODE: "local-dev",
-    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
-    LLM_PROVIDER: "local-dev"
-  });
-  const db = new FakeDatabase();
-  seedTaskSettings(db);
-  const services = createAppServicesFromDatabase(config, db);
-  const session = await services.auth.createLocalDevSession();
+  await withDefaultProviderRegistry(async (registry) => {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    const services = createAppServicesFromDatabase(config, db);
+    const session = await services.auth.createLocalDevSession();
 
-  const updated = (await services.settings.updateAiTaskDefinition(
-    "task-memo-expansion",
-    {
-      displayName: "Memo expansion",
-      hookKey: "memo-expansion",
-      providerConfigId: "provider-local-dev",
-      modelName: "memo-capture-local-dev-expander-v1",
-      promptsEnabled: true,
+    const updated = (await services.settings.updateAiTaskDefinition(
+      "task-memo-expansion",
+      {
+        displayName: "Memo expansion",
+        hookKey: "memo-expansion",
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
+        modelName: "memo-capture-local-dev-expander-v1",
+        promptsEnabled: true,
+        freeformText: "Return strict JSON with a stronger memo body.",
+        systemMessage: "Use the task-owned system message.",
+        includeProjectSynopsis: false,
+        includeMemoMetadata: true,
+        includeMemoTranscriptText: true,
+        outputSchema: {},
+        enabled: true
+      },
+      session.user,
+      "request-update-task-with-prompt"
+    )) as { aiTask: { prompt: { id: string } } };
+
+    assert.equal(updated.aiTask.prompt.id, "prompt-work-item-expansion");
+    const promptVersion = db.promptVersions.find((row) => row.prompt_definition_id === "prompt-work-item-expansion");
+    assert.equal(promptVersion?.body, "Return strict JSON with a stronger memo body.");
+    assert.deepEqual(promptVersion?.context_config, {
       freeformText: "Return strict JSON with a stronger memo body.",
       systemMessage: "Use the task-owned system message.",
       includeProjectSynopsis: false,
       includeMemoMetadata: true,
-      includeMemoTranscriptText: true,
-      outputSchema: {},
-      enabled: true
-    },
-    session.user,
-    "request-update-task-with-prompt"
-  )) as { aiTask: { prompt: { id: string } } };
+      includeMemoTranscriptText: true
+    });
 
-  assert.equal(updated.aiTask.prompt.id, "prompt-work-item-expansion");
-  const promptVersion = db.promptVersions.find((row) => row.prompt_definition_id === "prompt-work-item-expansion");
-  assert.equal(promptVersion?.body, "Return strict JSON with a stronger memo body.");
-  assert.deepEqual(promptVersion?.context_config, {
-    freeformText: "Return strict JSON with a stronger memo body.",
-    systemMessage: "Use the task-owned system message.",
-    includeProjectSynopsis: false,
-    includeMemoMetadata: true,
-    includeMemoTranscriptText: true
-  });
+    await services.settings.updateAiTaskDefinition(
+      "task-memo-expansion",
+      {
+        displayName: "Memo expansion",
+        hookKey: "memo-expansion",
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
+        modelName: "memo-capture-local-dev-expander-v1",
+        promptsEnabled: true,
+        freeformText: "Return strict JSON with preserved system instructions.",
+        includeProjectSynopsis: true,
+        includeMemoMetadata: true,
+        includeMemoTranscriptText: false,
+        outputSchema: {},
+        enabled: true
+      },
+      session.user,
+      "request-update-task-without-system-message"
+    );
 
-  await services.settings.updateAiTaskDefinition(
-    "task-memo-expansion",
-    {
-      displayName: "Memo expansion",
-      hookKey: "memo-expansion",
-      providerConfigId: "provider-local-dev",
-      modelName: "memo-capture-local-dev-expander-v1",
-      promptsEnabled: true,
+    assert.deepEqual(promptVersion?.context_config, {
       freeformText: "Return strict JSON with preserved system instructions.",
+      systemMessage: "Use the task-owned system message.",
       includeProjectSynopsis: true,
       includeMemoMetadata: true,
-      includeMemoTranscriptText: false,
-      outputSchema: {},
-      enabled: true
-    },
-    session.user,
-    "request-update-task-without-system-message"
-  );
+      includeMemoTranscriptText: false
+    });
 
-  assert.deepEqual(promptVersion?.context_config, {
-    freeformText: "Return strict JSON with preserved system instructions.",
-    systemMessage: "Use the task-owned system message.",
-    includeProjectSynopsis: true,
-    includeMemoMetadata: true,
-    includeMemoTranscriptText: false
+    const deleted = await services.settings.deleteAiTaskDefinition(
+      "task-custom",
+      session.user,
+      "request-delete-task"
+    );
+
+    assert.deepEqual(deleted, { deleted: true, taskId: "task-custom" });
+    assert.equal(db.aiTaskDefinitions.some((row) => row.id === "task-custom"), false);
+    assert.equal(db.aiTaskRoutes.some((row) => row.task_definition_id === "task-custom"), false);
   });
-
-  const deleted = await services.settings.deleteAiTaskDefinition(
-    "task-custom",
-    session.user,
-    "request-delete-task"
-  );
-
-  assert.deepEqual(deleted, { deleted: true, taskId: "task-custom" });
-  assert.equal(db.aiTaskDefinitions.some((row) => row.id === "task-custom"), false);
-  assert.equal(db.aiTaskRoutes.some((row) => row.task_definition_id === "task-custom"), false);
 });
 
 test("direct prompt updates preserve the current system message when omitted", async () => {
@@ -2424,13 +2447,11 @@ test("basic protected capture routes expose session, catalog, work items, and fo
 
     const settings = await authedJson(baseUrl, "/api/settings");
     assert.equal(settings.response.status, 200);
-    assert.equal(settings.body.providers[0].providerName, "local-dev");
-    assert.equal(settings.body.providerCatalog.fallbackUsed, false);
+    assert.equal(settings.body.providers, undefined);
     assert.equal(settings.body.fileTypes[0].extension, ".md");
 
     const registryStatus = await authedJson(baseUrl, "/api/settings/registry/status");
     assert.equal(registryStatus.response.status, 200);
-    assert.equal(registryStatus.body.fallbackUsed, false);
     assert.ok(Array.isArray(registryStatus.body.providers));
 
     const taskKindCreate = await authedJson(baseUrl, "/api/settings/task-kinds", {
@@ -2536,7 +2557,8 @@ test("basic protected capture routes expose session, catalog, work items, and fo
         hookKey: "memo-expansion",
         renderLocation: "work_item_detail",
         displayOrder: 5,
-        providerConfigId: "provider-local-dev",
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
         modelName: "memo-capture-detail-expander-v2",
         enabled: true
       })
@@ -2591,7 +2613,8 @@ test("basic protected capture routes expose session, catalog, work items, and fo
         hookKey: "suggest-new-memos",
         renderLocation: "work_item_detail",
         displayOrder: 6,
-        providerConfigId: "provider-local-dev",
+        registryProfileKey: "local-dev",
+        providerKey: "local-dev",
         modelName: "memo-capture-detail-expander-v2",
         enabled: true
       })
@@ -2812,7 +2835,6 @@ function stubServices(): AppServices {
     } as unknown as AppServices["photoImports"],
     settings: {
       getSummary: async () => ({
-        providers: [],
         providerCatalog: {
           registry: {
             url: "http://127.0.0.1:5181",
@@ -2821,7 +2843,6 @@ function stubServices(): AppServices {
             reachable: false,
             error: "not reachable"
           },
-          fallbackUsed: false,
           providers: []
         },
         aiTasks: [],
@@ -2839,7 +2860,7 @@ function stubServices(): AppServices {
       createFileType: async () => {
         throw new Error("not used");
       },
-      getRegistryStatus: async () => ({ fallbackUsed: false, providers: [] }),
+      getRegistryStatus: async () => ({ providers: [] }),
       createAiTaskDefinition: async () => {
         throw new Error("not used");
       },
@@ -3330,27 +3351,6 @@ function captureRouteServices(): AppServices {
           runtimeModelName: "memo-capture-local-dev-transcriber-v1",
           updatedAt: "2026-05-29T00:00:00.000Z"
         },
-        providers: [
-          {
-            id: "provider-1",
-            providerKind: "llm",
-            providerName: "local-dev",
-            displayName: "Local development",
-            adapterKey: "local-dev",
-            enabled: false,
-            endpointConfigured: false,
-            modelName: "memo-capture-local-dev-expander-v1",
-            secretSource: "environment",
-            requiredSecretEnv: null,
-            externalSendEnabled: false,
-            secretConfigured: true,
-            healthStatus: "unknown",
-            runtimeProvider: "local-dev",
-            runtimeModelName: "memo-capture-local-dev-expander-v1",
-            lastHealthCheckAt: null,
-            updatedAt: "2026-05-29T00:00:00.000Z"
-          }
-        ],
         providerCatalog: {
           registry: {
             url: "http://127.0.0.1:5181",
@@ -3359,7 +3359,6 @@ function captureRouteServices(): AppServices {
             reachable: true,
             error: null
           },
-          fallbackUsed: false,
           providers: [
             {
               providerKey: "local-dev",
@@ -3401,11 +3400,12 @@ function captureRouteServices(): AppServices {
             runtimeProviderEnv: "LLM_PROVIDER",
             runtimeModelEnv: "LLM_MODEL",
             runtimeEndpointEnv: "LLM_ENDPOINT",
-            selectedProviderId: "provider-1",
+            registryProfileKey: "local-dev",
+            registryProviderKey: "local-dev",
             selectedProviderName: "local-dev",
-            selectedProviderDisplayName: "Local development",
+            selectedProviderDisplayName: "local-dev",
             selectedModelName: "memo-capture-local-dev-expander-v1",
-            providerAdapterKey: "local-dev",
+            providerAdapterKey: null,
             providerExternalSendEnabled: false,
             providerSecretEnv: null,
             runtimeProvider: "local-dev",
@@ -3503,7 +3503,6 @@ function captureRouteServices(): AppServices {
           reachable: true,
           error: null
         },
-        fallbackUsed: false,
         providers: [
           {
             providerKey: "local-dev",
@@ -3910,6 +3909,43 @@ async function authedJson(
     response,
     body: (await response.json()) as Record<string, any>
   };
+}
+
+async function withDefaultProviderRegistry<T>(
+  callback: (registry: { url: string }) => Promise<T>
+): Promise<T> {
+  const registry = await startRegistryTestServer({
+    profiles: [{ profileKey: "local-dev", displayName: "Local Development" }],
+    providersByProfile: {
+      "local-dev": [
+        {
+          providerKind: "llm",
+          providerKey: "local-dev",
+          adapterKey: "local-dev",
+          displayName: "Local development",
+          enabled: true,
+          externalSend: false,
+          model: "memo-capture-local-dev-expander-v1",
+          capabilities: [{ key: "llm.generateJson", displayName: "Generate JSON" }]
+        },
+        {
+          providerKind: "stt",
+          providerKey: "whisper-cpp",
+          adapterKey: "whisper-cpp",
+          displayName: "Whisper.cpp",
+          enabled: true,
+          externalSend: false,
+          model: "ggml-base.en",
+          capabilities: [{ key: "stt.transcribe", displayName: "Transcribe speech" }]
+        }
+      ]
+    }
+  });
+  try {
+    return await callback(registry);
+  } finally {
+    await registry.close();
+  }
 }
 
 async function startRegistryTestServer(input: {
@@ -4504,8 +4540,8 @@ class FakeDatabase implements Database {
           task_definition_id: values[0],
           provider_config_id: createDisabledRoute ? null : values[1],
           model_name: createDisabledRoute ? null : values[2],
-          registry_profile_key: null,
-          provider_key: null,
+          registry_profile_key: createDisabledRoute ? null : values[5] ?? null,
+          provider_key: createDisabledRoute ? null : values[6] ?? null,
           provider_model_override: createDisabledRoute ? null : values[2],
           enabled: createDisabledRoute ? false : values[3] ?? false,
           updated_by: createDisabledRoute ? values[1] : values[4],

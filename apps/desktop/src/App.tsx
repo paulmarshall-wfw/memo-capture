@@ -447,7 +447,7 @@ interface AiTaskRouteDraft {
   hookKey: string;
   renderLocation: TaskRenderLocation;
   displayOrder: number;
-  providerConfigId: string;
+  registryProviderKey: string;
   modelName: string;
   promptsEnabled: boolean;
   enabled: boolean;
@@ -459,10 +459,19 @@ interface NewAiTaskDraft {
   hookKey: string;
   renderLocation: TaskRenderLocation;
   displayOrder: number;
-  providerConfigId: string;
+  registryProviderKey: string;
   modelName: string;
   promptsEnabled: boolean;
   promptDraft: PromptDraft;
+  enabled: boolean;
+}
+
+interface TaskProviderOption {
+  value: string;
+  registryProviderKey: string;
+  label: string;
+  providerKind: string;
+  modelName: string;
   enabled: boolean;
 }
 
@@ -502,38 +511,6 @@ interface SettingsSummary {
     runtimeModelName: string;
     updatedAt: string;
   } | null;
-  providers: {
-    id: string;
-    providerKind: string;
-    providerName: string;
-    displayName?: string;
-    adapterKey?: string;
-    enabled: boolean;
-    endpoint?: string | null;
-    endpointConfigured: boolean;
-    modelName: string | null;
-    secretSource: string;
-    requiredSecretEnv?: string | null;
-    externalSendEnabled?: boolean;
-    secretConfigured: boolean;
-    healthStatus: string;
-    runtimeProvider: string;
-    runtimeModelName: string;
-    runtimeProviderEnv?: string | null;
-    runtimeModelEnv?: string | null;
-    runtimeEndpointEnv?: string | null;
-    capabilities?: { capabilityKey: string; enabled: boolean }[];
-    runtimeConfiguration: {
-      mode: string;
-      binaryPath: string;
-      modelPathConfigured: boolean;
-      ffmpegPath: string;
-      language: string;
-      threads: number;
-      timeoutMs: number;
-    } | null;
-    updatedAt: string;
-  }[];
   providerCatalog?: {
     registry: {
       url: string;
@@ -542,8 +519,8 @@ interface SettingsSummary {
       reachable: boolean;
       error: string | null;
     };
-    fallbackUsed: boolean;
     providers: Array<{
+      providerKind: string;
       providerKey: string;
       displayName: string;
       enabled: boolean;
@@ -576,13 +553,6 @@ interface SettingsSummary {
     providerCount: number;
     updatedAt: string | null;
   };
-  providerCapabilities: {
-    id: string;
-    providerConfigId: string;
-    capabilityKey: string;
-    enabled: boolean;
-    updatedAt: string;
-  }[];
   taskKinds: {
     id: string;
     kindKey: string;
@@ -616,7 +586,6 @@ interface SettingsSummary {
     runtimeProviderEnv: string;
     runtimeModelEnv: string;
     runtimeEndpointEnv: string | null;
-    selectedProviderId: string | null;
     registryProfileKey?: string | null;
     registryProviderKey?: string | null;
     selectedProviderName: string | null;
@@ -812,7 +781,7 @@ const defaultNewAiTaskDraft: NewAiTaskDraft = {
   hookKey: "",
   renderLocation: "work_item_detail",
   displayOrder: 0,
-  providerConfigId: "",
+  registryProviderKey: "",
   modelName: "",
   promptsEnabled: false,
   promptDraft: {
@@ -1678,6 +1647,10 @@ export function App() {
     return new Map(fileTypes.map((fileType) => [fileType.extension.toLowerCase(), fileType]));
   }, [settingsSummary]);
   const registeredTaskHooks = settingsSummary?.registeredTaskHooks ?? [];
+  const taskProviderOptions = useMemo(
+    () => buildTaskProviderOptions(settingsSummary),
+    [settingsSummary]
+  );
   const workItemDetailTasks = useMemo(
     () =>
       [...(settingsSummary?.aiTasks ?? [])]
@@ -2401,9 +2374,9 @@ export function App() {
     );
   }
 
-  async function loadSettings(token = accessToken): Promise<void> {
+  async function loadSettings(token = accessToken): Promise<SettingsSummary | null> {
     if (token === null) {
-      return;
+      return null;
     }
     setSettingsLoading(true);
     setStatusMessage(null);
@@ -2461,7 +2434,7 @@ export function App() {
               hookKey: task.hookKey,
               renderLocation: task.renderLocation,
               displayOrder: task.displayOrder,
-              providerConfigId: task.selectedProviderId ?? "",
+              registryProviderKey: task.registryProviderKey ?? "",
               modelName: task.selectedModelName ?? "",
               promptsEnabled: task.prompt !== null,
               enabled: task.routeEnabled
@@ -2469,6 +2442,7 @@ export function App() {
           ])
         )
       );
+      return normalized;
     } finally {
       setSettingsLoading(false);
     }
@@ -3470,7 +3444,7 @@ export function App() {
           hookKey: "",
           renderLocation: "work_item_detail",
           displayOrder: 0,
-          providerConfigId: "",
+          registryProviderKey: "",
           modelName: "",
           promptsEnabled: false,
           enabled: false
@@ -3541,8 +3515,8 @@ export function App() {
     setProviderRegistryInFlight(true);
     setStatusMessage(null);
     try {
-      await loadSettings(accessToken);
-      setStatusMessage("Provider registry refreshed.");
+      const settings = await loadSettings(accessToken);
+      setStatusMessage(describeProviderRegistryRefreshStatus(settings));
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to refresh provider registry.");
     } finally {
@@ -3617,7 +3591,8 @@ export function App() {
           hookKey: newAiTaskDraft.hookKey,
           renderLocation: newAiTaskDraft.renderLocation,
           displayOrder: newAiTaskDraft.displayOrder,
-          providerConfigId: newAiTaskDraft.providerConfigId === "" ? null : newAiTaskDraft.providerConfigId,
+          registryProfileKey: settingsSummary?.providerRegistry?.activeProfileKey ?? null,
+          providerKey: newAiTaskDraft.registryProviderKey === "" ? null : newAiTaskDraft.registryProviderKey,
           modelName: newAiTaskDraft.modelName,
           promptsEnabled: newAiTaskDraft.promptsEnabled,
           initialPromptText: newAiTaskDraft.promptsEnabled
@@ -3668,7 +3643,8 @@ export function App() {
           hookKey: draft.hookKey,
           renderLocation: draft.renderLocation,
           displayOrder: draft.displayOrder,
-          providerConfigId: draft.providerConfigId === "" ? null : draft.providerConfigId,
+          registryProfileKey: settingsSummary?.providerRegistry?.activeProfileKey ?? null,
+          providerKey: draft.registryProviderKey === "" ? null : draft.registryProviderKey,
           modelName: draft.modelName,
           promptsEnabled: draft.promptsEnabled,
           ...(draft.promptsEnabled && promptDraft !== null && promptDraft !== undefined
@@ -6378,20 +6354,20 @@ export function App() {
                         <label>
                           <span>Provider Key</span>
                           <select
-                            value={newAiTaskDraft.providerConfigId}
+                            value={taskProviderSelectValue(newAiTaskDraft)}
                             disabled={aiTaskCreateInFlight}
                             onChange={(event) => {
-                              const provider = settingsSummary.providers.find(
-                                (candidate) => candidate.id === event.currentTarget.value
+                              const provider = taskProviderOptions.find(
+                                (candidate) => candidate.value === event.currentTarget.value
                               );
-                              updateNewAiTaskDraft("providerConfigId", event.currentTarget.value);
+                              updateNewAiTaskDraft("registryProviderKey", provider?.registryProviderKey ?? "");
                               updateNewAiTaskDraft("modelName", provider?.modelName ?? "");
                             }}
                           >
                             <option value="">No provider</option>
-                            {settingsSummary.providers.map((provider) => (
-                              <option value={provider.id} key={provider.id}>
-                                {provider.providerName}
+                            {taskProviderOptions.map((provider) => (
+                              <option value={provider.value} key={provider.value} disabled={!provider.enabled}>
+                                {provider.label}
                               </option>
                             ))}
                           </select>
@@ -6401,8 +6377,8 @@ export function App() {
                           <input
                             type="text"
                             value={
-                              settingsSummary.providers.find(
-                                (provider) => provider.id === newAiTaskDraft.providerConfigId
+                              taskProviderOptions.find(
+                                (provider) => provider.value === taskProviderSelectValue(newAiTaskDraft)
                               )?.providerKind ?? ""
                             }
                             readOnly
@@ -6552,13 +6528,13 @@ export function App() {
                         hookKey: task.hookKey,
                         renderLocation: task.renderLocation,
                         displayOrder: task.displayOrder,
-                        providerConfigId: task.selectedProviderId ?? "",
+                        registryProviderKey: task.registryProviderKey ?? "",
                         modelName: task.selectedModelName ?? "",
                         promptsEnabled: task.prompt !== null,
                         enabled: task.routeEnabled
                       };
-                      const selectedProvider = settingsSummary.providers.find(
-                        (provider) => provider.id === draft.providerConfigId
+                      const selectedProvider = taskProviderOptions.find(
+                        (provider) => provider.value === taskProviderSelectValue(draft)
                       );
                       const prompt = task.prompt;
                       const promptDraft =
@@ -6647,20 +6623,20 @@ export function App() {
                               <label>
                                 <span>Provider Key</span>
                                 <select
-                                  value={draft.providerConfigId}
+                                  value={taskProviderSelectValue(draft)}
                                   disabled={aiTaskIdInFlight === task.id}
                                   onChange={(event) => {
-                                    const provider = settingsSummary.providers.find(
-                                      (candidate) => candidate.id === event.currentTarget.value
+                                    const provider = taskProviderOptions.find(
+                                      (candidate) => candidate.value === event.currentTarget.value
                                     );
-                                    updateAiTaskRouteDraft(task.id, "providerConfigId", event.currentTarget.value);
+                                    updateAiTaskRouteDraft(task.id, "registryProviderKey", provider?.registryProviderKey ?? "");
                                     updateAiTaskRouteDraft(task.id, "modelName", provider?.modelName ?? "");
                                   }}
                                 >
                                   <option value="">No provider</option>
-                                  {settingsSummary.providers.map((provider) => (
-                                    <option key={provider.id} value={provider.id}>
-                                      {provider.providerName}
+                                  {taskProviderOptions.map((provider) => (
+                                    <option key={provider.value} value={provider.value} disabled={!provider.enabled}>
+                                      {provider.label}
                                     </option>
                                   ))}
                                 </select>
@@ -7542,9 +7518,7 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
     parserTypes: Array.isArray(summary.parserTypes) ? summary.parserTypes : [],
     fileTypes: Array.isArray(summary.fileTypes) ? summary.fileTypes : [],
     extraction: summary.extraction ?? defaultExtractionSettings,
-    providers: Array.isArray(summary.providers) ? summary.providers : [],
     providerRegistry: normalizeProviderRegistrySummary(summary.providerRegistry, summary.providerCatalog),
-    providerCapabilities: Array.isArray(summary.providerCapabilities) ? summary.providerCapabilities : [],
     taskKinds: Array.isArray(summary.taskKinds) ? summary.taskKinds : [],
     aiTasks: Array.isArray(summary.aiTasks)
       ? summary.aiTasks.map((task) => ({
@@ -7588,6 +7562,44 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
       oidcConfigured: false
     }
   };
+}
+
+function buildTaskProviderOptions(settings: SettingsSummary | null): TaskProviderOption[] {
+  const registryProviders = settings?.providerCatalog?.providers ?? [];
+  return registryProviders.map((provider) => ({
+    value: `registry:${provider.providerKey}`,
+    registryProviderKey: provider.providerKey,
+    label: provider.providerKey,
+    providerKind: provider.providerKind,
+    modelName: provider.model ?? "",
+    enabled: provider.enabled
+  }));
+}
+
+function taskProviderSelectValue(draft: Pick<AiTaskRouteDraft | NewAiTaskDraft, "registryProviderKey">): string {
+  return draft.registryProviderKey.trim() === "" ? "" : `registry:${draft.registryProviderKey}`;
+}
+
+function describeProviderRegistryRefreshStatus(settings: SettingsSummary | null): string {
+  const registry = settings?.providerRegistry;
+  if (registry === undefined || registry === null) {
+    return "Unable to refresh provider registry.";
+  }
+  if (registry.status === "ready") {
+    return registry.providerCount === 0
+      ? "Provider registry refreshed: no providers in active profile."
+      : `Provider registry refreshed: ${registry.providerCount} providers.`;
+  }
+  if (registry.error !== null && registry.error.trim() !== "") {
+    return `Provider registry unavailable: ${registry.error}`;
+  }
+  if (registry.status === "missing_profile") {
+    return "Provider registry profile is missing.";
+  }
+  if (registry.status === "not_configured") {
+    return "Provider registry profile is not configured.";
+  }
+  return "Provider registry unavailable.";
 }
 
 function normalizeProviderRegistrySummary(

@@ -51,7 +51,11 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.match(appSource, /work-item-task-actions/);
   assert.match(appSource, /\/tasks\/\$\{encodeURIComponent\(task\.id\)\}\/run/);
   assert.match(appSource, /Provider registry unavailable/);
-  assert.match(appSource, /fallbackUsed/);
+  assert.match(appSource, /Provider registry unavailable: \$\{registry\.error\}/);
+  assert.match(appSource, /Provider registry refreshed: \$\{registry\.providerCount\} providers/);
+  assert.doesNotMatch(appSource, /fallbackUsed/);
+  assert.doesNotMatch(appSource, /providerConfigId/);
+  assert.doesNotMatch(appSource, /selectedProviderId/);
   assert.match(appSource, /No registry providers/);
   assert.match(appSource, /providerCatalog\.providers/);
   assert.doesNotMatch(appSource, /AppLauncher runtime options/);

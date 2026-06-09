@@ -996,6 +996,8 @@ export class SettingsRepository {
     implemented: boolean;
     promptDefinitionId: string | null;
     providerConfigId: string | null;
+    registryProfileKey: string | null;
+    providerKey: string | null;
     routeModelName: string | null;
     routeEnabled: boolean;
     runtimeOptionId: string;
@@ -1035,9 +1037,27 @@ export class SettingsRepository {
       ]
     );
     await this.db.query(
-      `insert into ai_task_routes (task_definition_id, provider_config_id, model_name, enabled, updated_by, updated_at)
-       values ($1, $2::uuid, $3::text, $4::boolean, $5, now())`,
-      [taskId, input.providerConfigId, nullIfBlank(input.routeModelName), input.routeEnabled, input.actorUserId]
+      `insert into ai_task_routes (
+         task_definition_id,
+         provider_config_id,
+         model_name,
+         enabled,
+         updated_by,
+         registry_profile_key,
+         provider_key,
+         provider_model_override,
+         updated_at
+       )
+       values ($1, $2::uuid, $3::text, $4::boolean, $5, $6::text, $7::text, $3::text, now())`,
+      [
+        taskId,
+        input.providerConfigId,
+        nullIfBlank(input.routeModelName),
+        input.routeEnabled,
+        input.actorUserId,
+        nullIfBlank(input.registryProfileKey),
+        nullIfBlank(input.providerKey)
+      ]
     );
     const createdTask = await this.findAiTaskRouteById(taskId);
     if (createdTask === null) {
