@@ -6,6 +6,7 @@ import test from "node:test";
 import type { ApiConfig } from "../src/config.js";
 import type { AiTaskRouteRow } from "../src/repositories/settings.js";
 import { modelNameForTaskRoute } from "../src/services/ai-expansion.js";
+import { isSecretAvailable } from "../src/services/invoke-providers/secrets.js";
 import {
   buildWorkItemExpansionPrompt,
   createLlmProvider,
@@ -169,6 +170,40 @@ test("Codex CLI failure summaries prefer structured error messages", () => {
   assert.match(summary, /Check the task model override or CODEX_CLI_MODEL\./);
   assert.equal(summary.includes("skills::loader"), false);
   assert.equal(summary.length < 700, true);
+});
+
+test("OpenAI-compatible local provider does not require a configured API key secret", () => {
+  const previousLocalKey = process.env.LOCAL_OPENAI_COMPATIBLE_API_KEY;
+  delete process.env.LOCAL_OPENAI_COMPATIBLE_API_KEY;
+  const config = {
+    llm: {
+      provider: "openai-compatible",
+      modelName: "local-model",
+      endpoint: "",
+      openAiCompatibleApiKey: ""
+    }
+  } as ApiConfig;
+
+  try {
+    assert.equal(
+      isSecretAvailable("OPENAI_COMPATIBLE_API_KEY", config, {
+        providerKey: "openai-compatible-local",
+        adapterKey: "openai-compatible-local",
+        endpoint: "http://127.0.0.1:1234/v1"
+      }),
+      true
+    );
+    assert.equal(
+      isSecretAvailable("OPENAI_COMPATIBLE_API_KEY", config, {
+        providerKey: "openai-compatible-cloud",
+        adapterKey: "openai-compatible-cloud",
+        endpoint: "https://llm.example.test/v1"
+      }),
+      false
+    );
+  } finally {
+    restoreEnvValue("LOCAL_OPENAI_COMPATIBLE_API_KEY", previousLocalKey);
+  }
 });
 
 test("OpenAI-compatible provider sends configured system message and JSON schema response format", async () => {

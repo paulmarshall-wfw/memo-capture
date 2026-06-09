@@ -1422,7 +1422,13 @@ function serializeProvider(
         capabilityKey: normalizeCapabilityKey(capability.capability_key),
         enabled: capability.enabled
       })),
-    secretConfigured: provider.secret_source === "environment" && secretConfigured(requiredSecretEnv, config),
+    secretConfigured:
+      provider.secret_source === "environment" &&
+      secretConfigured(requiredSecretEnv, config, {
+        adapterKey: provider.adapter_key,
+        endpoint: provider.endpoint,
+        providerKey: provider.provider_name
+      }),
     healthStatus: provider.health_status,
     runtimeProvider,
     runtimeModelName,
@@ -1595,8 +1601,12 @@ function runtimeForTaskRoute(
   };
 }
 
-function secretConfigured(requiredSecretEnv: string | null, config: ApiConfig): boolean {
-  return isSecretAvailable(requiredSecretEnv ?? undefined, config);
+function secretConfigured(
+  requiredSecretEnv: string | null,
+  config: ApiConfig,
+  context: Parameters<typeof isSecretAvailable>[2] = {}
+): boolean {
+  return isSecretAvailable(requiredSecretEnv ?? undefined, config, context);
 }
 
 function parseExtractionBody(body: unknown) {
@@ -1824,7 +1834,13 @@ async function validateAiTaskRouteUpdate(
   }
   const providerConfig = await requireEnabledProviderConfigForRegistryProvider(settings, selection.provider);
   const requiredSecretEnv = selection.provider.requiredSecretRef ?? providerConfig.required_secret_env ?? null;
-  if (!secretConfigured(requiredSecretEnv, config)) {
+  if (
+    !secretConfigured(requiredSecretEnv, config, {
+      adapterKey: selection.provider.adapterKey ?? providerConfig.adapter_key,
+      endpoint: selection.provider.baseUrl ?? providerConfig.endpoint,
+      providerKey: selection.provider.providerKey
+    })
+  ) {
     throw new HttpError(409, "provider_secret_missing", "Task route cannot be enabled until the required secret is configured.", {
       requiredSecretEnv
     });

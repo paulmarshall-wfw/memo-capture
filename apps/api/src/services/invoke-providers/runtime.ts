@@ -79,7 +79,7 @@ export class TargetAppRuntimeService {
           .filter((task) => task.selectedProviderKey === provider.providerKey)
           .map((task) => task.taskKey),
         missingSecretRef:
-          provider.requiredSecretRef !== undefined && !isSecretAvailable(provider.requiredSecretRef, this.config)
+          provider.requiredSecretRef !== undefined && !isSecretAvailable(provider.requiredSecretRef, this.config, provider)
             ? provider.requiredSecretRef
             : null
       })),
@@ -251,7 +251,7 @@ function resolveTaskReadiness(
         message: `Selected provider does not advertise ${task.requiredCapability}.`
       });
     }
-    if (!isSecretAvailable(provider.requiredSecretRef, config)) {
+    if (!isSecretAvailable(provider.requiredSecretRef, config, provider)) {
       reasons.push({
         code: "missing_secret",
         message: `Required secret ${provider.requiredSecretRef ?? "provider secret"} is not configured.`

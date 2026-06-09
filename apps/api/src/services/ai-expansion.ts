@@ -827,7 +827,7 @@ function validateMemoExpansionTaskRoute(task: AiTaskRouteRow, config: ApiConfig)
   if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm" || task.provider_kind !== "llm") {
     throw new HttpError(409, "llm_provider_unavailable", "Memo expansion requires an LLM task route and provider.");
   }
-  if (!isSecretAvailable(task.required_secret_env ?? undefined, config)) {
+  if (!isSecretAvailable(task.required_secret_env ?? undefined, config, secretContextForTaskRoute(task))) {
     throw new HttpError(409, "llm_secret_missing", "Configured LLM provider secret is not configured.");
   }
   if (task.provider_name === "codex-cli") {
@@ -862,7 +862,7 @@ function validateSuggestNewMemosTaskRoute(task: AiTaskRouteRow, config: ApiConfi
   if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm" || task.provider_kind !== "llm") {
     throw new HttpError(409, "llm_provider_unavailable", "Suggested work items require an LLM task route and provider.");
   }
-  if (!isSecretAvailable(task.required_secret_env ?? undefined, config)) {
+  if (!isSecretAvailable(task.required_secret_env ?? undefined, config, secretContextForTaskRoute(task))) {
     throw new HttpError(409, "llm_secret_missing", "Configured LLM provider secret is not configured.");
   }
   if (task.provider_name === "codex-cli") {
@@ -897,6 +897,18 @@ export function modelNameForTaskRoute(task: AiTaskRouteRow, config: ApiConfig): 
     task.provider_model_name ??
     task.default_model_name ??
     config.llm.modelName;
+}
+
+function secretContextForTaskRoute(task: AiTaskRouteRow): {
+  adapterKey: string | null;
+  endpoint: string | null;
+  providerKey: string | null;
+} {
+  return {
+    adapterKey: task.adapter_key,
+    endpoint: task.endpoint,
+    providerKey: task.provider_key ?? task.provider_name
+  };
 }
 
 function isMemoCaptureInternalModel(value: string, task: AiTaskRouteRow, config: ApiConfig): boolean {
