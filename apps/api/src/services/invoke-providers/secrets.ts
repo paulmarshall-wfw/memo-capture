@@ -40,6 +40,9 @@ export function isSecretAvailable(
 export function createMemoCaptureSecretResolver(config: ApiConfig): SecretResolver {
   return {
     hasSecret(secretRef) {
+      if (secretRef === "LOCAL_OPENAI_COMPATIBLE_API_KEY") {
+        return true;
+      }
       return isSecretAvailable(secretRef, config);
     },
     resolveSecret(secretRef) {

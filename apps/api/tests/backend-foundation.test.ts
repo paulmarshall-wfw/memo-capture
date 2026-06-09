@@ -617,6 +617,59 @@ test("disabled legacy LLM runtime does not override registry provider task enabl
   });
 });
 
+test("OpenAI-compatible registry provider readiness does not require legacy LLM_PROVIDER selection", async () => {
+  const registry = await startRegistryTestServer({
+    profiles: [{ profileKey: "local-dev", displayName: "Local Development" }],
+    providersByProfile: {
+      "local-dev": [
+        {
+          providerKind: "llm",
+          providerKey: "openai-compatible-local",
+          adapterKey: "openai-compatible-local",
+          displayName: "LM Studio",
+          enabled: true,
+          externalSend: false,
+          baseUrl: "http://127.0.0.1:1234/v1",
+          model: "openai/gpt-oss-20b",
+          requiredSecretRef: "LOCAL_OPENAI_COMPATIBLE_API_KEY",
+          capabilities: [{ key: "llm.generateJson", displayName: "Generate JSON" }]
+        }
+      ]
+    }
+  });
+  try {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      LLM_PROVIDER: "disabled",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    const services = createAppServicesFromDatabase(config, db);
+    const session = await services.auth.createLocalDevSession();
+
+    const created = (await services.settings.createAiTaskDefinition(
+      {
+        displayName: "LM Studio expansion",
+        hookKey: "memo-expansion",
+        registryProfileKey: "local-dev",
+        providerKey: "openai-compatible-local",
+        enabled: true
+      },
+      session.user,
+      "request-create-lm-studio-expansion"
+    )) as { aiTask: { routeEnabled: boolean; runtimeReady: boolean; unavailableReason: string | null } };
+
+    assert.equal(created.aiTask.routeEnabled, true);
+    assert.equal(created.aiTask.runtimeReady, true);
+    assert.equal(created.aiTask.unavailableReason, null);
+  } finally {
+    await registry.close();
+  }
+});
+
 test("AI task display name updates do not change the derived task key", async () => {
   await withDefaultProviderRegistry(async (registry) => {
     const config = readApiConfig({

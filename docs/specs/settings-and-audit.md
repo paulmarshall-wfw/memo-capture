@@ -337,8 +337,8 @@ Required columns:
 Rules:
 
 - Global task routes are the V1 routing model.
-- A task runs only when the route is enabled, the hook is implemented, the selected provider is enabled and compatible, required secrets are present, and the generic AppLauncher/runtime provider selects a compatible provider.
-- Enabling a route is rejected server-side if the hook is unimplemented, the provider is incompatible, the provider is disabled, a required secret is missing, the generic runtime provider is disabled, or the runtime provider does not match.
+- A task runs only when the route is enabled, the hook is implemented, the selected registry provider is enabled and compatible, required secrets are present, and the required adapter/runtime capability is available in Memo Capture.
+- Enabling a route is rejected server-side if the hook is unimplemented, the provider is incompatible, the provider is disabled, or a required secret is missing.
 - Model overrides are per route and affect only new processing attempts.
 
 ### prompt_definitions
@@ -524,7 +524,7 @@ Use structured redaction:
 
 `GET /api/settings`
 
-Response includes backend settings, prompt metadata, file type settings, processing hook registry metadata, redacted provider/auth status, AI task routes, AppLauncher runtime-option status, and runtime provider availability. It never returns provider secrets.
+Response includes backend settings, prompt metadata, file type settings, processing hook registry metadata, redacted provider/auth status, AI task routes, provider registry status, and runtime provider availability. It never returns provider secrets.
 
 Response includes `mediaTypes`, `parserTypes`, `fileTypes`, `providers`, `registeredTaskHooks`, `aiTasks`, and `appLauncher`. `registeredTaskHooks` includes `hookKey`, `displayName`, `implemented`, `status`, `statusLabel`, `taskUsageCount`, `deletable`, and `deleteBlockedReason`.
 
@@ -731,7 +731,7 @@ Request:
 }
 ```
 
-Updates task display fields, hook selection, prompt attachment, and the global route for one AI task. The task key remains stable. The task can be enabled only when the selected hook is implemented with real app logic, the selected provider is compatible, the selected provider is enabled, the generic AppLauncher runtime provider selects the same provider, and required secrets are configured.
+Updates task display fields, hook selection, prompt attachment, and the global route for one AI task. The task key remains stable. The task can be enabled only when the selected hook is implemented with real app logic, the selected registry provider is compatible, the selected registry provider is enabled, and required secrets are configured.
 
 ### Update current task prompt
 
@@ -850,7 +850,7 @@ Settings must not expose a manual per-file import queue. Watched folders own sta
 
 Providers section:
 
-- AppLauncher status shows generic LLM runtime readiness, required secret env names, and relaunch guidance after runtime changes.
+- Registry profile controls are Memo Capture settings, not AppLauncher runtime options.
 - Provider catalog shows enabled state, adapter, endpoint/model metadata, external-send posture, redacted secret status, and health.
 
 Processing Hooks section:
@@ -880,7 +880,7 @@ Operations section:
 - Updating backend settings writes audit events.
 - Provider config response redacts secret presence and never returns secret values.
 - Disabled providers never receive new jobs.
-- AppLauncher runtime options contain only generic non-secret LLM provider/model/endpoint selectors; API keys use AppLauncher secrets or process environment.
+- AppLauncher manifests are launch-only and do not contain provider slots, provider registry settings, runtime options, LLM provider/model/endpoint selectors, or provider secrets.
 - Processing hooks without backend handlers display `Default no-op` and no-op until app logic exists.
 - AI expansion with invalid structured JSON creates a failed diagnostics job and no suggestion records.
 - Accepting an AI suggestion creates a normal memo work item without changing the parent lifecycle state.

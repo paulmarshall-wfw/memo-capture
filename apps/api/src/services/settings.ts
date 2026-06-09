@@ -1537,29 +1537,6 @@ function serializeTaskPrompt(prompt: PromptDefinitionRow): Record<string, unknow
   };
 }
 
-function serializeAppLauncherRuntimeOptions(providers: ProviderConfigRow[], config: ApiConfig): Record<string, unknown> {
-  return {
-    manifestVersion: "1.2.0",
-    minLauncherVersion: "1.2.0",
-    runtimeOptionsPresent: true,
-    nativeLaunchTarget: "executablePath",
-    secretEnvironmentNames: Array.from(
-      new Set(
-        providers
-          .map((provider) => provider.required_secret_env)
-          .filter((value): value is string => value !== null && value.trim() !== "")
-      )
-    ),
-    llmRuntime: {
-      provider: config.llm.provider,
-      modelName: config.llm.modelName,
-      endpointConfigured: config.llm.endpoint.trim() !== "",
-      ready: config.llm.provider !== "disabled"
-    },
-    restartRequiredAfterChange: true
-  };
-}
-
 function runtimeForTaskRoute(
   task: Pick<
     AiTaskRouteRow,

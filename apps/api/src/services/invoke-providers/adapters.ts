@@ -28,21 +28,35 @@ export function listConfiguredAdapters(
   config: ApiConfig
 ): AdapterCatalogEntry[] {
   const adapterKeys = [...new Set(providers.map((provider) => provider.adapterKey))].sort();
-  return adapterKeys.map((adapterKey) => diagnoseAdapterRegistration(adapterKey, config));
+  return adapterKeys.map((adapterKey) => diagnoseAdapterRegistration(adapterKey, config, providers));
 }
 
-export function diagnoseAdapterRegistration(adapterKey: string, config: ApiConfig): AdapterCatalogEntry {
+export function diagnoseAdapterRegistration(
+  adapterKey: string,
+  config: ApiConfig,
+  providers: SharedProviderConfig[] = []
+): AdapterCatalogEntry {
   if (adapterKey === "deterministic-llm" || adapterKey === "local-dev") {
     return { adapterKey, configured: true, reason: null };
   }
   if (adapterKey === "openai-compatible-cloud" || adapterKey === "openai-compatible-local" || adapterKey === "openai-compatible") {
+    const matchingProviders = providers.filter((provider) => provider.adapterKey === adapterKey);
+    const endpointConfigured = matchingProviders.some((provider) => provider.baseUrl?.trim());
+    const requiredSecretsReady = matchingProviders.every((provider) =>
+      isSecretAvailable(provider.requiredSecretRef, config, {
+        adapterKey: provider.adapterKey,
+        endpoint: provider.baseUrl ?? null,
+        providerKey: provider.providerKey
+      })
+    );
     return {
       adapterKey,
-      configured: config.llm.provider === "openai-compatible",
-      reason:
-        config.llm.provider === "openai-compatible"
-          ? null
-          : "OpenAI-compatible LLM runtime is not selected for this API process."
+      configured: endpointConfigured && requiredSecretsReady,
+      reason: !endpointConfigured
+        ? "OpenAI-compatible provider endpoint is not configured."
+        : !requiredSecretsReady
+          ? "OpenAI-compatible provider secret is not configured."
+          : null
     };
   }
   if (adapterKey === "whisper-cpp") {

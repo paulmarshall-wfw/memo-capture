@@ -141,7 +141,7 @@ test("settings page exposes file type, provider catalog, and task-owned prompt c
   assert.doesNotMatch(appSource, /manual per-file import/i);
 });
 
-test("AppLauncher manifests expose generic LLM runtime options", () => {
+test("AppLauncher manifests are provider-blind launch manifests", () => {
   const webManifest = readFileSync(
     new URL("../../../dist/applauncher-manifests/memo-capture/1.0.0/manifest.json", import.meta.url),
     "utf8"
@@ -152,12 +152,14 @@ test("AppLauncher manifests expose generic LLM runtime options", () => {
   );
   const combined = `${webManifest}\n${nativeManifest}`;
 
-  assert.match(combined, /"id": "llm-runtime"/);
-  assert.match(combined, /"LLM_PROVIDER": "local-dev"/);
-  assert.match(combined, /"LLM_PROVIDER": "openai-compatible"/);
-  assert.match(combined, /"id": "lm-studio"/);
-  assert.match(combined, /"LLM_ENDPOINT": "http:\/\/127\.0\.0\.1:1234\/v1"/);
-  assert.match(combined, /"LLM_MODEL": "qwen\/qwen3-coder-next"/);
+  assert.match(webManifest, /"appKind": "localWebApp"/);
+  assert.match(nativeManifest, /"appKind": "nativeApp"/);
+  assert.doesNotMatch(combined, /"providerSlots"/);
+  assert.doesNotMatch(combined, /"providerRegistry"/);
+  assert.doesNotMatch(combined, /"runtimeOptions"/);
+  assert.doesNotMatch(combined, /LLM_PROVIDER/);
+  assert.doesNotMatch(combined, /LLM_MODEL/);
+  assert.doesNotMatch(combined, /LLM_ENDPOINT/);
   assert.doesNotMatch(combined, /MEMO_EXPANSION_PROVIDER/);
   assert.doesNotMatch(combined, /SUGGEST_TAGS_PROVIDER/);
   assert.doesNotMatch(combined, /OCR_PROVIDER/);

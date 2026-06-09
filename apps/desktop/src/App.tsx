@@ -3662,7 +3662,7 @@ export function App() {
         })
       });
       await loadSettings(accessToken);
-      setStatusMessage("Task saved. Relaunch from AppLauncher if runtime options changed.");
+      setStatusMessage("Task saved. Restart Memo Capture or the API if runtime environment changed.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "Unable to save task.");
     } finally {

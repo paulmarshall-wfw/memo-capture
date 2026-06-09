@@ -48,14 +48,14 @@ Memo Capture does not fall back to its legacy local provider rows when the share
 
 ## AI And Transcription
 
-- `LLM_PROVIDER`: generic LLM runtime provider selected by AppLauncher. Supported values are `disabled`, `local-dev`, and `openai-compatible`.
-- `LLM_MODEL`: generic LLM runtime model label. Defaults to `memo-capture-local-dev-expander-v1`.
-- `LLM_ENDPOINT`: generic LLM runtime endpoint for OpenAI-compatible providers.
-- Local LM Studio uses the OpenAI-compatible adapter with `LLM_PROVIDER=openai-compatible`, `LLM_ENDPOINT=http://127.0.0.1:1234/v1`, and a chat model ID reported by `GET /v1/models`. For localhost endpoints, Memo Capture can use a dummy bearer value when `OPENAI_COMPATIBLE_API_KEY` or `LOCAL_OPENAI_COMPATIBLE_API_KEY` is not configured. The adapter requests task-specific `json_schema` structured output for Memo Capture LLM tasks.
-- The AppLauncher `manifestVersion: 1.3.0` manifests expose provider-slot choices for LM Studio `qwen/qwen3-coder-next`, LM Studio `openai/gpt-oss-20b`, LM Studio `nvidia/nemotron-3-nano`, a generic OpenAI-compatible endpoint/model pair, local development, and Codex CLI setup metadata.
+- `LLM_PROVIDER`: legacy Memo Capture LLM runtime fallback. Supported values are `disabled`, `local-dev`, and `openai-compatible`.
+- `LLM_MODEL`: Memo Capture runtime fallback model label. Defaults to `memo-capture-local-dev-expander-v1`.
+- `LLM_ENDPOINT`: Memo Capture runtime fallback endpoint for OpenAI-compatible providers.
+- Local LM Studio uses a shared-registry OpenAI-compatible provider with endpoint `http://127.0.0.1:1234/v1` and a chat model ID reported by `GET /v1/models`. For localhost endpoints, Memo Capture can use a dummy bearer value when `OPENAI_COMPATIBLE_API_KEY` or `LOCAL_OPENAI_COMPATIBLE_API_KEY` is not configured. The adapter requests task-specific `json_schema` structured output for Memo Capture LLM tasks.
+- AppLauncher manifests launch Memo Capture only. They do not declare provider slots, provider registry settings, runtime options, LLM runtime selectors, provider secrets, or model selectors.
 - Codex CLI task providers use the shared `codex-cli` adapter with registry provider key `codex-cli-local`. Configure `INVOKE_PROVIDERS_CODEX_CLI_BINARY` or `CODEX_CLI_EXECUTABLE` to the executable path or command, such as `codex`. The adapter invokes `codex exec` with a read-only sandbox by default and may send data externally depending on the host Codex CLI configuration.
 - Memo expansion, revision, suggestion, tag, and OCR task routing is configured inside Memo Capture Settings. AppLauncher does not emit task-specific LLM env names.
-- `OPENAI_COMPATIBLE_API_KEY`: AppLauncher secret/env value for the OpenAI-compatible adapter. Do not put API keys in manifest runtime options or provider slots.
+- `OPENAI_COMPATIBLE_API_KEY`: process environment value for the OpenAI-compatible adapter. Do not put API keys in docs, manifests, database rows, or task-run records.
 - `TRANSCRIPTION_PROVIDER`: configured transcription provider. Supported values are `disabled`, `local-dev`, and `whisper-cpp`. Use `whisper-cpp` for local V1 transcription once the binary and model are configured.
 - `TRANSCRIPTION_MODEL`: model label recorded on transcription jobs, such as `base.en`.
 - `WHISPER_CPP_MODE`: `cli` for the current implementation. `server` is reserved for a future `whisper-server` adapter.

@@ -94,7 +94,7 @@ export function createLlmProvider(
     throw new HttpError(
       409,
       "llm_provider_disabled",
-      "LLM provider is enabled in Settings, but this API runtime is disabled. Select an AppLauncher AI runtime option and relaunch."
+      "LLM provider is enabled in Settings, but this API runtime is disabled. Restart Memo Capture or the API after changing runtime environment."
     );
   }
 
