@@ -4,105 +4,163 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-09T04:44:00Z
+- Created timestamp UTC: 2026-06-09T18:24:42Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: implement `docs/plans/05 Invoke Providers Runtime Alignment Plan.md` for the shared invoke-providers runtime alignment.
+- Session scope: checkpoint after implementing `docs/plans/06 AppLauncher Provider Decoupling Plan.md`.
 
 ### Checkpoint Status
 
-- Git HEAD: `8140bc9`
+- Git HEAD: `77dcafd`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/src/services/ai-expansion.ts`
-  - `apps/api/src/services/invoke-providers/adapters.ts`
-  - `apps/api/src/services/invoke-providers/hooks.ts`
-  - `apps/api/src/services/invoke-providers/mapping.ts`
-  - `apps/api/src/services/invoke-providers/registry.ts`
-  - `apps/api/src/services/invoke-providers/repositories.ts`
-  - `apps/api/src/services/invoke-providers/runtime.ts`
-  - `apps/api/src/services/invoke-providers/secrets.ts`
-  - `apps/api/src/services/invoke-providers/types.ts`
-  - `apps/api/src/services/settings.ts`
-  - `docs/completed-tasks.md`
   - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - `docs/plans/05 Invoke Providers Runtime Alignment Plan.md`
+  - None
 - Untracked files intentionally out of scope:
   - None
+- Canonical files described:
+  - `docs/plans/06 AppLauncher Provider Decoupling Plan.md`
+  - `.env.example`
+  - `apps/api/src/services/invoke-providers/adapters.ts`
+  - `apps/api/src/services/invoke-providers/secrets.ts`
+  - `apps/api/src/services/llm.ts`
+  - `apps/api/src/services/settings.ts`
+  - `apps/api/tests/backend-foundation.test.ts`
+  - `apps/desktop/src/App.tsx`
+  - `apps/desktop/tests/app-copy.test.ts`
+  - `docs/env.md`
+  - `docs/design/memo-capture-design-learnings.md`
+  - `docs/specs/settings-and-audit.md`
 - Last verification:
-  - command: `npm run verify` outside the sandbox
+  - command: `npm run verify`; `npm run tauri:build -w @memo-capture/desktop -- --bundles app`
   - result: passed
-  - timestamp UTC: 2026-06-09T04:44:00Z
+  - timestamp UTC: 2026-06-09T18:24:42Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: `npm run verify` passed after the shared-runtime alignment changes. The only notable environment issue was that sandboxed tests could not bind `127.0.0.1`, so listener tests were rerun outside the sandbox.
-
-## 2. Executive Summary
-
-Memo Capture now uses the shared `@invoke-providers/*` runtime boundary for provider-backed task mechanics while retaining app-owned storage, prompts, hooks, jobs, audit, review staging, and domain mutations.
-
-Complete now:
-
-- The local `TargetAppRuntimeService` class was removed; `apps/api/src/services/invoke-providers/runtime.ts` now builds `@invoke-providers/client`'s shared target-app runtime.
-- Local shared provider/task/run types now alias `@invoke-providers/core` and `@invoke-providers/client` types.
-- Registry provider/profile reads use the shared remote registry client wrapper.
-- Memo Capture repository adapters expose tasks, hooks, task runs, and selected registry profile settings to the shared runtime.
-- Shared provider adapters are registered for local deterministic, OpenAI-compatible, Codex CLI, Whisper.cpp, and deterministic STT/OCR/TTS paths, with Memo Capture prompt/context glue where needed.
-- `AiExpansionService` now invokes work-item AI tasks through shared `invokeTask`; Memo Capture still validates output and stages review candidates before any domain mutation.
-- New registry-backed task routes no longer write or require `provider_config_id`.
-- Existing compatibility columns and joins remain for old rows.
-
-Deferred:
-
-- A dedicated cleanup migration is still needed before removing `ai_task_routes.provider_config_id`, `provider_capabilities.provider_config_id`, old provider-config execution joins, and historical tests that seed local provider rows only for execution compatibility.
-
-## 3. Verification
-
-Passed:
-
-```bash
-npm run typecheck
-npm test
-npm run verify
-```
+- Safe-to-continue basis: tracked implementation is committed at `77dcafd`, verification passed, and the only tracked dirty file after this refresh is `handoff.md`.
+- Next checkpoint action: commit or intentionally leave the handoff refresh dirty.
 
 Notes:
 
-- `npm install` was run because linked `@invoke-providers/*` packages were missing from `node_modules`.
-- `npm install` reported the current Node/npm runtime is newer than the repo engine range: repo expects Node `>=22.14.0 <23` and npm `>=10.9.0 <11`, while the current environment used Node `24.14.0` and npm `11.9.0`.
-- Sandboxed `npm test` failed only on `listen EPERM 127.0.0.1`; rerunning outside the sandbox passed.
+- `scripts/handoff_status.py` and `scripts/verify_handoff_freshness.py` are not present in this repo, so freshness was checked manually with Git status and HEAD.
+- Ignored local artifacts under `dist/applauncher-manifests/**` currently scan provider-blind for `providerSlots`, `providerRegistry`, `runtimeOptions`, and `LLM_*`, but `dist/` is gitignored and is not part of the tracked checkpoint.
 
-## 4. Files to Open First
+## 2. Executive Summary
 
-- `apps/api/src/services/invoke-providers/runtime.ts`: shared runtime factory.
-- `apps/api/src/services/invoke-providers/repositories.ts`: Memo Capture adapters for shared task, hook, task-run, and profile settings repositories.
-- `apps/api/src/services/invoke-providers/adapters.ts`: shared adapter construction plus Memo Capture prompt/context glue.
-- `apps/api/src/services/ai-expansion.ts`: work-item task invocation through shared `invokeTask`.
-- `apps/api/src/services/settings.ts`: registry-backed route persistence and compatibility API wrappers.
-- `docs/plans/05 Invoke Providers Runtime Alignment Plan.md`: source plan for this slice.
+Memo Capture is now decoupled from AppLauncher provider configuration. AppLauncher launches Memo Capture only; provider profile selection, provider catalog/readiness, adapter configuration, secrets, and model metadata remain owned by Memo Capture and the shared provider registry.
+
+Complete now:
+
+- Tracked code and docs for `docs/plans/06 AppLauncher Provider Decoupling Plan.md` are committed at `77dcafd`.
+- OpenAI-compatible registry provider readiness no longer requires legacy `LLM_PROVIDER=openai-compatible`.
+- OpenAI-compatible adapter diagnostics use registry provider metadata, endpoint presence, adapter availability, and secret readiness rather than an AppLauncher runtime selector.
+- Desktop/API copy now says to restart Memo Capture or the API after runtime environment changes.
+- `.env.example`, `docs/env.md`, the design learnings, and the settings/audit spec describe `LLM_*` as legacy/fallback Memo Capture runtime values, not AppLauncher inputs.
+- Focused regression tests cover provider-blind AppLauncher manifests and OpenAI-compatible registry readiness with `LLM_PROVIDER=disabled`.
+
+Incomplete now:
+
+- Schema cleanup remains separate: do not remove `provider_config_id`, `provider_capabilities`, or historical compatibility joins in this slice.
+- The ignored `dist/applauncher-manifests/**` artifacts are locally updated but not tracked by Git.
+
+Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
+
+## 3. Current Objective
+
+Immediate goal: resume safely from the committed AppLauncher provider-decoupling checkpoint.
+
+Intended finished state for this workstream: Memo Capture stays provider-registry-owned, AppLauncher remains launch-only for Memo Capture, and future cleanup work can proceed without reintroducing AppLauncher provider/runtime selectors.
+
+Definition of done for the next slice depends on scope:
+
+- If closing this slice: review and optionally commit `handoff.md`.
+- If continuing implementation: start the dedicated Postgres-backed schema cleanup slice and run `npm run test:postgres`.
+
+## 4. Current State
+
+### Working
+
+- Memo Capture Settings keeps `providerRegistry`, `providerCatalog`, registry profile selection, and registry readiness in the app/API.
+- Registry-selected OpenAI-compatible local providers can be runtime-ready without setting legacy `LLM_PROVIDER=openai-compatible`.
+- AppLauncher provider/runtime wording has been removed from current user-facing Settings save copy and current environment/design/spec docs.
+- Focused and full verification passed.
+- Native `.app` bundle was rebuilt successfully.
+
+### Partially Working
+
+- Legacy `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_ENDPOINT` remain in config as Memo Capture fallback/default env values.
+- Historical provider columns and compatibility joins still exist intentionally.
+- AppLauncher manifest test reads ignored local `dist/applauncher-manifests/**` artifacts; those artifacts are not tracked.
+
+### Not Working Yet
+
+- Dedicated migration/code cleanup for old provider-config compatibility storage has not been done.
+- No tracked source-owned manifest generator was identified for the ignored `dist/applauncher-manifests/**` artifacts.
+
+### Not Yet Verified
+
+- Real Postgres cleanup path for removing old provider columns was not attempted.
+- Live LM Studio/shared registry end-to-end smoke was not rerun in this handoff refresh.
 
 ## 5. Active Constraints
 
 - Follow `AGENTS.md`; default to Build Mode.
-- Do not commit, tag, release, publish, delete files, or mutate unrelated app/browser state unless explicitly requested.
+- Do not commit, tag, release, publish, install, delete, or mutate unrelated app/browser state unless explicitly requested.
 - Never use `latest`; always use numbered versions.
-- Provider setup remains outside Memo Capture.
-- Providers page remains registry-backed and read-only.
-- Tasks own route, prompt, render, and enabled state.
-- Hooks remain Memo Capture-owned and are the only layer that can turn provider output into domain behavior.
-- Domain records must not be mutated before user review/acceptance.
+- AppLauncher must remain provider-blind for Memo Capture: no provider slots, provider registry settings, runtime options, provider secrets, or model selectors.
+- Memo Capture continues to consume the shared provider registry directly.
+- Providers page remains Memo Capture/shared-registry owned; do not move profile selection back into AppLauncher.
+- Raw provider secrets stay out of docs, manifests, database rows, and task-run records.
+- Schema cleanup is a later slice and should use `npm run test:postgres`.
 
-## 6. Next Actions
+## 6. Commands and Verification
+
+Most recent passed commands:
+
+```bash
+npm run typecheck
+node --test apps/desktop/tests/app-copy.test.ts
+node --test --import tsx apps/api/tests/backend-foundation.test.ts
+npm test
+npm run verify
+npm run tauri:build -w @memo-capture/desktop -- --bundles app
+git diff --check
+```
+
+Notes:
+
+- Sandboxed API tests that bind `127.0.0.1` may fail with `listen EPERM`; rerun those tests outside the sandbox when needed.
+- `npm run verify` passed after the final implementation diff and includes doctor, typecheck, full tests, and build.
+
+## 7. Files to Open First
+
+- `docs/plans/06 AppLauncher Provider Decoupling Plan.md`: source scope and explicit out-of-scope schema cleanup.
+- `apps/api/src/services/invoke-providers/adapters.ts`: OpenAI-compatible adapter diagnostics no longer use legacy `LLM_PROVIDER`.
+- `apps/api/src/services/invoke-providers/secrets.ts`: local OpenAI-compatible secret readiness behavior.
+- `apps/api/tests/backend-foundation.test.ts`: regression test for OpenAI-compatible registry readiness with `LLM_PROVIDER=disabled`.
+- `apps/desktop/tests/app-copy.test.ts`: provider-blind AppLauncher manifest assertions.
+- `docs/env.md`: current runtime/provider setup wording.
+- `docs/specs/settings-and-audit.md`: current provider/task readiness contract wording.
+
+## 8. Next Actions
 
 Next:
 
-- Review the diff and commit if acceptable.
-- Run a native UI smoke only if visual confirmation is wanted; no desktop UI code changed in this slice.
+- Review and optionally commit `handoff.md`.
+- If continuing implementation, plan the dedicated Postgres-backed cleanup for legacy provider columns and compatibility joins.
+
+Blocked:
+
+- None for the committed provider-decoupling checkpoint.
 
 Later:
 
-- Implement the dedicated schema/code cleanup for historical provider columns and run `npm run test:postgres`.
-- Consider adding focused tests for shared adapter diagnostic invocation if provider diagnostics become a primary workflow.
+- Identify or add a tracked manifest generation path if AppLauncher manifest artifacts need to be reproducible from source rather than maintained as ignored local artifacts.
+- Run a live shared-registry/LM Studio smoke when provider runtime behavior, not just readiness, is back in scope.
+
+## 9. Ready-Made Prompt for Starting a New Thread
+
+Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source of current state. Treat HEAD `77dcafd` as the committed provider-decoupling checkpoint, and note that only `handoff.md` should be dirty if this refresh is uncommitted. Review `docs/plans/06 AppLauncher Provider Decoupling Plan.md`, `apps/api/src/services/invoke-providers/adapters.ts`, `apps/api/tests/backend-foundation.test.ts`, `apps/desktop/tests/app-copy.test.ts`, `docs/env.md`, and `docs/specs/settings-and-audit.md` before acting. Do not reopen AppLauncher provider/runtime-selector decisions unless new repo evidence requires it. If continuing work, start with the separate Postgres-backed cleanup slice and distinguish confirmed committed state from new recommendations.
