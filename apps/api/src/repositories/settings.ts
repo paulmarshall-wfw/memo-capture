@@ -41,6 +41,11 @@ export interface TranscriptionSettingsRow extends Record<string, unknown> {
   updated_at: Date | string;
 }
 
+export interface ProviderRegistrySettingsRow extends Record<string, unknown> {
+  selected_provider_profile_key: string | null;
+  updated_at: Date | string;
+}
+
 export interface ProviderConfigRow extends Record<string, unknown> {
   id: string;
   provider_kind: string;
@@ -658,6 +663,38 @@ export class SettingsRepository {
       [input.maxRetryAttempts, input.actorUserId]
     );
     return requiredRow(result.rows[0], "transcription settings update failed");
+  }
+
+  async getProviderRegistrySettings(): Promise<ProviderRegistrySettingsRow | null> {
+    const result = await this.db.query<ProviderRegistrySettingsRow>(
+      `select selected_provider_profile_key, updated_at
+       from provider_registry_settings
+       where singleton_id = true`
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async updateProviderRegistrySettings(input: {
+    selectedProviderProfileKey: string | null;
+    actorUserId: string;
+  }): Promise<ProviderRegistrySettingsRow> {
+    const result = await this.db.query<ProviderRegistrySettingsRow>(
+      `insert into provider_registry_settings (
+         singleton_id,
+         selected_provider_profile_key,
+         updated_by,
+         updated_at
+       )
+       values (true, nullif($1::text, ''), $2, now())
+       on conflict (singleton_id) do update
+       set
+         selected_provider_profile_key = excluded.selected_provider_profile_key,
+         updated_by = excluded.updated_by,
+         updated_at = now()
+       returning selected_provider_profile_key, updated_at`,
+      [input.selectedProviderProfileKey ?? null, input.actorUserId]
+    );
+    return requiredRow(result.rows[0], "provider registry settings update failed");
   }
 
   async listProviders(): Promise<ProviderConfigRow[]> {

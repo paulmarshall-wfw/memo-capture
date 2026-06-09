@@ -403,3 +403,10 @@ Append brief entries here when project work is completed. Keep this file concise
   Outcome: Updated npm workspace package versions, internal `@memo-capture/*` pins, runtime version defaults, Tauri/Cargo app metadata, app header version, version tests, docs, and local AppLauncher `1.0.0` manifest artifacts.
   Verification: `npm run typecheck`, config/domain/worker/desktop workspace tests, `node --test --import tsx apps/api/tests/health.test.ts`, `node --test --import tsx apps/api/tests/backend-foundation.test.ts` outside the sandbox, `npm run build`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed.
   Traceability: branch `main`, base HEAD `3d90c59`; changed files include package manifests and lockfile, Tauri Cargo/config files, runtime launcher scripts, version tests, `apps/desktop/src/App.tsx`, docs version references, generated local `dist/applauncher-manifests/*/1.0.0/manifest.json` artifacts, and `docs/completed-tasks.md`.
+
+## 2026-06-09
+
+- Task: Add provider registry profile selection
+  Outcome: Added backend-owned provider registry profile settings with saved-profile-over-env resolution, registry profile lookup APIs, Settings API/UI profile selection, missing-profile readiness blocking, audit logging, docs, and a rebuilt native `.app` bundle.
+  Verification: `npm run typecheck`, focused API settings tests, focused workflow runtime tests, `npm run test:postgres` outside the sandbox after Docker socket denial, `npm run verify`, `npm run tauri:build -w @memo-capture/desktop -- --bundles app`, and `git diff --check` passed.
+  Traceability: branch `main`; changed files include `apps/api/db/migrations/0034_provider_registry_profile_settings.sql`, API settings repository/service/routes/registry helpers/tests, `apps/desktop/src/App.tsx`, `apps/desktop/src/styles.css`, `.env.example`, `docs/env.md`, `docs/specs/settings-and-audit.md`, and `docs/completed-tasks.md`.

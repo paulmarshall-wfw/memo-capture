@@ -302,6 +302,11 @@ function matchProtectedRoute(
     return async () => services.settings.getRegistryStatus();
   }
 
+  if (method === "PATCH" && pathname === "/api/settings/provider-registry") {
+    return async (context, session) =>
+      services.settings.updateProviderRegistry(await readJsonBody(context.request), session.user, context.requestId);
+  }
+
   if (method === "POST" && pathname === "/api/settings/providers/refresh") {
     return async () => services.settings.getRegistryStatus();
   }

@@ -42,6 +42,12 @@ export interface SharedProviderConfig {
   };
 }
 
+export interface SharedRegistryProfile {
+  profileKey: string;
+  displayName: string;
+  description?: string;
+}
+
 export interface SharedProcessingHook {
   hookKey: string;
   displayName: string;

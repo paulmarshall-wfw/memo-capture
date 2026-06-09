@@ -1831,6 +1831,10 @@ button:disabled {
   min-width: 0;
 }
 
+.provider-registry-profile-controls {
+  grid-template-columns: minmax(220px, 1fr) minmax(140px, 0.55fr) auto auto;
+}
+
 .task-kind-controls {
   display: grid;
   grid-template-columns:

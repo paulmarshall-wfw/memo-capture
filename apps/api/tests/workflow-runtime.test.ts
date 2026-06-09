@@ -118,43 +118,43 @@ test("workflow runtime executes only actions allowed from the current state", ()
 
 test("workflow runtime excludes hidden and automatic actions from public execution", () => {
   const adapter = new WorkflowRuntimeAdapter();
-  const bundle = createBundle();
-  (bundle.actions as Array<Record<string, unknown>>).push(
-    {
-      id: "memo.hidden",
-      label: "Hidden",
-      from: "memo",
-      to: "parked",
-      trigger: "user",
-      visible: false
-    },
-    {
-      id: "memo.automatic",
-      label: "Automatic",
-      from: "memo",
-      to: "parked",
-      trigger: "automatic",
-      visible: false
-    }
-  );
-  bundle.embeddedStateMachineDefinition.transitions.push(
-    {
-      from: "memo",
-      to: "parked",
-      actionId: "memo.hidden"
-    },
-    {
-      from: "memo",
-      to: "parked",
-      actionId: "memo.automatic"
-    }
-  );
+  const hiddenBundle = createRuntimeBundle();
+  (hiddenBundle.workflowDefinition.actions as Array<Record<string, unknown>>).push({
+    id: "memo.hidden",
+    label: "Hidden",
+    from: "memo",
+    to: "parked",
+    trigger: "user",
+    visible: false
+  });
+  hiddenBundle.embeddedStateMachineDefinition.transitions.push({
+    from: "memo",
+    to: "parked",
+    actionId: "memo.hidden"
+  });
+  const hiddenValidation = adapter.validateBundle(hiddenBundle);
+  assert.equal(hiddenValidation.ok, false);
+  assert.equal(hiddenValidation.errors[0]?.code, "invalid_definition_bundle");
+
+  const bundle = createRuntimeBundle();
+  (bundle.workflowDefinition.actions as Array<Record<string, unknown>>).push({
+    id: "memo.automatic",
+    label: "Automatic",
+    from: "memo",
+    to: "parked",
+    trigger: "automatic",
+    visible: false
+  });
+  bundle.embeddedStateMachineDefinition.transitions.push({
+    from: "memo",
+    to: "parked",
+    actionId: "memo.automatic"
+  });
 
   assert.deepEqual(
     adapter.getAllowedActions(bundle, "memo").map((action) => action.id),
     ["memo.accepted", "memo.parked"]
   );
-  assert.equal(adapter.executeAction(bundle, "memo", "memo.hidden"), null);
   assert.equal(adapter.executeAction(bundle, "memo", "memo.automatic"), null);
 });
 

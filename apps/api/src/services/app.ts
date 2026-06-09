@@ -132,6 +132,7 @@ export interface SettingsOperations {
   updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   updateTranscription(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   getRegistryStatus(): Promise<unknown>;
+  updateProviderRegistry(body: unknown, actor: AppUserRecord, requestId: string): Promise<unknown>;
   getReadinessDiagnostics(): Promise<unknown>;
   diagnoseProviderAdapter(body: unknown): Promise<unknown>;
   listRenderSlots(): Promise<unknown>;

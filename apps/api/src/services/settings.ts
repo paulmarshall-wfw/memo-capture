@@ -9,13 +9,15 @@ import {
   type ParserTypeSettingRow,
   type ProcessingHookRow,
   type PromptDefinitionRow,
+  type ProviderRegistrySettingsRow,
   type ProviderCapabilityRow,
   type ProviderConfigRow
 } from "../repositories/settings.js";
 import { HttpError, assertNonEmptyString, optionalString } from "./errors.js";
-import { fetchRegistryProviders } from "./invoke-providers/registry.js";
+import { fetchRegistryProfile, fetchRegistryProfiles, fetchRegistryProviders } from "./invoke-providers/registry.js";
 import { createTargetAppRuntimeService } from "./invoke-providers/runtime.js";
 import { normalizeCapabilityKey } from "./invoke-providers/mapping.js";
+import type { SharedProviderConfig, SharedRegistryProfile } from "./invoke-providers/types.js";
 import {
   DEFAULT_LLM_SYSTEM_MESSAGE,
   DEFAULT_LLM_SYSTEM_MESSAGES_BY_HOOK,
@@ -38,7 +40,10 @@ export class SettingsService {
 
   async getSummary(): Promise<Record<string, unknown>> {
     const settings = new SettingsRepository(this.db);
-    const runtimeService = createTargetAppRuntimeService(this.db, this.config);
+    const providerRegistrySettings = await settings.getProviderRegistrySettings();
+    const registryResolution = resolveProviderRegistryProfile(this.config, providerRegistrySettings);
+    const effectiveConfig = configWithProviderRegistryProfile(this.config, registryResolution.activeProfileKey);
+    const runtimeService = createTargetAppRuntimeService(this.db, effectiveConfig);
     const [
       mediaTypes,
       parserTypes,
@@ -51,7 +56,7 @@ export class SettingsService {
       aiTasks,
       processingHooks,
       prompts,
-      providerCatalog,
+      providerRegistry,
       readinessDiagnostics,
       hookRegistryState
     ] = await Promise.all([
@@ -66,7 +71,7 @@ export class SettingsService {
       settings.listAiTaskRoutes(),
       settings.listProcessingHooks(),
       settings.listPrompts(),
-      fetchRegistryProviders(this.config),
+      loadProviderRegistryState(effectiveConfig, registryResolution),
       runtimeService.getReadinessDiagnostics(),
       runtimeService.getHookRegistryState()
     ]);
@@ -99,17 +104,18 @@ export class SettingsService {
           },
       providers: providers.map((provider) => serializeProvider(provider, this.config, providerCapabilities)),
       providerCatalog: {
-        registry: providerCatalog.registry,
+        registry: providerRegistry.registry,
         fallbackUsed: false,
-        providers: providerCatalog.providers
+        providers: providerRegistry.providers
       },
+      providerRegistry: providerRegistry.settings,
       providerCapabilities: providerCapabilities.map(serializeProviderCapability),
       taskKinds: taskKinds.map(serializeTaskKind),
-      aiTasks: aiTasks.map((task) => serializeAiTaskRoute(task, this.config, readinessByTaskKey.get(task.task_key))),
+      aiTasks: aiTasks.map((task) => serializeAiTaskRoute(task, effectiveConfig, readinessByTaskKey.get(task.task_key))),
       appLauncher: serializeAppLauncherRuntimeOptions(providers, this.config),
       invokeProviders: {
-        registry: providerCatalog.registry,
-        profile: this.config.invokeProviders.profile,
+        registry: providerRegistry.registry,
+        profile: registryResolution.activeProfileKey ?? "",
         commitSha: this.config.invokeProviders.commitSha,
         diagnostics: readinessDiagnostics
       },
@@ -127,29 +133,80 @@ export class SettingsService {
   }
 
   async getRegistryStatus(): Promise<Record<string, unknown>> {
-    const providerCatalog = await fetchRegistryProviders(this.config);
+    const settings = new SettingsRepository(this.db);
+    const registryResolution = resolveProviderRegistryProfile(this.config, await settings.getProviderRegistrySettings());
+    const providerCatalog = await loadProviderRegistryState(
+      configWithProviderRegistryProfile(this.config, registryResolution.activeProfileKey),
+      registryResolution
+    );
     return {
       registry: providerCatalog.registry,
       fallbackUsed: false,
-      providers: providerCatalog.providers
+      providers: providerCatalog.providers,
+      providerRegistry: providerCatalog.settings
     };
   }
 
+  async updateProviderRegistry(body: unknown, actor: AppUserRecord, requestId: string): Promise<Record<string, unknown>> {
+    const input = parseProviderRegistryBody(body);
+    if (input.selectedProviderProfileKey !== null) {
+      const profile = await fetchRegistryProfile(this.config, input.selectedProviderProfileKey);
+      if (!profile.ok || profile.profile === null) {
+        throw new HttpError(
+          profile.missing ? 400 : 409,
+          profile.missing ? "provider_registry_profile_missing" : "provider_registry_unavailable",
+          profile.error ?? "Provider registry profile could not be validated.",
+          { selectedProviderProfileKey: input.selectedProviderProfileKey }
+        );
+      }
+    }
+    return this.db.transaction(async (client) => {
+      const settings = new SettingsRepository(client);
+      const audit = new AuditRepository(client);
+      const updated = await settings.updateProviderRegistrySettings({
+        selectedProviderProfileKey: input.selectedProviderProfileKey,
+        actorUserId: actor.id
+      });
+      await audit.record({
+        eventName: "provider_registry_settings.updated",
+        actor,
+        subjectType: "provider_registry_settings",
+        subjectId: "singleton",
+        requestId,
+        metadata: {
+          selectedProviderProfileKey: updated.selected_provider_profile_key
+        },
+        redactionApplied: true
+      });
+      const resolution = resolveProviderRegistryProfile(this.config, updated);
+      const providerRegistry = await loadProviderRegistryState(
+        configWithProviderRegistryProfile(this.config, resolution.activeProfileKey),
+        resolution
+      );
+      return { providerRegistry: providerRegistry.settings };
+    });
+  }
+
   async getReadinessDiagnostics(): Promise<Record<string, unknown>> {
-    return await createTargetAppRuntimeService(this.db, this.config).getReadinessDiagnostics();
+    const settings = new SettingsRepository(this.db);
+    const registryResolution = resolveProviderRegistryProfile(this.config, await settings.getProviderRegistrySettings());
+    return await createTargetAppRuntimeService(
+      this.db,
+      configWithProviderRegistryProfile(this.config, registryResolution.activeProfileKey)
+    ).getReadinessDiagnostics();
   }
 
   async diagnoseProviderAdapter(body: unknown): Promise<Record<string, unknown>> {
     const input = parseAdapterDiagnosticBody(body);
-    return await createTargetAppRuntimeService(this.db, this.config).diagnoseAdapter(input);
+    return await (await this.createRegistryAwareRuntimeService()).diagnoseAdapter(input);
   }
 
   async listRenderSlots(): Promise<Record<string, unknown>> {
-    return await createTargetAppRuntimeService(this.db, this.config).listRenderSlots();
+    return await (await this.createRegistryAwareRuntimeService()).listRenderSlots();
   }
 
   async getRenderSlotActions(slot: string): Promise<Record<string, unknown>> {
-    return await createTargetAppRuntimeService(this.db, this.config).getRenderSlotActions(slot);
+    return await (await this.createRegistryAwareRuntimeService()).getRenderSlotActions(slot);
   }
 
   async listTaskRuns(query: URLSearchParams): Promise<Record<string, unknown>> {
@@ -185,7 +242,7 @@ export class SettingsService {
     if (limit !== undefined) {
       filters.limit = limit;
     }
-    return await createTargetAppRuntimeService(this.db, this.config).listTaskRuns(filters);
+    return await (await this.createRegistryAwareRuntimeService()).listTaskRuns(filters);
   }
 
   async groupTaskRuns(query: URLSearchParams): Promise<Record<string, unknown>> {
@@ -193,7 +250,16 @@ export class SettingsService {
     if (groupBy !== "taskKey" && groupBy !== "hookKey" && groupBy !== "providerKey" && groupBy !== "status") {
       throw new HttpError(400, "invalid_request", "group_by must be taskKey, hookKey, providerKey, or status.");
     }
-    return await createTargetAppRuntimeService(this.db, this.config).groupTaskRuns(groupBy);
+    return await (await this.createRegistryAwareRuntimeService()).groupTaskRuns(groupBy);
+  }
+
+  private async createRegistryAwareRuntimeService() {
+    const settings = new SettingsRepository(this.db);
+    const registryResolution = resolveProviderRegistryProfile(this.config, await settings.getProviderRegistrySettings());
+    return createTargetAppRuntimeService(
+      this.db,
+      configWithProviderRegistryProfile(this.config, registryResolution.activeProfileKey)
+    );
   }
 
   async updateExtraction(body: unknown, actor: AppUserRecord, requestId: string): Promise<Record<string, unknown>> {
@@ -1024,6 +1090,180 @@ function defaultExtractionSettings() {
   };
 }
 
+interface ProviderRegistryResolution {
+  selectedProviderProfileKey: string | null;
+  bootstrapProfileKey: string | null;
+  activeProfileKey: string | null;
+  profileSource: "saved" | "env" | "none";
+  updatedAt: string | null;
+}
+
+interface ProviderRegistryState {
+  registry: {
+    url: string;
+    profile: string;
+    configured: boolean;
+    reachable: boolean;
+    error: string | null;
+  };
+  providers: SharedProviderConfig[];
+  settings: {
+    registryUrl: string;
+    bootstrapProfileKey: string | null;
+    selectedProviderProfileKey: string | null;
+    activeProfileKey: string | null;
+    profileSource: "saved" | "env" | "none";
+    profiles: SharedRegistryProfile[];
+    activeProfile: SharedRegistryProfile | null;
+    status: "ready" | "not_configured" | "missing_profile" | "error";
+    error: string | null;
+    providerCount: number;
+    updatedAt: string | null;
+  };
+}
+
+function resolveProviderRegistryProfile(
+  config: ApiConfig,
+  settings: ProviderRegistrySettingsRow | null
+): ProviderRegistryResolution {
+  const selectedProviderProfileKey = nullIfBlank(settings?.selected_provider_profile_key ?? null);
+  const bootstrapProfileKey = nullIfBlank(config.invokeProviders.profile);
+  const activeProfileKey = selectedProviderProfileKey ?? bootstrapProfileKey;
+  return {
+    selectedProviderProfileKey,
+    bootstrapProfileKey,
+    activeProfileKey,
+    profileSource: selectedProviderProfileKey !== null ? "saved" : bootstrapProfileKey !== null ? "env" : "none",
+    updatedAt: settings === null ? null : toIso(settings.updated_at)
+  };
+}
+
+function configWithProviderRegistryProfile(config: ApiConfig, profileKey: string | null): ApiConfig {
+  return {
+    ...config,
+    invokeProviders: {
+      ...config.invokeProviders,
+      profile: profileKey ?? ""
+    }
+  };
+}
+
+async function loadProviderRegistryState(
+  config: ApiConfig,
+  resolution: ProviderRegistryResolution
+): Promise<ProviderRegistryState> {
+  const registryUrl = config.invokeProviders.registryUrl.trim().replace(/\/$/, "");
+  const profileList = await fetchRegistryProfiles(config);
+  const baseSettings = {
+    registryUrl,
+    bootstrapProfileKey: resolution.bootstrapProfileKey,
+    selectedProviderProfileKey: resolution.selectedProviderProfileKey,
+    activeProfileKey: resolution.activeProfileKey,
+    profileSource: resolution.profileSource,
+    profiles: profileList.profiles,
+    activeProfile: null as SharedRegistryProfile | null,
+    providerCount: 0,
+    updatedAt: resolution.updatedAt
+  };
+  const registryProfile = resolution.activeProfileKey ?? "";
+  if (!profileList.registry.configured) {
+    return {
+      registry: {
+        url: registryUrl,
+        profile: registryProfile,
+        configured: false,
+        reachable: false,
+        error: profileList.registry.error
+      },
+      providers: [],
+      settings: {
+        ...baseSettings,
+        status: "error",
+        error: profileList.registry.error
+      }
+    };
+  }
+  if (!profileList.registry.reachable) {
+    return {
+      registry: {
+        url: registryUrl,
+        profile: registryProfile,
+        configured: registryProfile !== "",
+        reachable: false,
+        error: profileList.registry.error
+      },
+      providers: [],
+      settings: {
+        ...baseSettings,
+        status: "error",
+        error: profileList.registry.error
+      }
+    };
+  }
+  if (resolution.activeProfileKey === null) {
+    return {
+      registry: {
+        url: registryUrl,
+        profile: "",
+        configured: false,
+        reachable: false,
+        error: "No registry profile is selected."
+      },
+      providers: [],
+      settings: {
+        ...baseSettings,
+        status: "not_configured",
+        error: "No registry profile is selected."
+      }
+    };
+  }
+
+  const activeProfile = await fetchRegistryProfile(config, resolution.activeProfileKey);
+  if (!activeProfile.ok || activeProfile.profile === null) {
+    return {
+      registry: {
+        url: registryUrl,
+        profile: resolution.activeProfileKey,
+        configured: true,
+        reachable: false,
+        error: activeProfile.error
+      },
+      providers: [],
+      settings: {
+        ...baseSettings,
+        status: activeProfile.missing ? "missing_profile" : "error",
+        error: activeProfile.error
+      }
+    };
+  }
+
+  const providerCatalog = await fetchRegistryProviders(config);
+  if (!providerCatalog.registry.reachable) {
+    return {
+      registry: providerCatalog.registry,
+      providers: [],
+      settings: {
+        ...baseSettings,
+        activeProfile: activeProfile.profile,
+        status: "error",
+        error: providerCatalog.registry.error
+      }
+    };
+  }
+
+  return {
+    registry: providerCatalog.registry,
+    providers: providerCatalog.providers,
+    settings: {
+      ...baseSettings,
+      activeProfile: activeProfile.profile,
+      status: "ready",
+      error: null,
+      providerCount: providerCatalog.providers.length
+    }
+  };
+}
+
 function serializeMediaType(row: MediaTypeSettingRow): Record<string, unknown> {
   return {
     id: row.id,
@@ -1763,6 +2003,16 @@ function parseTranscriptionBody(body: unknown) {
   return { maxRetryAttempts };
 }
 
+function parseProviderRegistryBody(body: unknown) {
+  const record = parseObject(body);
+  if (!Object.prototype.hasOwnProperty.call(record, "selectedProviderProfileKey")) {
+    throw new HttpError(400, "invalid_request", "selectedProviderProfileKey is required.");
+  }
+  return {
+    selectedProviderProfileKey: optionalString(record.selectedProviderProfileKey, "selectedProviderProfileKey")
+  };
+}
+
 function parseFileTypeBody(body: unknown) {
   const record = parseObject(body);
   if (typeof record.active === "boolean") {
@@ -1936,6 +2186,14 @@ function assertString(value: unknown, field: string): string {
     throw new HttpError(400, "invalid_request", `${field} must be a string.`);
   }
   return value;
+}
+
+function nullIfBlank(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 function getPromptSystemMessageFallback(prompt: PromptDefinitionRow): string {

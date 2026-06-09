@@ -3,6 +3,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readApiConfig } from "../src/config.js";
 import type { Database, Queryable, QueryParams, QueryResult } from "../src/db/types.js";
@@ -127,6 +128,148 @@ test("settings summary and registry status return an empty registry-backed provi
   assert.equal(registryStatus.registry.configured, true);
   assert.equal(registryStatus.registry.reachable, false);
   assert.deepEqual(registryStatus.providers.map((provider) => provider.providerKey), []);
+});
+
+test("provider registry profile setting uses env bootstrap, saves override, clears override, and audits changes", async () => {
+  const registry = await startRegistryTestServer({
+    profiles: [
+      { profileKey: "local-dev", displayName: "Local Development" },
+      { profileKey: "prod", displayName: "Production" }
+    ],
+    providersByProfile: {
+      "local-dev": [
+        {
+          providerKind: "llm",
+          providerKey: "deterministic-local-dev",
+          adapterKey: "deterministic-local-dev",
+          displayName: "Local dev",
+          enabled: true,
+          externalSend: false,
+          capabilities: [{ key: "llm.generateJson", displayName: "Generate structured JSON" }]
+        }
+      ],
+      prod: [
+        {
+          providerKind: "llm",
+          providerKey: "openai-compatible-cloud",
+          adapterKey: "openai-compatible-cloud",
+          displayName: "OpenAI compatible cloud",
+          enabled: true,
+          externalSend: true,
+          capabilities: [{ key: "llm.generateJson", displayName: "Generate structured JSON" }]
+        }
+      ]
+    }
+  });
+  try {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    const services = createAppServicesFromDatabase(config, db);
+    const session = await services.auth.createLocalDevSession();
+
+    const envSummary = (await services.settings.getSummary()) as {
+      providerRegistry: { activeProfileKey: string; profileSource: string; selectedProviderProfileKey: string | null };
+      providerCatalog: { providers: Array<{ providerKey: string }> };
+    };
+    assert.equal(envSummary.providerRegistry.activeProfileKey, "local-dev");
+    assert.equal(envSummary.providerRegistry.profileSource, "env");
+    assert.equal(envSummary.providerRegistry.selectedProviderProfileKey, null);
+    assert.deepEqual(envSummary.providerCatalog.providers.map((provider) => provider.providerKey), [
+      "deterministic-local-dev"
+    ]);
+
+    await services.settings.updateProviderRegistry(
+      { selectedProviderProfileKey: "prod" },
+      session.user,
+      "request-save-registry-profile"
+    );
+    const savedSummary = (await services.settings.getSummary()) as {
+      providerRegistry: { activeProfileKey: string; profileSource: string; selectedProviderProfileKey: string | null };
+      providerCatalog: { providers: Array<{ providerKey: string }> };
+    };
+    assert.equal(savedSummary.providerRegistry.activeProfileKey, "prod");
+    assert.equal(savedSummary.providerRegistry.profileSource, "saved");
+    assert.equal(savedSummary.providerRegistry.selectedProviderProfileKey, "prod");
+    assert.deepEqual(savedSummary.providerCatalog.providers.map((provider) => provider.providerKey), [
+      "openai-compatible-cloud"
+    ]);
+    assert.equal(db.auditEvents.at(-1)?.event_name, "provider_registry_settings.updated");
+
+    await services.settings.updateProviderRegistry(
+      { selectedProviderProfileKey: null },
+      session.user,
+      "request-clear-registry-profile"
+    );
+    const clearedSummary = (await services.settings.getSummary()) as {
+      providerRegistry: { activeProfileKey: string; profileSource: string; selectedProviderProfileKey: string | null };
+    };
+    assert.equal(clearedSummary.providerRegistry.activeProfileKey, "local-dev");
+    assert.equal(clearedSummary.providerRegistry.profileSource, "env");
+    assert.equal(clearedSummary.providerRegistry.selectedProviderProfileKey, null);
+  } finally {
+    await registry.close();
+  }
+});
+
+test("missing saved provider registry profile is retained and blocks catalog readiness", async () => {
+  const registry = await startRegistryTestServer({
+    profiles: [{ profileKey: "local-dev", displayName: "Local Development" }],
+    providersByProfile: {
+      "local-dev": []
+    }
+  });
+  try {
+    const config = readApiConfig({
+      MEMO_CAPTURE_AUTH_MODE: "local-dev",
+      MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+      INVOKE_PROVIDERS_REGISTRY_URL: registry.url,
+      INVOKE_PROVIDERS_PROFILE: "local-dev"
+    });
+    const db = new FakeDatabase();
+    seedTaskSettings(db);
+    db.providerRegistrySettings = {
+      selected_provider_profile_key: "missing-profile",
+      updated_at: "2026-05-29T00:00:00.000Z"
+    };
+    const services = createAppServicesFromDatabase(config, db);
+
+    const summary = (await services.settings.getSummary()) as {
+      providerRegistry: { activeProfileKey: string; profileSource: string; status: string; error: string | null };
+      providerCatalog: { registry: { reachable: boolean }; providers: Array<{ providerKey: string }> };
+    };
+
+    assert.equal(summary.providerRegistry.activeProfileKey, "missing-profile");
+    assert.equal(summary.providerRegistry.profileSource, "saved");
+    assert.equal(summary.providerRegistry.status, "missing_profile");
+    assert.equal(summary.providerCatalog.registry.reachable, false);
+    assert.deepEqual(summary.providerCatalog.providers, []);
+  } finally {
+    await registry.close();
+  }
+});
+
+test("provider registry profile save requires a reachable registered profile", async () => {
+  const config = readApiConfig({
+    MEMO_CAPTURE_AUTH_MODE: "local-dev",
+    MEMO_CAPTURE_LOCAL_DEV_AUTH_ENABLED: "true",
+    INVOKE_PROVIDERS_REGISTRY_URL: "http://127.0.0.1:9",
+    INVOKE_PROVIDERS_PROFILE: "local-dev"
+  });
+  const db = new FakeDatabase();
+  seedTaskSettings(db);
+  const services = createAppServicesFromDatabase(config, db);
+  const session = await services.auth.createLocalDevSession();
+
+  await assert.rejects(
+    () => services.settings.updateProviderRegistry({ selectedProviderProfileKey: "local-dev" }, session.user, "request"),
+    (error) => error instanceof HttpError && error.code === "provider_registry_unavailable"
+  );
 });
 
 test("AI task creation derives task key and reports duplicate derived key conflicts", async () => {
@@ -3769,6 +3912,59 @@ async function authedJson(
   };
 }
 
+async function startRegistryTestServer(input: {
+  profiles: Array<{ profileKey: string; displayName: string; description?: string }>;
+  providersByProfile: Record<string, unknown[]>;
+}): Promise<{ url: string; close(): Promise<void> }> {
+  const server = createServer((request, response) => {
+    const path = request.url ?? "/";
+    response.setHeader("content-type", "application/json");
+    if (request.method !== "GET") {
+      response.statusCode = 405;
+      response.end(JSON.stringify({ errorClass: "method_not_allowed", message: "Only GET is supported." }));
+      return;
+    }
+    if (path === "/profiles") {
+      response.end(JSON.stringify(input.profiles));
+      return;
+    }
+    const profileMatch = /^\/profiles\/([^/]+)$/.exec(path);
+    if (profileMatch !== null) {
+      const profileKey = decodeURIComponent(profileMatch[1] ?? "");
+      const profile = input.profiles.find((candidate) => candidate.profileKey === profileKey);
+      if (profile === undefined) {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ errorClass: "missing_profile", message: `Profile ${profileKey} is not registered.` }));
+        return;
+      }
+      response.end(JSON.stringify(profile));
+      return;
+    }
+    const providersMatch = /^\/profiles\/([^/]+)\/providers$/.exec(path);
+    if (providersMatch !== null) {
+      const profileKey = decodeURIComponent(providersMatch[1] ?? "");
+      if (!input.profiles.some((candidate) => candidate.profileKey === profileKey)) {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ errorClass: "missing_profile", message: `Profile ${profileKey} is not registered.` }));
+        return;
+      }
+      response.end(JSON.stringify(input.providersByProfile[profileKey] ?? []));
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ errorClass: "not_found", message: `No registry route for GET ${path}.` }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  };
+}
+
 class FakeDatabase implements Database {
   readonly users: FakeUserRow[] = [];
   readonly mediaTypes: Record<string, unknown>[] = [];
@@ -3804,6 +4000,7 @@ class FakeDatabase implements Database {
   readonly stagedWorkflowImports: Record<string, unknown>[] = [];
   readonly workflowActivationHistory: Record<string, unknown>[] = [];
   activeWorkflow: Record<string, unknown> | null = null;
+  providerRegistrySettings: Record<string, unknown> | null = null;
   extractionSettings: Record<string, unknown> | null = {
     project_confidence_threshold: 0.65,
     contributor_confidence_threshold: 0.7,
@@ -3929,6 +4126,20 @@ class FakeDatabase implements Database {
 
     if (text.includes("from extraction_settings")) {
       return rows(this.extractionSettings === null ? [] : [this.extractionSettings as Row]);
+    }
+
+    if (text.includes("from provider_registry_settings")) {
+      return rows(this.providerRegistrySettings === null ? [] : [this.providerRegistrySettings as Row]);
+    }
+
+    if (text.includes("insert into provider_registry_settings")) {
+      this.providerRegistrySettings = {
+        selected_provider_profile_key:
+          values[0] === null || values[0] === undefined || values[0] === "" ? null : values[0],
+        updated_by: values[1],
+        updated_at: "2026-05-29T00:01:00.000Z"
+      };
+      return rows([this.providerRegistrySettings] as Row[]);
     }
 
     if (text.includes("from provider_capabilities") && text.includes("where provider_config_id =")) {

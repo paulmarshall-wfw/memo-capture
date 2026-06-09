@@ -6,6 +6,7 @@ import type { Logger } from "../../src/logger.js";
 import { AuditRepository } from "../../src/repositories/audit.js";
 import { ProcessingJobRepository } from "../../src/repositories/jobs.js";
 import { WorkItemArtifactRepository } from "../../src/repositories/photo-imports.js";
+import { SettingsRepository } from "../../src/repositories/settings.js";
 import { UserRepository } from "../../src/repositories/users.js";
 import { WorkItemRepository } from "../../src/repositories/work-items.js";
 import { WorkflowRepository } from "../../src/repositories/workflows.js";
@@ -622,7 +623,7 @@ test("settings schema supports multiple provider instances and task-owned prompt
     );
     await db.query(
       `insert into provider_capabilities (id, provider_config_id, capability_key, enabled)
-       values ($1, $2, 'structured-generation', true)
+       values ($1, $2, 'llm.generateJson', true)
        on conflict (provider_config_id, capability_key) do nothing`,
       ["10000000-0000-4000-8000-000000000102", providerId]
     );
@@ -632,7 +633,7 @@ test("settings schema supports multiple provider instances and task-owned prompt
        from provider_configs
        join provider_capabilities on provider_capabilities.provider_config_id = provider_configs.id
        where provider_configs.provider_kind = 'llm'
-         and provider_capabilities.capability_key = 'structured-generation'`
+         and provider_capabilities.capability_key = 'llm.generateJson'`
     );
     assert.ok(Number(providers.rows[0]?.provider_count ?? "0") >= 2);
 
@@ -744,6 +745,36 @@ test("settings schema supports multiple provider instances and task-owned prompt
     assert.ok(Number(promptLink.rows[0]?.version_count ?? "0") >= 1);
     assert.equal(promptLink.rows[0]?.runtime_option_id, "llm-runtime");
     assert.equal(promptLink.rows[0]?.runtime_provider_env, "LLM_PROVIDER");
+  } finally {
+    await db.close();
+  }
+});
+
+test("provider registry profile setting persists in migrated Postgres schema", async () => {
+  const db = createPgDatabase(requireTestDatabaseUrl(), silentLogger);
+  const settings = new SettingsRepository(db);
+
+  try {
+    const actor = await new UserRepository(db).upsertFromIdentity({
+      oidcIssuer: "postgres-provider-registry-test",
+      oidcSubject: "provider-registry-settings-user",
+      email: "provider-registry-settings@example.invalid",
+      displayName: "Provider Registry Settings User"
+    });
+    const updated = await settings.updateProviderRegistrySettings({
+      selectedProviderProfileKey: "local-dev",
+      actorUserId: actor.id
+    });
+    assert.equal(updated.selected_provider_profile_key, "local-dev");
+
+    const roundTrip = await settings.getProviderRegistrySettings();
+    assert.equal(roundTrip?.selected_provider_profile_key, "local-dev");
+
+    const cleared = await settings.updateProviderRegistrySettings({
+      selectedProviderProfileKey: null,
+      actorUserId: actor.id
+    });
+    assert.equal(cleared.selected_provider_profile_key, null);
   } finally {
     await db.close();
   }

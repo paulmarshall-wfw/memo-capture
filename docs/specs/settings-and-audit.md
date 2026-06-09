@@ -28,6 +28,7 @@ Keeping canonical classification, prompt, provider, and export settings in the b
 - transcription retry count
 - prompt definitions, prompt versions, and prompt context controls
 - export settings/templates
+- selected shared provider registry profile key
 - provider enablement and non-secret provider config
 - workflow activation metadata
 - auth/OIDC config visibility metadata
@@ -163,6 +164,22 @@ Required columns:
 - `max_retry_attempts integer not null`
 - `updated_by uuid references app_users(id)`
 - `updated_at timestamptz not null`
+
+### provider_registry_settings
+
+Required columns:
+
+- `singleton_id boolean primary key default true`
+- `selected_provider_profile_key text`
+- `updated_by uuid references app_users(id)`
+- `updated_at timestamptz not null`
+
+Rules:
+
+- The saved profile key is app-owned configuration and overrides the `INVOKE_PROVIDERS_PROFILE` bootstrap value.
+- Clearing the saved profile key returns provider catalog lookup to the bootstrap environment value.
+- If the saved profile is missing from the shared registry, keep the saved key, show a blocking settings/readiness error, and do not silently fall back to another profile.
+- Store only the profile key; do not copy registry provider records or raw secrets into Memo Capture settings.
 
 ### provider_configs
 

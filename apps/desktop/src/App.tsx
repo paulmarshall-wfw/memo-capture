@@ -555,6 +555,27 @@ interface SettingsSummary {
       health?: { status: string; checkedAt?: string };
     }>;
   };
+  providerRegistry?: {
+    registryUrl: string;
+    bootstrapProfileKey: string | null;
+    selectedProviderProfileKey: string | null;
+    activeProfileKey: string | null;
+    profileSource: "saved" | "env" | "none";
+    profiles: Array<{
+      profileKey: string;
+      displayName: string;
+      description?: string;
+    }>;
+    activeProfile: {
+      profileKey: string;
+      displayName: string;
+      description?: string;
+    } | null;
+    status: "ready" | "not_configured" | "missing_profile" | "error";
+    error: string | null;
+    providerCount: number;
+    updatedAt: string | null;
+  };
   providerCapabilities: {
     id: string;
     providerConfigId: string;
@@ -1577,6 +1598,8 @@ export function App() {
   } | null>(null);
   const [settingsSummary, setSettingsSummary] = useState<SettingsSummary | null>(null);
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsSectionId>("watched");
+  const [providerRegistryProfileDraft, setProviderRegistryProfileDraft] = useState("");
+  const [providerRegistryInFlight, setProviderRegistryInFlight] = useState(false);
   const [promptDrafts, setPromptDrafts] = useState<Record<string, PromptDraft>>({});
   const [aiTaskRouteDrafts, setAiTaskRouteDrafts] = useState<Record<string, AiTaskRouteDraft>>({});
   const [aiTaskIdInFlight, setAiTaskIdInFlight] = useState<string | null>(null);
@@ -2388,6 +2411,7 @@ export function App() {
       const settingsResponse = await authedJson<SettingsSummary>(token, "/api/settings");
       const normalized = normalizeSettingsSummary(settingsResponse);
       setSettingsSummary(normalized);
+      setProviderRegistryProfileDraft(normalized.providerRegistry?.activeProfileKey ?? "");
       setMediaTypeDrafts(
         Object.fromEntries(
           normalized.mediaTypes.map((mediaType) => [
@@ -3481,6 +3505,49 @@ export function App() {
         [field]: value
       }
     }));
+  }
+
+  async function saveProviderRegistryProfile() {
+    if (accessToken === null) {
+      return;
+    }
+    setProviderRegistryInFlight(true);
+    setStatusMessage(null);
+    try {
+      await authedJson(accessToken, "/api/settings/provider-registry", {
+        method: "PATCH",
+        body: JSON.stringify({
+          selectedProviderProfileKey:
+            providerRegistryProfileDraft.trim() === "" ? null : providerRegistryProfileDraft.trim()
+        })
+      });
+      await loadSettings(accessToken);
+      setStatusMessage(
+        providerRegistryProfileDraft.trim() === ""
+          ? "Provider registry profile override cleared."
+          : "Provider registry profile saved."
+      );
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to save provider registry profile.");
+    } finally {
+      setProviderRegistryInFlight(false);
+    }
+  }
+
+  async function refreshProviderRegistryProfile() {
+    if (accessToken === null) {
+      return;
+    }
+    setProviderRegistryInFlight(true);
+    setStatusMessage(null);
+    try {
+      await loadSettings(accessToken);
+      setStatusMessage("Provider registry refreshed.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Unable to refresh provider registry.");
+    } finally {
+      setProviderRegistryInFlight(false);
+    }
   }
 
   async function createProcessingHook() {
@@ -6062,57 +6129,92 @@ export function App() {
                   <div className="settings-list">
                     {(() => {
                       const providerCatalog = settingsSummary.providerCatalog;
+                      const providerRegistry = settingsSummary.providerRegistry;
                       const registryReachable = providerCatalog?.registry.reachable === true;
                       const registryProviders = registryReachable ? providerCatalog.providers : [];
-                      if (!registryReachable) {
-                        return (
-                          <article className="settings-row">
-                            <div className="batch-title">
-                              <strong>Provider registry unavailable</strong>
-                              <span>Unavailable</span>
+                      const profileOptions = providerRegistry?.profiles ?? [];
+                      const activeProfileMissing =
+                        providerRegistry?.activeProfileKey !== null &&
+                        providerRegistry?.activeProfileKey !== undefined &&
+                        providerRegistry.activeProfileKey !== "" &&
+                        !profileOptions.some((profile) => profile.profileKey === providerRegistry.activeProfileKey);
+                      const statusClass =
+                        providerRegistry?.status === "ready" ? "status-pill ready" : "status-pill";
+                      const profileSaveDisabled =
+                        providerRegistryInFlight ||
+                        providerRegistryProfileDraft === (providerRegistry?.selectedProviderProfileKey ?? "");
+                      return (
+                        <>
+                          <article className="settings-row provider-registry-settings-row">
+                            <div className="settings-row-header">
+                              <div className="section-title">
+                                <Settings size={18} />
+                                <h3>Registry profile</h3>
+                              </div>
+                              <span className={statusClass}>{providerRegistry?.status ?? "unknown"}</span>
                             </div>
-                            <p>Provider registry records are managed outside Memo Capture.</p>
-                            {providerCatalog?.registry.error ? <p>{providerCatalog.registry.error}</p> : null}
-                          </article>
-                        );
-                      }
-                      if (registryProviders.length === 0) {
-                        return (
-                          <article className="settings-row">
-                            <div className="batch-title">
-                              <strong>No registry providers</strong>
-                              <span>Empty</span>
+                            <div className="provider-route-controls provider-registry-profile-controls">
+                              <label>
+                                <span>Profile</span>
+                                <select
+                                  value={providerRegistryProfileDraft}
+                                  disabled={providerRegistryInFlight}
+                                  onChange={(event) => setProviderRegistryProfileDraft(event.currentTarget.value)}
+                                >
+                                  <option value="">Use bootstrap profile</option>
+                                  {activeProfileMissing ? (
+                                    <option value={providerRegistry?.activeProfileKey ?? ""}>
+                                      {providerRegistry?.activeProfileKey}
+                                    </option>
+                                  ) : null}
+                                  {profileOptions.map((profile) => (
+                                    <option value={profile.profileKey} key={profile.profileKey}>
+                                      {profile.displayName} ({profile.profileKey})
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                <span>Source</span>
+                                <input
+                                  type="text"
+                                  value={providerRegistry?.profileSource ?? "none"}
+                                  readOnly
+                                />
+                              </label>
+                              <button
+                                className="secondary-button"
+                                type="button"
+                                disabled={profileSaveDisabled}
+                                onClick={() => void saveProviderRegistryProfile()}
+                              >
+                                <Save size={16} />
+                                Save
+                              </button>
+                              <button
+                                className="secondary-button"
+                                type="button"
+                                disabled={providerRegistryInFlight}
+                                onClick={() => void refreshProviderRegistryProfile()}
+                              >
+                                <RefreshCcw size={16} />
+                                Refresh
+                              </button>
                             </div>
-                            <p>The active provider registry profile does not contain any providers.</p>
+                            <div className="provider-registry-meta">
+                              <span>URL {providerRegistry?.registryUrl || "not configured"}</span>
+                              <span>Active {providerRegistry?.activeProfileKey || "not configured"}</span>
+                              <span>Bootstrap {providerRegistry?.bootstrapProfileKey || "none"}</span>
+                              <span>{providerRegistry?.providerCount ?? 0} providers</span>
+                            </div>
+                            {providerRegistry?.activeProfile?.description ? (
+                              <p>{providerRegistry.activeProfile.description}</p>
+                            ) : null}
+                            {providerRegistry?.error ? <p>{providerRegistry.error}</p> : null}
                           </article>
-                        );
-                      }
-                      return registryProviders.map((provider) => (
-                        <article className="settings-row provider-registry-row" key={provider.providerKey}>
-                          <div className="batch-title">
-                            <strong>{provider.displayName}</strong>
-                            <span className={provider.enabled ? "status-pill ready" : "status-pill"}>
-                              {provider.enabled ? "Enabled" : "Disabled"}
-                            </span>
-                          </div>
-                          <div className="provider-registry-meta">
-                            <span>Key {provider.providerKey}</span>
-                            {provider.model === undefined ? null : <span>Model {provider.model}</span>}
-                            <span>Health {provider.health?.status ?? "unknown"}</span>
-                          </div>
-                          <div className="tag-chip-list">
-                            {provider.capabilities.length === 0 ? (
-                              <span className="tag-chip">No capabilities</span>
-                            ) : (
-                              provider.capabilities.map((capability) => (
-                                <span className="tag-chip" key={`${provider.providerKey}-${capability.key}`}>
-                                  {capability.displayName}
-                                </span>
-                              ))
-                            )}
-                          </div>
-                        </article>
-                      ));
+                          {renderProviderRegistryCatalog(registryReachable, registryProviders, providerCatalog)}
+                        </>
+                      );
                     })()}
                   </div>
                 </section>
@@ -7441,6 +7543,7 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
     fileTypes: Array.isArray(summary.fileTypes) ? summary.fileTypes : [],
     extraction: summary.extraction ?? defaultExtractionSettings,
     providers: Array.isArray(summary.providers) ? summary.providers : [],
+    providerRegistry: normalizeProviderRegistrySummary(summary.providerRegistry, summary.providerCatalog),
     providerCapabilities: Array.isArray(summary.providerCapabilities) ? summary.providerCapabilities : [],
     taskKinds: Array.isArray(summary.taskKinds) ? summary.taskKinds : [],
     aiTasks: Array.isArray(summary.aiTasks)
@@ -7485,6 +7588,84 @@ function normalizeSettingsSummary(summary: SettingsSummary): SettingsSummary {
       oidcConfigured: false
     }
   };
+}
+
+function normalizeProviderRegistrySummary(
+  providerRegistry: SettingsSummary["providerRegistry"],
+  providerCatalog: SettingsSummary["providerCatalog"]
+): NonNullable<SettingsSummary["providerRegistry"]> {
+  return {
+    registryUrl: providerRegistry?.registryUrl ?? providerCatalog?.registry.url ?? "",
+    bootstrapProfileKey: providerRegistry?.bootstrapProfileKey ?? null,
+    selectedProviderProfileKey: providerRegistry?.selectedProviderProfileKey ?? null,
+    activeProfileKey: providerRegistry?.activeProfileKey ?? providerCatalog?.registry.profile ?? null,
+    profileSource: providerRegistry?.profileSource ?? "none",
+    profiles: Array.isArray(providerRegistry?.profiles) ? providerRegistry.profiles : [],
+    activeProfile: providerRegistry?.activeProfile ?? null,
+    status: providerRegistry?.status ?? (providerCatalog?.registry.reachable === true ? "ready" : "error"),
+    error: providerRegistry?.error ?? providerCatalog?.registry.error ?? null,
+    providerCount:
+      typeof providerRegistry?.providerCount === "number"
+        ? providerRegistry.providerCount
+        : providerCatalog?.providers.length ?? 0,
+    updatedAt: providerRegistry?.updatedAt ?? null
+  };
+}
+
+function renderProviderRegistryCatalog(
+  registryReachable: boolean,
+  registryProviders: NonNullable<SettingsSummary["providerCatalog"]>["providers"],
+  providerCatalog: SettingsSummary["providerCatalog"]
+): ReactElement | ReactElement[] {
+  if (!registryReachable) {
+    return (
+      <article className="settings-row">
+        <div className="batch-title">
+          <strong>Provider registry unavailable</strong>
+          <span>Unavailable</span>
+        </div>
+        <p>Provider registry records are managed outside Memo Capture.</p>
+        {providerCatalog?.registry.error ? <p>{providerCatalog.registry.error}</p> : null}
+      </article>
+    );
+  }
+  if (registryProviders.length === 0) {
+    return (
+      <article className="settings-row">
+        <div className="batch-title">
+          <strong>No registry providers</strong>
+          <span>Empty</span>
+        </div>
+        <p>The active provider registry profile does not contain any providers.</p>
+      </article>
+    );
+  }
+  return registryProviders.map((provider) => (
+    <article className="settings-row provider-registry-row" key={provider.providerKey}>
+      <div className="batch-title">
+        <strong>{provider.displayName}</strong>
+        <span className={provider.enabled ? "status-pill ready" : "status-pill"}>
+          {provider.enabled ? "Enabled" : "Disabled"}
+        </span>
+      </div>
+      <div className="provider-registry-meta">
+        <span>Key {provider.providerKey}</span>
+        {provider.model === undefined ? null : <span>Model {provider.model}</span>}
+        <span>Health {provider.health?.status ?? "unknown"}</span>
+      </div>
+      <div className="tag-chip-list">
+        {provider.capabilities.length === 0 ? (
+          <span className="tag-chip">No capabilities</span>
+        ) : (
+          provider.capabilities.map((capability) => (
+            <span className="tag-chip" key={`${provider.providerKey}-${capability.key}`}>
+              {capability.displayName}
+            </span>
+          ))
+        )}
+      </div>
+    </article>
+  ));
 }
 
 function normalizePromptSummary(prompt: PromptSummary): PromptSummary {
