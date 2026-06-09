@@ -1,4 +1,5 @@
 import type { ApiConfig } from "../config.js";
+import type { TaskRunHistoryFilters } from "@invoke-providers/client";
 import type { Database } from "../db/types.js";
 import { AuditRepository } from "../repositories/audit.js";
 import type { AppUserRecord } from "../repositories/rows.js";
@@ -185,31 +186,24 @@ export class SettingsService {
     return await createTargetAppRuntimeService(
       this.db,
       configWithProviderRegistryProfile(this.config, registryResolution.activeProfileKey)
-    ).getReadinessDiagnostics();
+    ).getReadinessDiagnostics() as unknown as Record<string, unknown>;
   }
 
   async diagnoseProviderAdapter(body: unknown): Promise<Record<string, unknown>> {
     const input = parseAdapterDiagnosticBody(body);
-    return await (await this.createRegistryAwareRuntimeService()).diagnoseAdapter(input);
+    return await (await this.createRegistryAwareRuntimeService()).diagnoseAdapter(input) as unknown as Record<string, unknown>;
   }
 
   async listRenderSlots(): Promise<Record<string, unknown>> {
-    return await (await this.createRegistryAwareRuntimeService()).listRenderSlots();
+    return { renderSlots: await (await this.createRegistryAwareRuntimeService()).listRenderSlots() };
   }
 
   async getRenderSlotActions(slot: string): Promise<Record<string, unknown>> {
-    return await (await this.createRegistryAwareRuntimeService()).getRenderSlotActions(slot);
+    return { slot, actions: await (await this.createRegistryAwareRuntimeService()).getRenderSlotActions(slot) };
   }
 
   async listTaskRuns(query: URLSearchParams): Promise<Record<string, unknown>> {
-    const filters: {
-      taskKey?: string | null;
-      hookKey?: string | null;
-      providerKey?: string | null;
-      status?: string | null;
-      workItemId?: string | null;
-      limit?: number;
-    } = {};
+    const filters: TaskRunHistoryFilters = {};
     const taskKey = query.get("task_key");
     const hookKey = query.get("hook_key");
     const providerKey = query.get("provider_key");
@@ -226,15 +220,20 @@ export class SettingsService {
       filters.providerKey = providerKey;
     }
     if (status !== null) {
-      filters.status = status;
-    }
-    if (workItemId !== null) {
-      filters.workItemId = workItemId;
+      if (status === "succeeded" || status === "failed" || status === "skipped") {
+        filters.status = status;
+      }
     }
     if (limit !== undefined) {
       filters.limit = limit;
     }
-    return await (await this.createRegistryAwareRuntimeService()).listTaskRuns(filters);
+    const taskRuns = await (await this.createRegistryAwareRuntimeService()).listTaskRuns(filters);
+    return {
+      taskRuns:
+        workItemId === null
+          ? taskRuns
+          : taskRuns.filter((run) => readSnapshotString(run.inputSnapshot, "workItemId") === workItemId)
+    };
   }
 
   async groupTaskRuns(query: URLSearchParams): Promise<Record<string, unknown>> {
@@ -242,7 +241,7 @@ export class SettingsService {
     if (groupBy !== "taskKey" && groupBy !== "hookKey" && groupBy !== "providerKey" && groupBy !== "status") {
       throw new HttpError(400, "invalid_request", "group_by must be taskKey, hookKey, providerKey, or status.");
     }
-    return await (await this.createRegistryAwareRuntimeService()).groupTaskRuns(groupBy);
+    return { groupBy, groups: await (await this.createRegistryAwareRuntimeService()).groupTaskRuns(groupBy) };
   }
 
   private async createRegistryAwareRuntimeService() {
@@ -392,14 +391,10 @@ export class SettingsService {
       }
       const registryProvider = await resolveRegistryProviderForTaskRoute(settings, current, input, this.config);
       await validateAiTaskRouteUpdate(settings, current, input, this.config);
-      const providerConfig =
-        registryProvider.provider === null
-          ? null
-          : await findEnabledProviderConfigForRegistryProvider(settings, registryProvider.provider);
       const task = await settings.updateAiTaskRoute({
         taskDefinitionId,
         ...input,
-        providerConfigId: input.providerKey === undefined ? undefined : providerConfig?.id ?? null,
+        providerConfigId: input.providerKey === undefined ? undefined : null,
         registryProfileKey: registryProvider.registryProfileKey,
         providerKey: registryProvider.providerKey,
         actorUserId: actor.id
@@ -516,14 +511,10 @@ export class SettingsService {
         throw new HttpError(404, "not_found", "ai_task_definition was not found.");
       }
       await validateAiTaskRouteUpdate(settings, refreshed, input, this.config);
-      const providerConfig =
-        registryProvider.provider === null
-          ? null
-          : await findEnabledProviderConfigForRegistryProvider(settings, registryProvider.provider);
       const task = await settings.updateAiTaskRoute({
         taskDefinitionId,
         ...input,
-        providerConfigId: input.providerKey === undefined ? undefined : providerConfig?.id ?? null,
+        providerConfigId: input.providerKey === undefined ? undefined : null,
         registryProfileKey: registryProvider.registryProfileKey,
         providerKey: registryProvider.providerKey,
         actorUserId: actor.id
@@ -1364,7 +1355,7 @@ function serializeProviderCapability(row: ProviderCapabilityRow): Record<string,
 
 function serializeRegisteredTaskHooks(
   hooks: ProcessingHookRow[],
-  runtimeState?: { hooks?: Array<{ hookKey: string; implementationStatus: string; usageCount: number }> }
+  runtimeState?: { hooks?: Array<{ hookKey: string; implementationStatus: string; usageCount?: number }> }
 ): Array<Record<string, unknown>> {
   const stateByHook = new Map((runtimeState?.hooks ?? []).map((hook) => [hook.hookKey, hook]));
   return hooks.map((hook) => serializeRegisteredTaskHook(hook, stateByHook.get(hook.hook_key)));
@@ -1372,10 +1363,10 @@ function serializeRegisteredTaskHooks(
 
 function serializeRegisteredTaskHook(
   hook: ProcessingHookRow,
-  runtimeState?: { implementationStatus: string; usageCount: number } | undefined
+  runtimeState?: { implementationStatus: string; usageCount?: number } | undefined
 ): Record<string, unknown> {
   const implemented = runtimeState === undefined ? isHookImplemented(hook.hook_key) : runtimeState.implementationStatus === "implemented";
-  const taskUsageCount = runtimeState === undefined ? toInteger(hook.task_usage_count) : runtimeState.usageCount;
+  const taskUsageCount = runtimeState?.usageCount ?? toInteger(hook.task_usage_count);
   return {
     hookKey: hook.hook_key,
     displayName: humanizeKey(hook.hook_key),
@@ -1686,6 +1677,14 @@ function parseQueryLimit(value: string | null): number | undefined {
   return parsed;
 }
 
+function readSnapshotString(snapshot: unknown, key: string): string | null {
+  if (snapshot === null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return null;
+  }
+  const value = (snapshot as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
+}
+
 function parseOptionalBoolean(value: unknown, field: string): boolean | undefined {
   if (value === undefined) {
     return undefined;
@@ -1832,12 +1831,11 @@ async function validateAiTaskRouteUpdate(
   if (!selection.provider.enabled) {
     throw new HttpError(409, "provider_disabled", "Task route cannot be enabled with a disabled provider.");
   }
-  const providerConfig = await requireEnabledProviderConfigForRegistryProvider(settings, selection.provider);
-  const requiredSecretEnv = selection.provider.requiredSecretRef ?? providerConfig.required_secret_env ?? null;
+  const requiredSecretEnv = selection.provider.requiredSecretRef ?? null;
   if (
     !secretConfigured(requiredSecretEnv, config, {
-      adapterKey: selection.provider.adapterKey ?? providerConfig.adapter_key,
-      endpoint: selection.provider.baseUrl ?? providerConfig.endpoint,
+      adapterKey: selection.provider.adapterKey,
+      endpoint: selection.provider.baseUrl ?? null,
       providerKey: selection.provider.providerKey
     })
   ) {
@@ -1845,71 +1843,6 @@ async function validateAiTaskRouteUpdate(
       requiredSecretEnv
     });
   }
-}
-
-async function findEnabledProviderConfigForRegistryProvider(
-  settings: SettingsRepository,
-  provider: SharedProviderConfig
-): Promise<ProviderConfigRow | null> {
-  const providerName = runtimeProviderNameForRegistryProvider(provider);
-  if (providerName === null) {
-    return null;
-  }
-  return await settings.findEnabledProvider(providerConfigKindForRegistryProvider(provider.providerKind), providerName);
-}
-
-async function requireEnabledProviderConfigForRegistryProvider(
-  settings: SettingsRepository,
-  provider: SharedProviderConfig
-): Promise<ProviderConfigRow> {
-  const providerConfig = await findEnabledProviderConfigForRegistryProvider(settings, provider);
-  if (providerConfig !== null) {
-    return providerConfig;
-  }
-  throw new HttpError(
-    409,
-    "provider_adapter_unavailable",
-    "Task route cannot be enabled until the selected provider has a supported Memo Capture adapter.",
-    {
-      providerKey: provider.providerKey,
-      adapterKey: provider.adapterKey
-    }
-  );
-}
-
-function providerConfigKindForRegistryProvider(providerKind: SharedProviderConfig["providerKind"]): string {
-  return providerKind === "stt" ? "transcription" : providerKind;
-}
-
-function runtimeProviderNameForRegistryProvider(provider: SharedProviderConfig): string | null {
-  const adapterKey = provider.adapterKey;
-  const providerKey = provider.providerKey;
-  if (
-    adapterKey === "local-dev" ||
-    adapterKey === "deterministic-llm" ||
-    adapterKey === "deterministic-local-dev" ||
-    providerKey === "local-dev" ||
-    providerKey === "deterministic-local-dev"
-  ) {
-    return "local-dev";
-  }
-  if (
-    adapterKey === "openai-compatible" ||
-    adapterKey === "openai-compatible-local" ||
-    adapterKey === "openai-compatible-cloud" ||
-    providerKey === "openai-compatible" ||
-    providerKey === "openai-compatible-local" ||
-    providerKey === "openai-compatible-cloud"
-  ) {
-    return "openai-compatible";
-  }
-  if (adapterKey === "whisper-cpp" || adapterKey === "whisper-cpp-local" || providerKey === "whisper-cpp-local") {
-    return "whisper-cpp";
-  }
-  if (adapterKey === "codex-cli" || providerKey === "codex-cli-local") {
-    return "codex-cli";
-  }
-  return null;
 }
 
 async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository, config: ApiConfig) {
@@ -1941,10 +1874,6 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     throw new HttpError(400, "invalid_request", "taskKind must reference an active configured task kind.");
   }
   const routeEnabled = parseOptionalBoolean(record.enabled, "enabled") ?? false;
-  const providerConfig =
-    registryProvider.provider === null
-      ? null
-      : await findEnabledProviderConfigForRegistryProvider(settings, registryProvider.provider);
   return {
     taskKey,
     displayName,
@@ -1959,7 +1888,7 @@ async function parseCreateAiTaskBody(body: unknown, settings: SettingsRepository
     taskKindId: taskKindRow.id,
     implemented: isHookImplemented(hookKey),
     promptDefinitionId: null,
-    providerConfigId: providerConfig?.id ?? null,
+    providerConfigId: null,
     registryProfileKey: registryProvider.registryProfileKey,
     providerKey: registryProvider.providerKey,
     routeModelName:

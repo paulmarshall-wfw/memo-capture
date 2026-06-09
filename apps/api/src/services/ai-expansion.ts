@@ -11,16 +11,15 @@ import { SourceMemoRepository } from "../repositories/source-memos.js";
 import { TagRepository } from "../repositories/tags.js";
 import { WorkItemRepository, type WorkItemRecord } from "../repositories/work-items.js";
 import { HttpError } from "./errors.js";
-import { isSecretAvailable } from "./invoke-providers/secrets.js";
+import { createTargetAppRuntimeService } from "./invoke-providers/runtime.js";
 import { WorkflowHookScheduler } from "./workflow-hooks.js";
 import {
-  createLlmProvider,
   MEMO_EXPANSION_HOOK_KEY,
   normalizePromptContextConfig,
   SUGGEST_NEW_MEMOS_HOOK_KEY,
-  type LlmStructuredOutput,
   type WorkItemExpansionContext
 } from "./llm.js";
+import type { TaskRun } from "@invoke-providers/core";
 
 export class AiExpansionService {
   constructor(
@@ -122,7 +121,7 @@ export class AiExpansionService {
     ]);
     const promptDefinitionName = taskRoute.prompt_name ?? "work_item_expansion";
     const prompt = await settings.getActivePrompt(promptDefinitionName);
-    await validateMemoExpansionTaskRoute(taskRoute, this.config);
+    validateMemoExpansionTaskRoute(taskRoute);
 
     if (workItem === null) {
       throw new HttpError(404, "not_found", "work_item was not found.");
@@ -131,13 +130,11 @@ export class AiExpansionService {
       throw new HttpError(409, "ai_prompt_missing", "Active AI expansion prompt is missing.");
     }
     const promptBody = prompt.active_body;
-    const providerName = taskRoute.provider_name;
+    const providerName = taskRoute.provider_key;
     if (providerName === null) {
       throw new HttpError(409, "llm_provider_not_enabled", "No LLM provider is selected for memo expansion.");
     }
     const modelName = modelNameForTaskRoute(taskRoute, this.config);
-    const endpoint = this.config.llm.endpoint || (taskRoute.endpoint ?? "");
-    const provider = createLlmProvider(this.config.llm, providerName, modelName, this.config.llm.provider, endpoint);
 
     const project = projects.find((candidate) => candidate.id === workItem.projectId) ?? null;
     const context: WorkItemExpansionContext = {
@@ -190,41 +187,25 @@ export class AiExpansionService {
       }
     });
 
-    let output: LlmStructuredOutput;
-    try {
-      output = await provider.generateWorkItemExpansion(context);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "AI expansion failed.";
+    const invocation = await createTargetAppRuntimeService(this.db, this.config).invokeTask(taskRoute.task_key, {
+      input: buildSharedInvocationInput({ context, actor, requestId, jobId: job.id, workItem }),
+      correlationId: requestId
+    });
+    if (invocation.taskRun.status !== "succeeded") {
+      const message = invocation.taskRun.errorMessage ?? "AI expansion failed before returning valid output.";
       await new ProcessingJobRepository(this.db).markFailed({
         jobId: job.id,
         errorCode: "ai_provider_failed",
         userSafeErrorMessage: "AI expansion failed before returning valid output.",
         internalErrorDetail: message,
         retryable: false,
-        providerName,
-        modelName,
-        latencyMs: null
+        providerName: invocation.taskRun.providerKey ?? providerName,
+        modelName: invocation.taskRun.model ?? modelName,
+        latencyMs: invocation.taskRun.latencyMs ?? null
       });
-      await recordInvokeTaskRun(this.db, this.config, {
-        taskRoute,
-        actor,
-        requestId,
-        workItem,
-        jobId: job.id,
-        providerName,
-        modelName,
-        promptVersion: prompt.active_version,
-        promptSnapshotId: prompt.active_prompt_version_id,
-        status: "failed",
-        errorClass: "adapter_failure",
-        errorMessage: message,
-        latencyMs: null,
-        validationMetadata: {},
-        outputSnapshot: {}
-      });
-      throw error;
+      throw sharedTaskRunError(invocation.taskRun, "AI expansion failed before returning valid output.");
     }
-    const validation = validateExpandedMemoOutput(output.parsed);
+    const validation = validateExpandedMemoOutput(invocation.providerOutput);
     if (!validation.ok) {
       await new ProcessingJobRepository(this.db).markFailed({
         jobId: job.id,
@@ -232,9 +213,9 @@ export class AiExpansionService {
         userSafeErrorMessage: "AI expansion returned invalid structured JSON.",
         internalErrorDetail: validation.errors.join("; "),
         retryable: false,
-        providerName: output.providerName,
-        modelName: output.modelName,
-        latencyMs: output.latencyMs
+        providerName: invocation.taskRun.providerKey ?? providerName,
+        modelName: invocation.taskRun.model ?? modelName,
+        latencyMs: invocation.taskRun.latencyMs ?? null
       });
       await new AuditRepository(this.db).record({
         eventName: "ai_expansion.validation_failed",
@@ -249,8 +230,8 @@ export class AiExpansionService {
           taskKey: taskRoute.task_key,
           hookKey: taskRoute.hook_key,
           errors: validation.errors,
-          providerName: output.providerName,
-          modelName: output.modelName
+          providerName: invocation.taskRun.providerKey ?? providerName,
+          modelName: invocation.taskRun.model ?? modelName
         },
         redactionApplied: true
       });
@@ -273,54 +254,18 @@ export class AiExpansionService {
         metadata: {
           taskKey: taskRoute.task_key,
           hookKey: taskRoute.hook_key,
-          providerName: output.providerName,
-          modelName: output.modelName,
-          latencyMs: output.latencyMs,
+          providerName: invocation.taskRun.providerKey ?? providerName,
+          modelName: invocation.taskRun.model ?? modelName,
+          latencyMs: invocation.taskRun.latencyMs ?? null,
           suggestionCount: 0
-        }
-      });
-      await new SettingsRepository(client).createInvokeTaskRun({
-        taskRunId: randomUUID(),
-        taskKey: taskRoute.task_key,
-        hookKey: taskRoute.hook_key,
-        providerKey: taskRoute.provider_key ?? output.providerName,
-        adapterKey: taskRoute.adapter_key,
-        model: output.modelName,
-        promptVersion: prompt.active_version,
-        promptSnapshotId: prompt.active_prompt_version_id,
-        status: "succeeded",
-        errorClass: null,
-        errorMessage: null,
-        readinessReasons: [],
-        validationMetadata: {
-          ok: true,
-          strictJson: true,
-          resultType: "expanded_memo"
-        },
-        latencyMs: output.latencyMs,
-        usageMetadata: {},
-        commitSha: this.config.invokeProviders.commitSha,
-        requestId,
-        correlationId: requestId,
-        actorUserId: actor.id,
-        workItemId: workItem.id,
-        sourceMemoId: workItem.sourceMemoId,
-        processingJobId: job.id,
-        inputSnapshot: {
-          promptName: prompt.name,
-          promptVersion: prompt.active_version,
-          workItemId: workItem.id
-        },
-        outputSnapshot: {
-          expandedWorkItem: validation.value.expandedWorkItem
         }
       });
       await new ProcessingJobRepository(client).markSucceeded(job.id);
       return {
         expandedWorkItem: validation.value.expandedWorkItem,
         suggestions: [],
-        providerName: output.providerName,
-        modelName: output.modelName,
+        providerName: invocation.taskRun.providerKey ?? providerName,
+        modelName: invocation.taskRun.model ?? modelName,
         validation: {
           ok: true,
           promptVersion: prompt.active_version,
@@ -349,7 +294,7 @@ export class AiExpansionService {
     ]);
     const promptDefinitionName = taskRoute.prompt_name ?? "work_item_suggestions";
     const prompt = await settings.getActivePrompt(promptDefinitionName);
-    await validateSuggestNewMemosTaskRoute(taskRoute, this.config);
+    validateSuggestNewMemosTaskRoute(taskRoute);
 
     if (workItem === null) {
       throw new HttpError(404, "not_found", "work_item was not found.");
@@ -357,13 +302,11 @@ export class AiExpansionService {
     if (prompt === null || prompt.active_prompt_version_id === null || prompt.active_body === null) {
       throw new HttpError(409, "ai_prompt_missing", "Active suggested work item prompt is missing.");
     }
-    const providerName = taskRoute.provider_name;
+    const providerName = taskRoute.provider_key;
     if (providerName === null) {
       throw new HttpError(409, "llm_provider_not_enabled", "No LLM provider is selected for suggested work items.");
     }
     const modelName = modelNameForTaskRoute(taskRoute, this.config);
-    const endpoint = this.config.llm.endpoint || (taskRoute.endpoint ?? "");
-    const provider = createLlmProvider(this.config.llm, providerName, modelName, this.config.llm.provider, endpoint);
 
     const project = projects.find((candidate) => candidate.id === workItem.projectId) ?? null;
     const context: WorkItemExpansionContext = {
@@ -416,42 +359,26 @@ export class AiExpansionService {
       }
     });
 
-    let output: LlmStructuredOutput;
-    try {
-      output = await provider.generateWorkItemExpansion(context);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Suggested work item generation failed.";
+    const invocation = await createTargetAppRuntimeService(this.db, this.config).invokeTask(taskRoute.task_key, {
+      input: buildSharedInvocationInput({ context, actor, requestId, jobId: job.id, workItem }),
+      correlationId: requestId
+    });
+    if (invocation.taskRun.status !== "succeeded") {
+      const message = invocation.taskRun.errorMessage ?? "Suggested work item generation failed.";
       await new ProcessingJobRepository(this.db).markFailed({
         jobId: job.id,
         errorCode: "ai_provider_failed",
         userSafeErrorMessage: "Suggested work item generation failed before returning valid output.",
         internalErrorDetail: message,
         retryable: false,
-        providerName,
-        modelName,
-        latencyMs: null
+        providerName: invocation.taskRun.providerKey ?? providerName,
+        modelName: invocation.taskRun.model ?? modelName,
+        latencyMs: invocation.taskRun.latencyMs ?? null
       });
-      await recordInvokeTaskRun(this.db, this.config, {
-        taskRoute,
-        actor,
-        requestId,
-        workItem,
-        jobId: job.id,
-        providerName,
-        modelName,
-        promptVersion: prompt.active_version,
-        promptSnapshotId: prompt.active_prompt_version_id,
-        status: "failed",
-        errorClass: "adapter_failure",
-        errorMessage: message,
-        latencyMs: null,
-        validationMetadata: {},
-        outputSnapshot: {}
-      });
-      throw error;
+      throw sharedTaskRunError(invocation.taskRun, "Suggested work item generation failed before returning valid output.");
     }
 
-    const validation = validateSuggestedWorkItemsOutput(output.parsed);
+    const validation = validateSuggestedWorkItemsOutput(invocation.providerOutput);
     if (!validation.ok) {
       await new ProcessingJobRepository(this.db).markFailed({
         jobId: job.id,
@@ -459,9 +386,9 @@ export class AiExpansionService {
         userSafeErrorMessage: "Suggested work item generation returned invalid structured JSON.",
         internalErrorDetail: validation.errors.join("; "),
         retryable: false,
-        providerName: output.providerName,
-        modelName: output.modelName,
-        latencyMs: output.latencyMs
+        providerName: invocation.taskRun.providerKey ?? providerName,
+        modelName: invocation.taskRun.model ?? modelName,
+        latencyMs: invocation.taskRun.latencyMs ?? null
       });
       await new AuditRepository(this.db).record({
         eventName: "ai_expansion.validation_failed",
@@ -476,8 +403,8 @@ export class AiExpansionService {
           taskKey: taskRoute.task_key,
           hookKey: taskRoute.hook_key,
           errors: validation.errors,
-          providerName: output.providerName,
-          modelName: output.modelName
+          providerName: invocation.taskRun.providerKey ?? providerName,
+          modelName: invocation.taskRun.model ?? modelName
         },
         redactionApplied: true
       });
@@ -487,7 +414,6 @@ export class AiExpansionService {
     }
 
     return this.db.transaction(async (client) => {
-      const taskRunId = randomUUID();
       await new AuditRepository(client).record({
         eventName: "ai_expansion.completed",
         actor,
@@ -500,47 +426,11 @@ export class AiExpansionService {
         metadata: {
           taskKey: taskRoute.task_key,
           hookKey: taskRoute.hook_key,
-          providerName: output.providerName,
-          modelName: output.modelName,
-          latencyMs: output.latencyMs,
+          providerName: invocation.taskRun.providerKey ?? providerName,
+          modelName: invocation.taskRun.model ?? modelName,
+          latencyMs: invocation.taskRun.latencyMs ?? null,
           suggestionCount: validation.value.suggestedWorkItems.length,
           persistedSuggestionCount: 0
-        }
-      });
-      await new SettingsRepository(client).createInvokeTaskRun({
-        taskRunId,
-        taskKey: taskRoute.task_key,
-        hookKey: taskRoute.hook_key,
-        providerKey: taskRoute.provider_key ?? output.providerName,
-        adapterKey: taskRoute.adapter_key,
-        model: output.modelName,
-        promptVersion: prompt.active_version,
-        promptSnapshotId: prompt.active_prompt_version_id,
-        status: "succeeded",
-        errorClass: null,
-        errorMessage: null,
-        readinessReasons: [],
-        validationMetadata: {
-          ok: true,
-          strictJson: true,
-          resultType: "suggested_work_items"
-        },
-        latencyMs: output.latencyMs,
-        usageMetadata: {},
-        commitSha: this.config.invokeProviders.commitSha,
-        requestId,
-        correlationId: requestId,
-        actorUserId: actor.id,
-        workItemId: workItem.id,
-        sourceMemoId: workItem.sourceMemoId,
-        processingJobId: job.id,
-        inputSnapshot: {
-          promptName: prompt.name,
-          promptVersion: prompt.active_version,
-          workItemId: workItem.id
-        },
-        outputSnapshot: {
-          suggestedWorkItemCount: validation.value.suggestedWorkItems.length
         }
       });
       await new ProcessingJobRepository(client).markSucceeded(job.id);
@@ -549,16 +439,16 @@ export class AiExpansionService {
           id: randomUUID(),
           parentWorkItemId: workItem.id,
           taskDefinitionId: taskRoute.id,
-          taskRunId,
+          taskRunId: invocation.taskRun.taskRunId,
           title: suggestion.title,
           body: suggestion.body,
           tags: suggestion.tags,
           rationale: suggestion.rationale,
-          providerName: output.providerName,
-          modelName: output.modelName
+          providerName: invocation.taskRun.providerKey ?? providerName,
+          modelName: invocation.taskRun.model ?? modelName
         })),
-        providerName: output.providerName,
-        modelName: output.modelName,
+        providerName: invocation.taskRun.providerKey ?? providerName,
+        modelName: invocation.taskRun.model ?? modelName,
         validation: {
           ok: true,
           promptVersion: prompt.active_version,
@@ -814,78 +704,38 @@ function validateWorkItemDetailTaskRoute(task: AiTaskRouteRow): void {
   }
 }
 
-function validateMemoExpansionTaskRoute(task: AiTaskRouteRow, config: ApiConfig): void {
+function validateMemoExpansionTaskRoute(task: AiTaskRouteRow): void {
   if (task.hook_key !== MEMO_EXPANSION_HOOK_KEY) {
     throw new HttpError(409, "ai_task_hook_mismatch", "Configured task does not dispatch to memo expansion.");
   }
   if (!task.route_enabled) {
     throw new HttpError(409, "ai_task_route_disabled", "Memo expansion task route is disabled.");
   }
-  if (task.provider_name === null || task.provider_enabled !== true) {
+  if (task.provider_key === null) {
     throw new HttpError(409, "llm_provider_not_enabled", "No enabled LLM provider is selected for memo expansion.");
   }
-  if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm" || task.provider_kind !== "llm") {
+  if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm") {
     throw new HttpError(409, "llm_provider_unavailable", "Memo expansion requires an LLM task route and provider.");
-  }
-  if (!isSecretAvailable(task.required_secret_env ?? undefined, config, secretContextForTaskRoute(task))) {
-    throw new HttpError(409, "llm_secret_missing", "Configured LLM provider secret is not configured.");
-  }
-  if (task.provider_name === "codex-cli") {
-    return;
-  }
-  if (config.llm.provider === "disabled") {
-    throw new HttpError(
-      409,
-      "llm_provider_disabled",
-      "Memo expansion is enabled in Settings, but the AppLauncher LLM runtime is disabled."
-    );
-  }
-  if (config.llm.provider !== task.provider_name) {
-    throw new HttpError(
-      409,
-      "llm_provider_unavailable",
-      `Memo expansion uses ${task.provider_name}, but the AppLauncher LLM runtime selected ${config.llm.provider}.`
-    );
   }
 }
 
-function validateSuggestNewMemosTaskRoute(task: AiTaskRouteRow, config: ApiConfig): void {
+function validateSuggestNewMemosTaskRoute(task: AiTaskRouteRow): void {
   if (task.hook_key !== SUGGEST_NEW_MEMOS_HOOK_KEY) {
     throw new HttpError(409, "ai_task_hook_mismatch", "Configured task does not dispatch to suggested work items.");
   }
   if (!task.route_enabled) {
     throw new HttpError(409, "ai_task_route_disabled", "Suggested work item task route is disabled.");
   }
-  if (task.provider_name === null || task.provider_enabled !== true) {
+  if (task.provider_key === null) {
     throw new HttpError(409, "llm_provider_not_enabled", "No enabled LLM provider is selected for suggested work items.");
   }
-  if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm" || task.provider_kind !== "llm") {
+  if ((task.task_kind_provider_kind ?? task.task_kind) !== "llm") {
     throw new HttpError(409, "llm_provider_unavailable", "Suggested work items require an LLM task route and provider.");
-  }
-  if (!isSecretAvailable(task.required_secret_env ?? undefined, config, secretContextForTaskRoute(task))) {
-    throw new HttpError(409, "llm_secret_missing", "Configured LLM provider secret is not configured.");
-  }
-  if (task.provider_name === "codex-cli") {
-    return;
-  }
-  if (config.llm.provider === "disabled") {
-    throw new HttpError(
-      409,
-      "llm_provider_disabled",
-      "Suggested work items are enabled in Settings, but the AppLauncher LLM runtime is disabled."
-    );
-  }
-  if (config.llm.provider !== task.provider_name) {
-    throw new HttpError(
-      409,
-      "llm_provider_unavailable",
-      `Suggested work items use ${task.provider_name}, but the AppLauncher LLM runtime selected ${config.llm.provider}.`
-    );
   }
 }
 
 export function modelNameForTaskRoute(task: AiTaskRouteRow, config: ApiConfig): string {
-  if (task.provider_name === "codex-cli") {
+  if (task.provider_key === "codex-cli-local" || task.provider_key === "codex-cli" || task.provider_name === "codex-cli") {
     const explicitModel = (task.provider_model_override ?? task.route_model_name)?.trim() ?? "";
     if (explicitModel !== "" && !isMemoCaptureInternalModel(explicitModel, task, config)) {
       return explicitModel;
@@ -899,18 +749,6 @@ export function modelNameForTaskRoute(task: AiTaskRouteRow, config: ApiConfig): 
     config.llm.modelName;
 }
 
-function secretContextForTaskRoute(task: AiTaskRouteRow): {
-  adapterKey: string | null;
-  endpoint: string | null;
-  providerKey: string | null;
-} {
-  return {
-    adapterKey: task.adapter_key,
-    endpoint: task.endpoint,
-    providerKey: task.provider_key ?? task.provider_name
-  };
-}
-
 function isMemoCaptureInternalModel(value: string, task: AiTaskRouteRow, config: ApiConfig): boolean {
   return (
     value === "memo-capture-local-dev-expander-v1" ||
@@ -919,55 +757,40 @@ function isMemoCaptureInternalModel(value: string, task: AiTaskRouteRow, config:
   );
 }
 
-async function recordInvokeTaskRun(
-  db: Database,
-  config: ApiConfig,
-  input: {
-    taskRoute: AiTaskRouteRow;
-    actor: AppUserRecord;
-    requestId: string;
-    workItem: WorkItemRecord;
-    jobId: string;
-    providerName: string | null;
-    modelName: string | null;
-    promptVersion: number | null;
-    promptSnapshotId: string | null;
-    status: "succeeded" | "failed" | "skipped";
-    errorClass: string | null;
-    errorMessage: string | null;
-    latencyMs: number | null;
-    validationMetadata: Record<string, unknown>;
-    outputSnapshot: Record<string, unknown>;
-  }
-): Promise<void> {
-  await new SettingsRepository(db).createInvokeTaskRun({
-    taskRunId: randomUUID(),
-    taskKey: input.taskRoute.task_key,
-    hookKey: input.taskRoute.hook_key,
-    providerKey: input.taskRoute.provider_key ?? input.providerName,
-    adapterKey: input.taskRoute.adapter_key,
-    model: input.modelName,
-    promptVersion: input.promptVersion,
-    promptSnapshotId: input.promptSnapshotId,
-    status: input.status,
-    errorClass: input.errorClass,
-    errorMessage: input.errorMessage,
-    readinessReasons: [],
-    validationMetadata: input.validationMetadata,
-    latencyMs: input.latencyMs,
-    usageMetadata: {},
-    commitSha: config.invokeProviders.commitSha,
+function buildSharedInvocationInput(input: {
+  context: WorkItemExpansionContext;
+  actor: AppUserRecord;
+  requestId: string;
+  jobId: string;
+  workItem: WorkItemRecord;
+}): Record<string, unknown> {
+  return {
     requestId: input.requestId,
-    correlationId: input.requestId,
     actorUserId: input.actor.id,
     workItemId: input.workItem.id,
     sourceMemoId: input.workItem.sourceMemoId,
     processingJobId: input.jobId,
-    inputSnapshot: {
-      workItemId: input.workItem.id
-    },
-    outputSnapshot: input.outputSnapshot
-  });
+    promptName: input.context.prompt.name,
+    promptVersion: input.context.prompt.version,
+    memoCaptureContext: input.context
+  };
+}
+
+function sharedTaskRunError(taskRun: TaskRun, fallbackMessage: string): HttpError {
+  const errorClass = taskRun.errorClass ?? "adapter_failure";
+  if (errorClass === "disabled") {
+    return new HttpError(409, "ai_task_route_disabled", taskRun.errorMessage ?? fallbackMessage);
+  }
+  if (errorClass === "missing_provider") {
+    return new HttpError(409, "llm_provider_not_enabled", taskRun.errorMessage ?? fallbackMessage);
+  }
+  if (errorClass === "missing_secret") {
+    return new HttpError(409, "llm_secret_missing", taskRun.errorMessage ?? fallbackMessage);
+  }
+  if (errorClass === "unimplemented_hook") {
+    return new HttpError(409, "work_item_task_not_implemented", taskRun.errorMessage ?? fallbackMessage);
+  }
+  return new HttpError(502, "ai_provider_failed", taskRun.errorMessage ?? fallbackMessage);
 }
 
 function validateExpandedMemoOutput(output: unknown):

@@ -1,4 +1,5 @@
 import type { ApiConfig } from "../../config.js";
+import type { SecretResolver } from "@invoke-providers/core";
 
 export interface SecretAvailabilityContext {
   adapterKey?: string | null;
@@ -34,6 +35,41 @@ export function isSecretAvailable(
     return config.whisperCpp.modelPath.trim() !== "";
   }
   return process.env[secretRef]?.trim() !== "";
+}
+
+export function createMemoCaptureSecretResolver(config: ApiConfig): SecretResolver {
+  return {
+    hasSecret(secretRef) {
+      return isSecretAvailable(secretRef, config);
+    },
+    resolveSecret(secretRef) {
+      return resolveSecretValue(secretRef, config);
+    }
+  };
+}
+
+export function resolveSecretValue(secretRef: string, config: ApiConfig): string {
+  if (secretRef === "OPENAI_COMPATIBLE_API_KEY" || secretRef === "OPENAI_API_KEY") {
+    return (
+      process.env.LOCAL_OPENAI_COMPATIBLE_API_KEY?.trim() ||
+      config.llm.openAiCompatibleApiKey.trim() ||
+      "local-openai-compatible"
+    );
+  }
+  if (secretRef === "LOCAL_OPENAI_COMPATIBLE_API_KEY") {
+    return process.env.LOCAL_OPENAI_COMPATIBLE_API_KEY?.trim() || "local-openai-compatible";
+  }
+  if (secretRef === "INVOKE_PROVIDERS_CODEX_CLI_BINARY") {
+    return (
+      process.env.INVOKE_PROVIDERS_CODEX_CLI_BINARY?.trim() ||
+      process.env.CODEX_CLI_EXECUTABLE?.trim() ||
+      "codex"
+    );
+  }
+  if (secretRef === "WHISPER_CPP_MODEL_PATH") {
+    return config.whisperCpp.modelPath.trim();
+  }
+  return process.env[secretRef]?.trim() ?? "";
 }
 
 function isLocalOpenAiCompatibleContext(config: ApiConfig, context: SecretAvailabilityContext): boolean {

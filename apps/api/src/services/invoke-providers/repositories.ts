@@ -8,6 +8,8 @@ import {
 import { isTaskHookImplemented } from "./hooks.js";
 import { mapProcessingHookRow, mapProviderConfigRow, mapTaskRouteRow } from "./mapping.js";
 import type { SharedProcessingHook, SharedProviderConfig, SharedTaskDefinition, SharedTaskRun } from "./types.js";
+import type { TargetAppProviderProfileSettings, TargetAppProviderProfileSettingsRepository } from "@invoke-providers/client";
+import type { TaskRun } from "@invoke-providers/core";
 
 export class MemoCaptureRuntimeRepositories {
   constructor(
@@ -36,55 +38,33 @@ export class MemoCaptureRuntimeRepositories {
     return hooks.map((hook) => mapProcessingHookRow(hook, isTaskHookImplemented));
   }
 
-  async saveTaskRun(input: {
-    taskKey: string;
-    hookKey: string;
-    providerKey: string | null;
-    adapterKey: string | null;
-    model: string | null;
-    promptVersion: number | null;
-    promptSnapshotId: string | null;
-    status: "succeeded" | "failed" | "skipped";
-    errorClass: string | null;
-    errorMessage: string | null;
-    readinessReasons?: unknown[];
-    validationMetadata?: Record<string, unknown>;
-    latencyMs: number | null;
-    usageMetadata?: Record<string, unknown>;
-    requestId: string | null;
-    correlationId?: string | null;
-    actorUserId: string | null;
-    workItemId: string | null;
-    sourceMemoId: string | null;
-    processingJobId: string | null;
-    inputSnapshot?: Record<string, unknown>;
-    outputSnapshot?: Record<string, unknown>;
-  }): Promise<InvokeTaskRunRow> {
-    return await new SettingsRepository(this.db).createInvokeTaskRun({
-      taskRunId: randomUUID(),
+  async saveTaskRun(input: TaskRun): Promise<void> {
+    const snapshot = normalizeInputSnapshot(input.inputSnapshot);
+    await new SettingsRepository(this.db).createInvokeTaskRun({
+      taskRunId: input.taskRunId || randomUUID(),
       taskKey: input.taskKey,
       hookKey: input.hookKey,
-      providerKey: input.providerKey,
-      adapterKey: input.adapterKey,
-      model: input.model,
-      promptVersion: input.promptVersion,
-      promptSnapshotId: input.promptSnapshotId,
+      providerKey: input.providerKey ?? null,
+      adapterKey: input.adapterKey ?? null,
+      model: input.model ?? null,
+      promptVersion: parsePromptVersion(input.promptVersion),
+      promptSnapshotId: input.promptSnapshotId ?? null,
       status: input.status,
-      errorClass: input.errorClass,
-      errorMessage: input.errorMessage,
+      errorClass: input.errorClass ?? null,
+      errorMessage: input.errorMessage ?? null,
       readinessReasons: input.readinessReasons ?? [],
-      validationMetadata: input.validationMetadata ?? {},
-      latencyMs: input.latencyMs,
-      usageMetadata: input.usageMetadata ?? {},
+      validationMetadata: normalizeMetadata(input.outputValidation),
+      latencyMs: input.latencyMs ?? null,
+      usageMetadata: normalizeMetadata(input.usage),
       commitSha: this.config.invokeProviders.commitSha,
-      requestId: input.requestId,
-      correlationId: input.correlationId ?? input.requestId,
-      actorUserId: input.actorUserId,
-      workItemId: input.workItemId,
-      sourceMemoId: input.sourceMemoId,
-      processingJobId: input.processingJobId,
-      inputSnapshot: input.inputSnapshot ?? {},
-      outputSnapshot: input.outputSnapshot ?? {}
+      requestId: snapshot.requestId,
+      correlationId: input.correlationId ?? snapshot.requestId,
+      actorUserId: snapshot.actorUserId,
+      workItemId: snapshot.workItemId,
+      sourceMemoId: snapshot.sourceMemoId,
+      processingJobId: snapshot.processingJobId,
+      inputSnapshot: snapshot.inputSnapshot,
+      outputSnapshot: {}
     });
   }
 
@@ -95,7 +75,7 @@ export class MemoCaptureRuntimeRepositories {
     status?: string | null;
     workItemId?: string | null;
     limit?: number;
-  }): Promise<SharedTaskRun[]> {
+  } = {}): Promise<SharedTaskRun[]> {
     const filters: Parameters<SettingsRepository["listInvokeTaskRuns"]>[0] = {
       limit: clampLimit(input.limit)
     };
@@ -116,6 +96,24 @@ export class MemoCaptureRuntimeRepositories {
     }
     const rows = await new SettingsRepository(this.db).listInvokeTaskRuns(filters);
     return rows.map(mapTaskRunRow);
+  }
+}
+
+export class MemoCaptureProviderProfileSettingsRepository implements TargetAppProviderProfileSettingsRepository {
+  constructor(private readonly db: Database) {}
+
+  async getProviderProfileSettings(): Promise<TargetAppProviderProfileSettings> {
+    const row = await new SettingsRepository(this.db).getProviderRegistrySettings();
+    return row?.selected_provider_profile_key === null || row?.selected_provider_profile_key === undefined
+      ? {}
+      : { selectedProviderProfileKey: row.selected_provider_profile_key };
+  }
+
+  async saveProviderProfileSettings(settings: TargetAppProviderProfileSettings): Promise<void> {
+    await new SettingsRepository(this.db).updateProviderRegistrySettings({
+      selectedProviderProfileKey: settings.selectedProviderProfileKey ?? null,
+      actorUserId: "shared-runtime"
+    });
   }
 }
 
@@ -146,13 +144,13 @@ function mapTaskRunRow(row: InvokeTaskRunRow): SharedTaskRun {
   if (row.readiness_reasons !== null && Array.isArray(row.readiness_reasons)) {
     taskRun.readinessReasons = row.readiness_reasons as NonNullable<SharedTaskRun["readinessReasons"]>;
   }
-  if (row.validation_metadata !== null) {
+  if (isOutputValidation(row.validation_metadata)) {
     taskRun.outputValidation = row.validation_metadata;
   }
   if (row.latency_ms !== null) {
     taskRun.latencyMs = row.latency_ms;
   }
-  if (row.usage_metadata !== null) {
+  if (isTokenCostMetadata(row.usage_metadata)) {
     taskRun.usage = row.usage_metadata;
   }
   if (row.error_class !== null) {
@@ -175,4 +173,49 @@ function clampLimit(limit: number | undefined): number {
     return 50;
   }
   return Math.min(Math.max(limit, 1), 200);
+}
+
+function parsePromptVersion(value: string | undefined): number | null {
+  if (value === undefined || value.trim() === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function normalizeMetadata(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizeInputSnapshot(inputSnapshot: unknown): {
+  inputSnapshot: Record<string, unknown>;
+  requestId: string | null;
+  actorUserId: string | null;
+  workItemId: string | null;
+  sourceMemoId: string | null;
+  processingJobId: string | null;
+} {
+  const input = normalizeMetadata(inputSnapshot);
+  return {
+    inputSnapshot: input,
+    requestId: optionalString(input.requestId),
+    actorUserId: optionalString(input.actorUserId),
+    workItemId: optionalString(input.workItemId),
+    sourceMemoId: optionalString(input.sourceMemoId),
+    processingJobId: optionalString(input.processingJobId)
+  };
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function isOutputValidation(value: unknown): value is NonNullable<SharedTaskRun["outputValidation"]> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && "valid" in value;
+}
+
+function isTokenCostMetadata(value: unknown): value is NonNullable<SharedTaskRun["usage"]> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

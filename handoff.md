@@ -4,180 +4,105 @@
 
 - Project name: Memo Capture
 - Handoff type: implementation handoff
-- Created timestamp UTC: 2026-06-09T04:11:07Z
+- Created timestamp UTC: 2026-06-09T04:44:00Z
 - Prepared by: Codex
 - Repository: `/Users/paulmarshall/Software Development/memo-capture`
 - Branch or working context: `main`
-- Session scope: checkpoint registry-only provider source-of-truth work for Settings Tasks provider selection and task routing.
+- Session scope: implement `docs/plans/05 Invoke Providers Runtime Alignment Plan.md` for the shared invoke-providers runtime alignment.
 
 ### Checkpoint Status
 
-- Git HEAD: `4ff14e4`
+- Git HEAD: `8140bc9`
 - Working tree: dirty
 - Dirty files intentionally in scope:
-  - `apps/api/src/repositories/settings.ts`
+  - `apps/api/src/services/ai-expansion.ts`
+  - `apps/api/src/services/invoke-providers/adapters.ts`
+  - `apps/api/src/services/invoke-providers/hooks.ts`
+  - `apps/api/src/services/invoke-providers/mapping.ts`
+  - `apps/api/src/services/invoke-providers/registry.ts`
+  - `apps/api/src/services/invoke-providers/repositories.ts`
   - `apps/api/src/services/invoke-providers/runtime.ts`
+  - `apps/api/src/services/invoke-providers/secrets.ts`
+  - `apps/api/src/services/invoke-providers/types.ts`
   - `apps/api/src/services/settings.ts`
-  - `apps/api/tests/backend-foundation.test.ts`
-  - `apps/desktop/src/App.tsx`
-  - `apps/desktop/tests/app-copy.test.ts`
+  - `docs/completed-tasks.md`
   - `handoff.md`
 - Dirty files intentionally out of scope:
   - None
 - Untracked files intentionally in scope:
-  - None
+  - `docs/plans/05 Invoke Providers Runtime Alignment Plan.md`
 - Untracked files intentionally out of scope:
   - None
-- Canonical files described:
-  - `docs/completed-tasks.md`
-  - `docs/design/memo-capture-design-learnings.md`
-  - `handoff.md`
 - Last verification:
-  - command: `npm run typecheck`; `npm test` with local-listener permission; `git diff --check`
+  - command: `npm run verify` outside the sandbox
   - result: passed
-  - timestamp UTC: 2026-06-09T04:11:07Z
+  - timestamp UTC: 2026-06-09T04:44:00Z
 - Handoff freshness: fresh-to-dirty-tree
-- Safe-to-continue basis: `HEAD 4ff14e4` is current; all dirty files are intentionally in scope for the registry-only provider routing update, and typecheck/tests/diff whitespace checks passed.
-- Next checkpoint action: review diff, then commit or continue with the deferred schema cleanup plan.
+- Safe-to-continue basis: `npm run verify` passed after the shared-runtime alignment changes. The only notable environment issue was that sandboxed tests could not bind `127.0.0.1`, so listener tests were rerun outside the sandbox.
 
 ## 2. Executive Summary
 
-Memo Capture Settings now treats the provider registry as the provider source of truth for task routing.
+Memo Capture now uses the shared `@invoke-providers/*` runtime boundary for provider-backed task mechanics while retaining app-owned storage, prompts, hooks, jobs, audit, review staging, and domain mutations.
 
 Complete now:
 
-- The Tasks provider dropdown is populated from `providerCatalog.providers`, not local `provider_configs` rows.
-- Task create/save sends `registryProfileKey` and `providerKey`, not local provider IDs.
-- `/api/settings` no longer exposes the old local `providers`, `providerCapabilities`, or `fallbackUsed` settings shape.
-- Task route validation resolves the selected provider from the active provider registry profile and checks provider kind, required capability, enabled state, and required secret.
-- Runtime diagnostics no longer carries the always-false `fallbackUsed` flag.
-- Tests now enforce that the desktop Tasks path does not reference `providerConfigId`, `selectedProviderId`, or `fallbackUsed`.
+- The local `TargetAppRuntimeService` class was removed; `apps/api/src/services/invoke-providers/runtime.ts` now builds `@invoke-providers/client`'s shared target-app runtime.
+- Local shared provider/task/run types now alias `@invoke-providers/core` and `@invoke-providers/client` types.
+- Registry provider/profile reads use the shared remote registry client wrapper.
+- Memo Capture repository adapters expose tasks, hooks, task runs, and selected registry profile settings to the shared runtime.
+- Shared provider adapters are registered for local deterministic, OpenAI-compatible, Codex CLI, Whisper.cpp, and deterministic STT/OCR/TTS paths, with Memo Capture prompt/context glue where needed.
+- `AiExpansionService` now invokes work-item AI tasks through shared `invokeTask`; Memo Capture still validates output and stages review candidates before any domain mutation.
+- New registry-backed task routes no longer write or require `provider_config_id`.
+- Existing compatibility columns and joins remain for old rows.
 
-Incomplete now:
+Deferred:
 
-- Historical `provider_config_id` database columns and related compatibility repository/test paths still exist. They should be removed in a future schema cleanup migration once the registry-only path has settled.
+- A dedicated cleanup migration is still needed before removing `ai_task_routes.provider_config_id`, `provider_capabilities.provider_config_id`, old provider-config execution joins, and historical tests that seed local provider rows only for execution compatibility.
 
-Safe to continue: yes, from `HEAD 4ff14e4` plus the intentionally dirty registry-only provider changes.
+## 3. Verification
 
-Completed work history is tracked in `docs/completed-tasks.md`; do not duplicate it here.
-
-## 3. Current Objective
-
-Immediate goal: finish and review the registry-only provider routing slice so Tasks configuration shows all enabled registry providers and no longer depends on local provider rows.
-
-Intended finished state:
-
-- Provider registry records are the only source of provider options in Settings.
-- Task routing persists registry profile/provider keys.
-- Local provider config rows are not part of user-facing Tasks configuration.
-- Automated tests guard the registry-only behavior.
-
-Definition of done:
-
-- `npm run typecheck` passes.
-- `npm test` passes.
-- `git diff --check` passes.
-- Handoff records the remaining historical-column cleanup.
-
-## 4. Current State
-
-### Working
-
-- Desktop Tasks provider selectors use registry provider options built from `settingsSummary.providerCatalog.providers`.
-- Task draft state tracks `registryProviderKey`.
-- Task create/update requests include `registryProfileKey` and `providerKey`.
-- API task route parsing no longer accepts `providerConfigId` as a request field.
-- API settings summary omits local `providers`, `providerCapabilities`, `appLauncher` runtime-option summary, and `fallbackUsed`.
-- API route validation uses provider registry snapshots and no longer requires legacy AppLauncher runtime provider equality for enabling registry-backed tasks.
-- Backend and desktop tests pass after updates.
-
-### Partially Working
-
-- The repository still retains legacy local provider table plumbing for compatibility and historical migrations:
-  - `ai_task_routes.provider_config_id`
-  - `provider_capabilities.provider_config_id`
-  - repository methods such as `findProviderById` and `providerHasCapability`
-  - fake database rows and tests that seed historical provider data
-- These are no longer the intended source of truth for Tasks provider selection, but removing them requires a dedicated schema cleanup.
-
-### Not Working Yet
-
-- Historical `provider_config_id` columns have not been removed from the database schema or compatibility code.
-
-### Not Yet Verified
-
-- Real Postgres migration cleanup for dropping historical provider columns has not been designed or run.
-- Native UI visual smoke was not rerun after the registry-only UI change; automated desktop copy/type tests passed.
-
-## 5. Active Constraints
-
-- Follow `AGENTS.md`; default to Build Mode.
-- Do not commit, tag, release, publish, install dependencies, delete files, or mutate unrelated app/browser state unless explicitly requested.
-- Never use `latest`; always use numbered versions.
-- Read `docs/design/memo-capture-design-learnings.md` before architecture, schema, workflow, ingestion, AI, or export work.
-- Providers catalog is registry-only for user-facing configuration.
-- Tasks own routing/prompt configuration and must use registry provider keys, not local provider IDs.
-- Preserve app-owned task hooks and workflow behavior while changing provider plumbing.
-- Deleting historical `provider_config_id` columns is deferred; do it as a deliberate migration/code cleanup, not as an incidental edit.
-
-## 6. Commands and Verification
-
-Passed in this session:
+Passed:
 
 ```bash
 npm run typecheck
 npm test
-git diff --check
+npm run verify
 ```
 
 Notes:
 
-- `npm test` needs permission to bind local `127.0.0.1` test servers for API and provider-registry tests.
-- A sandboxed `npm test` run failed only because those local listeners were blocked with `listen EPERM`; the elevated rerun passed.
-- Handoff helper scripts were not present under `scripts/`, so freshness was updated manually from Git/status facts.
+- `npm install` was run because linked `@invoke-providers/*` packages were missing from `node_modules`.
+- `npm install` reported the current Node/npm runtime is newer than the repo engine range: repo expects Node `>=22.14.0 <23` and npm `>=10.9.0 <11`, while the current environment used Node `24.14.0` and npm `11.9.0`.
+- Sandboxed `npm test` failed only on `listen EPERM 127.0.0.1`; rerunning outside the sandbox passed.
 
-Useful next checks:
+## 4. Files to Open First
 
-```bash
-git status --short
-git diff --check
-npm run typecheck
-npm test
-```
+- `apps/api/src/services/invoke-providers/runtime.ts`: shared runtime factory.
+- `apps/api/src/services/invoke-providers/repositories.ts`: Memo Capture adapters for shared task, hook, task-run, and profile settings repositories.
+- `apps/api/src/services/invoke-providers/adapters.ts`: shared adapter construction plus Memo Capture prompt/context glue.
+- `apps/api/src/services/ai-expansion.ts`: work-item task invocation through shared `invokeTask`.
+- `apps/api/src/services/settings.ts`: registry-backed route persistence and compatibility API wrappers.
+- `docs/plans/05 Invoke Providers Runtime Alignment Plan.md`: source plan for this slice.
 
-For future database cleanup:
+## 5. Active Constraints
 
-```bash
-npm run test:postgres
-npm run verify
-```
+- Follow `AGENTS.md`; default to Build Mode.
+- Do not commit, tag, release, publish, delete files, or mutate unrelated app/browser state unless explicitly requested.
+- Never use `latest`; always use numbered versions.
+- Provider setup remains outside Memo Capture.
+- Providers page remains registry-backed and read-only.
+- Tasks own route, prompt, render, and enabled state.
+- Hooks remain Memo Capture-owned and are the only layer that can turn provider output into domain behavior.
+- Domain records must not be mutated before user review/acceptance.
 
-## 7. Files to Open First
-
-- `apps/desktop/src/App.tsx`: registry-only Tasks provider dropdowns, draft state, task create/save payloads.
-- `apps/api/src/services/settings.ts`: settings summary shape, task route parsing, registry provider validation.
-- `apps/api/src/repositories/settings.ts`: current compatibility writes for `ai_task_routes.provider_config_id`, and future cleanup target.
-- `apps/api/src/services/invoke-providers/runtime.ts`: provider catalog/readiness diagnostics without `fallbackUsed`.
-- `apps/api/tests/backend-foundation.test.ts`: registry-backed task route tests and fake database compatibility harness.
-- `apps/desktop/tests/app-copy.test.ts`: source checks that block local provider fallback vocabulary in the desktop Tasks path.
-
-## 8. Next Actions
+## 6. Next Actions
 
 Next:
 
-- Review the registry-only provider diff for accidental removal of still-needed compatibility behavior.
-- Commit the current registry-only provider routing slice if acceptable.
-- Launch or smoke the app UI if visual confirmation of the Tasks dropdown is required.
-
-Blocked:
-
-- None known for the six-provider dropdown issue.
+- Review the diff and commit if acceptable.
+- Run a native UI smoke only if visual confirmation is wanted; no desktop UI code changed in this slice.
 
 Later:
 
-- Create a deliberate schema/code cleanup to remove historical `provider_config_id` columns and related local-provider compatibility paths.
-- Include Postgres migration tests for that cleanup before merging it.
-
-## 9. Ready-Made Prompt for Starting a New Thread
-
-Read `/Users/paulmarshall/Software Development/memo-capture/handoff.md` as the hot-context source. Treat the current checkpoint as `main` at `4ff14e4` with intentional dirty files for the registry-only provider routing slice. Review `apps/desktop/src/App.tsx`, `apps/api/src/services/settings.ts`, `apps/api/src/repositories/settings.ts`, `apps/api/src/services/invoke-providers/runtime.ts`, `apps/api/tests/backend-foundation.test.ts`, and `apps/desktop/tests/app-copy.test.ts` before editing. Continue by reviewing or committing the registry-only provider source-of-truth changes. Do not reintroduce local provider fallback in Settings Tasks. Remember that deleting historical `provider_config_id` database columns is deferred and must be handled as a deliberate migration/code cleanup with Postgres verification.
+- Implement the dedicated schema/code cleanup for historical provider columns and run `npm run test:postgres`.
+- Consider adding focused tests for shared adapter diagnostic invocation if provider diagnostics become a primary workflow.

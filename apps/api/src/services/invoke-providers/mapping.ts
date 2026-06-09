@@ -66,9 +66,12 @@ export function mapTaskRouteRow(task: AiTaskRouteRow): SharedTaskDefinition {
     hookKey: task.hook_key,
     renderSlot: task.render_location,
     displayOrder: task.display_order,
-    enabled: task.route_enabled,
-    requiredRuntimeKeys: [task.runtime_option_id]
+    enabled: task.route_enabled
   };
+  const requiredRuntimeKeys = runtimeKeysForTaskRoute(task.runtime_option_id);
+  if (requiredRuntimeKeys.length > 0) {
+    sharedTask.requiredRuntimeKeys = requiredRuntimeKeys;
+  }
   const selectedProviderKey = normalizeRegistryProviderKey(task.provider_key ?? task.provider_name, task);
   if (selectedProviderKey !== null) {
     sharedTask.selectedProviderKey = selectedProviderKey;
@@ -134,13 +137,19 @@ export function mapProcessingHookRow(
 
 export function runtimeKeysForConfig(config: ApiConfig): string[] {
   const keys = ["registry"];
-  if (config.llm.provider !== "disabled") {
-    keys.push("llm");
-  }
+  keys.push("llm-runtime");
+  keys.push("llm");
   if (config.transcription.provider !== "disabled") {
     keys.push("transcription", "stt");
   }
   return keys;
+}
+
+function runtimeKeysForTaskRoute(runtimeOptionId: string): string[] {
+  if (runtimeOptionId === "llm-runtime") {
+    return [];
+  }
+  return [runtimeOptionId];
 }
 
 export function normalizeCapabilityKey(value: string): SharedProviderCapabilityKey {
