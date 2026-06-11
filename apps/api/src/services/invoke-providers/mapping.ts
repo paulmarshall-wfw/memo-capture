@@ -106,12 +106,13 @@ export function mapTaskRouteRow(task: AiTaskRouteRow): SharedTaskDefinition {
 
 function normalizeRegistryProviderKey(
   value: string | null,
-  task: Pick<AiTaskRouteRow, "provider_kind">
+  task: Pick<AiTaskRouteRow, "provider_kind" | "task_kind" | "task_kind_provider_kind">
 ): string | null {
   if (value === null) {
     return null;
   }
-  if (value === "local-dev" && task.provider_kind === "llm") {
+  const providerKind = task.provider_kind ?? task.task_kind_provider_kind ?? task.task_kind;
+  if (value === "local-dev" && providerKind === "llm") {
     return "deterministic-local-dev";
   }
   if (value === "openai-compatible") {
